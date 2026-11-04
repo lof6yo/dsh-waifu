@@ -2253,28 +2253,28 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   ))
 
   return createElement('div', {
-    className: 'dsh-live2d-settings',
+    className: 'dsh-waifu-settings',
     style: { padding: '16px 20px', maxWidth: 560, color: C.textPrimary, fontSize: 13 },
   },
     // 统一 focus / hover 态（内联样式无法表达伪类，注入一次局部 CSS）
-    createElement('style', { key: 'dsh-live2d-settings-css' },
-      '.dsh-live2d-settings input:focus, .dsh-live2d-settings textarea:focus { border-color: var(--dsw-alias-brand-primary) !important; outline: none; }' +
-      '.dsh-live2d-settings input[type="checkbox"], .dsh-live2d-settings input[type="range"] { accent-color: var(--dsw-alias-brand-primary); }' +
-      '.dsh-live2d-settings button:focus-visible { outline: 1px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }' +
-      '.dsh-live2d-settings .dsh-card-header { border-radius: 6px; transition: background .15s; }' +
-      '.dsh-live2d-settings .dsh-card-header-row { border-radius: 10px 10px 0 0; transition: background .15s; }' +
-      '.dsh-live2d-settings .dsh-card-header-row:hover { background: var(--dsw-alias-bg-layer-2); }' +
-      '.dsh-live2d-settings .dsh-card-header:hover { background: var(--dsw-alias-bg-layer-2); }' +
-      '.dsh-live2d-settings .dsh-chevron-button:hover { background: var(--dsw-alias-bg-layer-2); border-radius: 6px; }' +
-      '.dsh-live2d-settings .dsh-btn { transition: background .12s, border-color .12s; }' +
-      '.dsh-live2d-settings .dsh-btn:disabled { opacity: .55; cursor: not-allowed; }' +
-      '.dsh-live2d-settings .dsh-btn-secondary:enabled:hover { background: var(--dsw-alias-bg-overlay); border-color: var(--dsw-alias-border-l2); }' +
-      '.dsh-live2d-settings .dsh-btn-secondary:enabled:active { background: var(--dsw-alias-bg-base); }' +
-      '.dsh-live2d-settings .dsh-btn-primary:enabled:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, var(--dsw-alias-label-primary)); }' +
-      '.dsh-live2d-settings .dsh-btn-primary:enabled:active { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 78%, var(--dsw-alias-label-primary)); }' +
-      '.dsh-live2d-settings .dsh-btn-danger:enabled:hover { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent); }' +
-      '.dsh-live2d-settings .dsh-btn-danger:enabled:active { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 26%, transparent); }' +
-      '.dsh-live2d-settings ::placeholder { color: var(--dsw-alias-label-secondary); opacity: .85; }',
+    createElement('style', { key: 'dsh-waifu-settings-css' },
+      '.dsh-waifu-settings input:focus, .dsh-waifu-settings textarea:focus { border-color: var(--dsw-alias-brand-primary) !important; outline: none; }' +
+      '.dsh-waifu-settings input[type="checkbox"], .dsh-waifu-settings input[type="range"] { accent-color: var(--dsw-alias-brand-primary); }' +
+      '.dsh-waifu-settings button:focus-visible { outline: 1px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }' +
+      '.dsh-waifu-settings .dsh-card-header { border-radius: 6px; transition: background .15s; }' +
+      '.dsh-waifu-settings .dsh-card-header-row { border-radius: 10px 10px 0 0; transition: background .15s; }' +
+      '.dsh-waifu-settings .dsh-card-header-row:hover { background: var(--dsw-alias-bg-layer-2); }' +
+      '.dsh-waifu-settings .dsh-card-header:hover { background: var(--dsw-alias-bg-layer-2); }' +
+      '.dsh-waifu-settings .dsh-chevron-button:hover { background: var(--dsw-alias-bg-layer-2); border-radius: 6px; }' +
+      '.dsh-waifu-settings .dsh-btn { transition: background .12s, border-color .12s; }' +
+      '.dsh-waifu-settings .dsh-btn:disabled { opacity: .55; cursor: not-allowed; }' +
+      '.dsh-waifu-settings .dsh-btn-secondary:enabled:hover { background: var(--dsw-alias-bg-overlay); border-color: var(--dsw-alias-border-l2); }' +
+      '.dsh-waifu-settings .dsh-btn-secondary:enabled:active { background: var(--dsw-alias-bg-base); }' +
+      '.dsh-waifu-settings .dsh-btn-primary:enabled:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, var(--dsw-alias-label-primary)); }' +
+      '.dsh-waifu-settings .dsh-btn-primary:enabled:active { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 78%, var(--dsw-alias-label-primary)); }' +
+      '.dsh-waifu-settings .dsh-btn-danger:enabled:hover { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent); }' +
+      '.dsh-waifu-settings .dsh-btn-danger:enabled:active { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 26%, transparent); }' +
+      '.dsh-waifu-settings ::placeholder { color: var(--dsw-alias-label-secondary); opacity: .85; }',
     ),
     ...children,
   )
