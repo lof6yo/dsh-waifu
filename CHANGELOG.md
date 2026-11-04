@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- 调试面板改为浮在角色模型上方的绝对定位浮层（不再占据布局把画布往下推）；调试面板可见时对白气泡避让叠在其上方
 - **插件更名**：包名/插件 id/bundle 行统一为 `dsh-waifu`；API 前缀改为 `/api/dsh-waifu`、素材路由 `/waifu-assets`、插件私有目录 `$DSH_HOME/waifu/`（ADR-016）
 - **移除自定义模型支持**：删除模型选择/导入 UI、`/models`、`/custom-models`、`/pet-local-models` 路由与 local-models/custom-models 模块（ADR-016，supersede ADR-009/010）
 - **移除固定人设体系**：删除内置六人设与 `personas.jsonc` 自定义人设、`reload-personas` 路由、设置页「人设台词」分组及「自定义人设 ↗」跳转；改由**事件绑定**（空闲/思考/出错/完成/交付/等审批 → 动作组 + 台词池）驱动，长状态保留三阶段台词（ADR-015）

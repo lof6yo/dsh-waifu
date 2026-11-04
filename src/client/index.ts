@@ -318,6 +318,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let debugTextEl: HTMLDivElement | null = null
   /** 是否正处于 debug 原生动画预览：预览期间抑制 focus，结束后只恢复跟随，不触发状态恢复。 */
   let previewActive = false
+  /** 调试面板顶部（逻辑画布 CSS px；NaN = 不可见/未定位），用于气泡避让（spec §2）。 */
+  let debugPanelTopLogical = Number.NaN
   let canvas: HTMLCanvasElement | null = null
   /** 画布外包一层，便于绝对定位触摸部位叠加层。 */
   let petLayer: HTMLDivElement | null = null
@@ -456,6 +458,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 气泡相对模型包围盒定位（spec §3）：气泡底部中点贴住
    * (bounds.x + width/2 + bubbleOffsetX, bounds.y + bubbleOffsetY)（画布逻辑 CSS px），
    * transform: translate(-50%, -100%) 由样式负责居中/贴底；无模型层时不更新。
+   * 调试面板可见时锚点上移到面板顶部再往上 6px；目标视口 y clamp 到 ≥8，避免跑出视口。
    */
   function updateBubblePosition(): void {
     if (!bubble) return
@@ -471,8 +474,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (b && b.width > 0 && b.height > 0) bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
     } catch { /* 无包围盒 */ }
     if (!bounds) return
-    bubble.style.left = `${bounds.x + bounds.width / 2 + bubbleOffsetX}px`
-    bubble.style.top = `${bounds.y + bubbleOffsetY}px`
+    const anchorX = bounds.x + bounds.width / 2 + bubbleOffsetX
+    // 调试面板可见时气泡上移避让：锚点 = 面板顶部再往上 6px（spec §2）
+    let anchorY = Number.isFinite(debugPanelTopLogical)
+      ? debugPanelTopLogical - 6
+      : bounds.y + bubbleOffsetY
+    // 气泡目标视口 y clamp 到 ≥8（用 petLayer 视口 rect 换算，面板/模型贴顶时不跑出视口）
+    try {
+      const rect = petLayer.getBoundingClientRect()
+      if (rect.top + anchorY < 8) anchorY = 8 - rect.top
+    } catch { /* 无 rect 时保持原锚点 */ }
+    bubble.style.left = `${anchorX}px`
+    bubble.style.top = `${anchorY}px`
   }
 
   /** 显示常驻气泡文案：取消瞬态隐藏计时，气泡保持可见直到被取代。 */
@@ -816,6 +829,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 画布尺寸变化后重新保证中心点在视口内
       clampPosToViewport()
       applyPosToBox()
+      updateDebugPanelPosition()
       updateBubblePosition()
     } else {
       pos.size = nextSize
@@ -869,6 +883,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     if (petLayer && petLayer.parentNode) petLayer.parentNode.removeChild(petLayer)
     petLayer = null
+    // 调试面板随旧 petLayer 一起移除，复位避让状态（新层加载后若 debug 仍开会重新挂载）
+    debugPanelTopLogical = Number.NaN
     removeFallback()
   }
 
@@ -903,10 +919,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       petLayer.appendChild(hitLayer)
       // 气泡改为相对 petLayer 定位，避免调试面板插入后把气泡顶到面板上方
       if (bubble && bubble.parentNode !== petLayer) petLayer.appendChild(bubble)
-      if (debugEl) {
-        petLayer.style.marginTop = '36px'
-        syncDebugPanelWidth()
-      }
+      // 调试面板是 petLayer 内的绝对定位浮层（不占布局，重新挂到新画布层）
+      if (debugEl) petLayer.appendChild(debugEl)
       box.appendChild(petLayer)
 
       const M = PIXI.live2d?.Live2DModel
@@ -972,6 +986,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       applyPosToBox()
       // 气泡相对模型定位（模型尺寸/位置已就绪）
       applyBubbleStyle()
+      // 调试面板宽度/位置随新画布与模型更新，气泡避让已就绪
+      syncDebugPanelWidth()
+      updateDebugPanelPosition()
       updateBubblePosition()
     } catch (error) {
       // 加载失败 → 静态头像（spec §7）；已卸载则不再展示
@@ -1123,6 +1140,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!hitLayer || !petShown()) return
     const tick = () => {
       updateHitBoxPositions()
+      updateDebugPanelPosition()
       updateBubblePosition()
       hitLayerRaf = window.requestAnimationFrame(tick)
     }
@@ -1305,20 +1323,60 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     void currentModel.motion(group, index, MotionPriority.FORCE)
   }
 
-  /** 让调试面板宽度与 canvas 逻辑宽度一致（canvas 尺寸变化/模型加载时同步）。 */
+  /** 调试面板宽度/最大高度（浮层不占布局，spec §2）：宽度 min(280, 画布逻辑宽度-16)，
+   *  最大高度 min(420, 视口高*0.5) 且可滚动，避免面板过高无处放。 */
   function syncDebugPanelWidth(): void {
     if (!debugEl) return
     // append 阶段 PIXI app 尚未创建，此时 canvas 属性本身就是逻辑尺寸
-    const w = app ? logicalCanvasSize().width : (canvas?.width ?? pos.size)
-    debugEl.style.width = `${w}px`
+    const canvasWidth = app ? logicalCanvasSize().width : (canvas?.width ?? pos.size)
+    const width = Math.max(120, Math.min(280, Math.round(canvasWidth - 16)))
+    debugEl.style.width = `${width}px`
     debugEl.style.boxSizing = 'border-box'
+    debugEl.style.maxHeight = `${Math.max(80, Math.min(420, Math.round(window.innerHeight * 0.5)))}px`
+    debugEl.style.overflowY = 'auto'
+  }
+
+  /**
+   * 调试面板定位（spec §2）：浮在模型包围盒**上方**（不覆盖角色），允许伸出画布留白/画布
+   * 上边缘（逻辑 top 可为负），但整体保持在视口内。用 petLayer 的视口 rect 换算：
+   * 期望视口 top = rect.top + bounds.y - 8 - panelHeight，clamp 到 [8, innerHeight-panelH-8]，
+   * 再换算回 petLayer 逻辑 top = clampedTop - rect.top；水平同理。
+   * 每帧由命中层 rAF 调用（跟随动作/内容高度变化），并记录逻辑顶部供气泡避让。
+   */
+  function updateDebugPanelPosition(): void {
+    debugPanelTopLogical = Number.NaN
+    if (!debugEl || !petLayer || debugEl.parentNode !== petLayer || !model) return
+    let bounds: { x: number; y: number; width: number; height: number } | null = null
+    try {
+      const b = model.getBounds?.()
+      if (b && b.width > 0 && b.height > 0) bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
+    } catch { /* 无包围盒 */ }
+    if (!bounds) return
+    const panelWidth = debugEl.offsetWidth
+    const panelHeight = debugEl.offsetHeight
+    if (!(panelWidth > 0 && panelHeight > 0)) return
+    const rect = petLayer.getBoundingClientRect()
+    // 垂直：贴模型顶部上方 8px；只在视口放不下时才被夹到视口顶部附近
+    const maxViewportTop = Math.max(8, window.innerHeight - panelHeight - 8)
+    const viewportTop = Math.min(Math.max(rect.top + bounds.y - 8 - panelHeight, 8), maxViewportTop)
+    // 水平：面板居中对齐模型，限制在视口内
+    const maxViewportLeft = Math.max(8, window.innerWidth - panelWidth - 8)
+    const viewportLeft = Math.min(
+      Math.max(rect.left + bounds.x + bounds.width / 2 - panelWidth / 2, 8),
+      maxViewportLeft,
+    )
+    const top = viewportTop - rect.top
+    const left = viewportLeft - rect.left
+    debugEl.style.left = `${left}px`
+    debugEl.style.top = `${top}px`
+    debugPanelTopLogical = top
   }
 
   /** 调试面板动态开关（spec §2）。 */
   function ensureDebugPanel(show: boolean): void {
     if (show && !debugEl && box) {
       debugEl = document.createElement('div')
-      debugEl.style.cssText = 'pointer-events:auto;margin:6px 0 10px;padding:10px 12px;background:rgba(24,26,36,.94);color:#e8eaf0;border:1px solid rgba(128,128,128,.22);border-radius:10px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.35)'
+      debugEl.style.cssText = 'position:absolute;z-index:5;pointer-events:auto;padding:10px 12px;background:rgba(24,26,36,.94);color:#e8eaf0;border:1px solid rgba(128,128,128,.22);border-radius:10px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.35)'
 
       const debugTitle = document.createElement('div')
       debugTitle.style.cssText = 'font-size:12px;font-weight:600;color:#aeb8cc;letter-spacing:.3px;margin-bottom:2px'
@@ -1373,14 +1431,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugEl.appendChild(debugTextEl)
       syncDebugPanelWidth()
       refreshDebugMotionGroups()
-      // 调试面板放在 petLayer 之前：显示在 canvas 上方；气泡在 petLayer 上方，
-      // 通过 petLayer margin-top 把气泡空间让出来，使顺序为 调试面板 → 气泡 → canvas
-      if (petLayer) {
-        box.insertBefore(debugEl, petLayer)
-        petLayer.style.marginTop = '36px'
-      } else {
-        box.appendChild(debugEl)
-      }
+      // 浮层挂在 petLayer 内（canvas 坐标系），绝对定位跟随模型包围盒，不占布局
+      if (petLayer) petLayer.appendChild(debugEl)
+      else box.appendChild(debugEl)
+      updateDebugPanelPosition()
       applyState(view)
     } else if (!show && debugEl) {
       previewActive = false
@@ -1389,7 +1443,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugEl = null
       debugMotionSelect = null
       debugTextEl = null
-      if (petLayer) petLayer.style.marginTop = ''
+      debugPanelTopLogical = Number.NaN
+    } else if (show && debugEl && !debugEl.parentNode) {
+      // 模型层重建/降级后浮层可能被摘掉：重新挂回（绝对定位不占布局）
+      if (petLayer) petLayer.appendChild(debugEl)
+      else if (box) box.appendChild(debugEl)
+      updateDebugPanelPosition()
     }
   }
 
@@ -1456,6 +1515,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       ? cfg.bubbleTextColor
       : DEFAULT_BUBBLE_TEXT_COLOR
     applyBubbleStyle()
+    syncDebugPanelWidth()
+    updateDebugPanelPosition()
     updateBubblePosition()
   }
 
@@ -1657,8 +1718,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const onVisibility = () => { hidden = document.visibilityState !== 'visible'; syncTicker() }
       const onBlur = () => { hidden = true; syncTicker() }
       const onFocus = () => { hidden = false; syncTicker() }
-      // 视口尺寸变化：重新 clamp 画布中心点并应用样式（不写盘，spec §4）
-      const onResize = () => { clampPosToViewport(); applyPosToBox(); applyBubbleStyle() }
+      // 视口尺寸变化：重新 clamp 画布中心点并刷新面板/气泡（不写盘，spec §2/§4）
+      const onResize = () => {
+        clampPosToViewport()
+        applyPosToBox()
+        applyBubbleStyle()
+        syncDebugPanelWidth()
+        updateDebugPanelPosition()
+        updateBubblePosition()
+      }
       document.addEventListener('visibilitychange', onVisibility)
       window.addEventListener('blur', onBlur)
       window.addEventListener('focus', onFocus)
