@@ -1,86 +1,37 @@
 {
-  "Version": 3,
-  "FileReferences": {
-    "Moc": "简.moc3",
-    "Textures": [
-      "textures/texture_00.png"
-    ],
-    "Physics": "简.physics3.json",
-    "DisplayInfo": "简.cdi3.json",
-    "Motions": {
-      "Idle": [
-        {
-          "File": "motions/idle.motion3.json",
-          "FadeInTime": 0.5,
-          "FadeOutTime": 0.5
-        }
-      ],
-      "Thinking": [
-        {
-          "File": "motions/thinking.motion3.json",
-          "FadeInTime": 0.3,
-          "FadeOutTime": 0.3
-        }
-      ],
-      "Error": [
-        {
-          "File": "motions/error.motion3.json",
-          "FadeInTime": 0.2,
-          "FadeOutTime": 0.3
-        }
-      ],
-      "Done": [
-        {
-          "File": "motions/done.motion3.json",
-          "FadeInTime": 0.15,
-          "FadeOutTime": 0.25
-        }
-      ],
-      "Waiting": [
-        {
-          "File": "motions/waiting.motion3.json",
-          "FadeInTime": 0.3,
-          "FadeOutTime": 0.3
-        }
-      ],
-      "TapHead": [
-        {
-          "File": "motions/tap-head.motion3.json",
-          "FadeInTime": 0.1,
-          "FadeOutTime": 0.2
-        }
-      ],
-      "TapFace": [
-        {
-          "File": "motions/tap-face.motion3.json",
-          "FadeInTime": 0.1,
-          "FadeOutTime": 0.2
-        }
-      ],
-      "TapBody": [
-        {
-          "File": "motions/tap-body.motion3.json",
-          "FadeInTime": 0.1,
-          "FadeOutTime": 0.2
-        }
-      ]
-    }
-  },
-  "Groups": [
-    {
-      "Target": "Parameter",
-      "Name": "EyeBlink",
-      "Ids": [
-        "ParamEyeLOpen",
-        "ParamEyeROpen"
-      ]
-    },
-    {
-      "Target": "Parameter",
-      "Name": "LipSync",
-      "Ids": [
-        "ParamMouthOpenY"
-      ]
-    }
-  ]
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "简.moc3",
+		"Textures": [
+			"textures/texture_00.png"
+		],
+		"Physics": "简.physics3.json",
+		"DisplayInfo": "简.cdi3.json",
+		"Motions": {
+			"Idle": [
+				{
+					"File": "motions/idle.motion3.json",
+					"FadeInTime": 0.5,
+					"FadeOutTime": 0.5
+				}
+			]
+		}
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": [
+				"ParamEyeLOpen",
+				"ParamEyeROpen"
+			]
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": [
+				"ParamMouthOpenY"
+			]
+		}
+	]
 }

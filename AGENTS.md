@@ -27,7 +27,7 @@ DSH 的 Live2D 桌宠插件项目（文档驱动开发）。
   - 测试：`"$R/bin/node" node_modules/vitest/vitest.mjs run --pool=threads`
   - 依赖安装：`"$R/bin/node" "$R/primary-runtime/dependencies/pnpm/bin/pnpm.cjs" install --ignore-scripts --store-dir .pnpm-store`（`package.json` 已移除 install-time `prepare`，DSH 里用 `plugin_manager install_bundle <绝对路径>` 以 link 方式安装后不会跑构建，改动后需手动构建再刷新页面）
 - **构建产物 `lib/` 随仓库提交**：GitHub/git 安装直接使用仓库里的 `lib/index.js`、`lib/client.js`，不会在安装端构建。修改 `src/` 后必须 `bun run build` 并提交 `lib/`，否则远程安装仍是旧产物。
-- 内置模型动作由 `scripts/gen-jian-motions.mjs` 幂等生成（改动作后重跑该脚本，它会重建 motions/ 并校验 Meta/参数/引用）；模型资源在 `assets/models/jian/`。
+- 内置模型动作只有 `Idle`，由 `scripts/gen-jian-motions.mjs` 幂等生成（改动作后重跑该脚本，会重建 idle.motion3.json 并校验 Meta/参数/引用）；原始资产的 `Scene1` 调研后未采用（参数缺失不可见，见 ADR-017）。模型资源在 `assets/models/jian/`。
 
 ## 发版流程
 

@@ -35,7 +35,8 @@ describe('listBuiltinPresets', () => {
   it('内置模型带状态动画映射与默认触摸部位', () => {
     const jian = listBuiltinPresets()[0]
     expect(jian.animationMap?.idle).toEqual(['Idle'])
-    expect(jian.animationMap?.thinking).toEqual(['Thinking'])
+    expect(jian.animationMap?.delivered).toEqual([])
+    expect(jian.animationMap?.thinking).toEqual([])
     expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头', '胸', '臀'])
     expect(resolveDefaultTouchParts('jian').length).toBe(4)
     expect(resolveDefaultTouchParts('nope')).toEqual([])
@@ -64,8 +65,9 @@ describe('resolveMotionMap', () => {
   it('内置 presets 的 animationMap 生效', () => {
     const map = resolveMotionMap('jian')
     expect(map.idle).toEqual(['Idle'])
-    expect(map.error).toEqual(['Error'])
-    expect(map.delivered).toEqual(['Done'])
+    expect(map.thinking).toEqual([])
+    expect(map.error).toEqual([])
+    expect(map.delivered).toEqual([])
   })
 })
 

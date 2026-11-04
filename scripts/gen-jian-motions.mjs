@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 从零重建「简」内置 Live2D 模型的 8 个 motion3.json（幂等），并在写盘后做完整校验。
+ * 重建「简」内置 Live2D 模型的自建动作（当前只有 Idle，幂等），并校验 JSON / 参数 / Meta 计数 / 引用。
  *
  * 用法（本机无全局 node，用 App 自带运行时）：
  *   export DSH_DESKTOP_NODE_EXECUTABLE="/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness"
@@ -37,16 +37,7 @@ const MODEL3_FILE = resolve(MODEL_DIR, '简.model3.json')
 const CDI3_FILE = resolve(MODEL_DIR, '简.cdi3.json')
 
 const FPS = 30
-const EXPECTED_GROUPS = [
-  'Idle',
-  'Thinking',
-  'Error',
-  'Done',
-  'Waiting',
-  'TapHead',
-  'TapFace',
-  'TapBody',
-]
+const EXPECTED_GROUPS = ['Idle']
 
 /**
  * 允许在动作里驱动的参数白名单 + 量纲守护范围。
@@ -221,7 +212,7 @@ function buildMotion(def) {
 }
 
 // ---------------------------------------------------------------------------
-// 8 个动作的动作设计
+// 自建动作设计（当前只保留 Idle；原始 Scene1 不在此生成）
 // ---------------------------------------------------------------------------
 
 /**
@@ -292,299 +283,6 @@ const MOTION_DEFS = [
         [3.74, 1],
         [5, 1],
       ]), { loop: true, duration: 5 }),
-    ],
-  },
-  {
-    group: 'Thinking',
-    file: 'thinking.motion3.json',
-    duration: 3,
-    loop: true,
-    build: () => [
-      // 歪头：ParamAngleZ 常驻 6~8°，轻微呼吸式晃动
-      buildCurve('ParamAngleZ', periodic(3, 12, (tau) => 7 + 1.2 * Math.sin(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamAngleX', periodic(3, 12, (tau) => 2 + 0.9 * Math.cos(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamAngleY', periodic(3, 12, (tau) => 1.2 + 0.4 * Math.cos(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      // 眼珠上移（思考），轻微左右扫
-      buildCurve('ParamEyeBallY', periodic(3, 12, (tau) => 0.4 + 0.05 * Math.sin(2 * TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamEyeBallX', periodic(3, 12, (tau) => 0.15 + 0.05 * Math.cos(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      // 眉毛微微交替起伏
-      buildCurve('ParamBrowLY', periodic(3, 12, (tau) => 0.12 + 0.08 * Math.sin(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamBrowRY', periodic(3, 12, (tau) => 0.12 - 0.08 * Math.sin(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-    ],
-  },
-  {
-    group: 'Error',
-    file: 'error.motion3.json',
-    duration: 2,
-    loop: false,
-    build: () => [
-      // 垂头 + 轻微颤抖
-      buildCurve('ParamAngleY', kf([
-        [0, 0],
-        [0.4, -8],
-        [0.8, -8.6],
-        [1.2, -7.6],
-        [1.6, -8.4],
-        [2, -8.2],
-      ]), { loop: false, duration: 2 }),
-      buildCurve('ParamAngleX', kf([[0, 0], [0.5, -2], [2, -2.4]]), { loop: false, duration: 2 }),
-      buildCurve('ParamAngleZ', kf([[0, 0], [0.5, -1.5], [2, -1.8]]), { loop: false, duration: 2 }),
-      // 眼睛半闭
-      buildCurve('ParamEyeLOpen', kf([[0, 1], [0.35, 0.32], [1.0, 0.36], [1.6, 0.3], [2, 0.34]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamEyeROpen', kf([[0, 1], [0.35, 0.32], [1.0, 0.36], [1.6, 0.3], [2, 0.34]]), {
-        loop: false,
-        duration: 2,
-      }),
-      // 眉毛下垂
-      buildCurve('ParamBrowLY', kf([[0, 0], [0.4, -0.32], [2, -0.34]]), { loop: false, duration: 2 }),
-      buildCurve('ParamBrowRY', kf([[0, 0], [0.4, -0.32], [2, -0.34]]), { loop: false, duration: 2 }),
-      // 嘴角向下 + 小小叹气
-      buildCurve('ParamMouthForm', kf([[0, 0], [0.45, -0.42], [2, -0.4]]), { loop: false, duration: 2 }),
-      buildCurve('ParamMouthOpenY', kf([[0, 0], [0.5, 0.05], [1.2, 0.1], [2, 0.05]]), {
-        loop: false,
-        duration: 2,
-      }),
-    ],
-  },
-  {
-    group: 'Done',
-    file: 'done.motion3.json',
-    duration: 2,
-    loop: false,
-    build: () => [
-      // 开心点头：抬头 -> 低头 -> 再抬 -> 回正
-      buildCurve('ParamAngleY', kf([
-        [0, 0],
-        [0.22, 5],
-        [0.5, -3],
-        [0.78, 3.5],
-        [1.08, -1.5],
-        [1.4, 1],
-        [2, 0],
-      ]), { loop: false, duration: 2 }),
-      buildCurve('ParamAngleZ', kf([[0, 0], [0.3, -2], [0.75, 2.5], [1.3, -1.2], [2, 0]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamAngleX', kf([[0, 0], [0.5, 1.5], [1.2, -1], [2, 0]]), { loop: false, duration: 2 }),
-      // 弯眼笑（物理会把 ParamEye*Smile 由 ParamMouthForm 重算，两者都给）
-      buildCurve('ParamEyeLSmile', kf([[0, 0], [0.3, 0.8], [1.6, 0.8], [2, 0.7]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamEyeRSmile', kf([[0, 0], [0.3, 0.8], [1.6, 0.8], [2, 0.7]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamMouthForm', kf([[0, 0], [0.3, 0.55], [2, 0.45]]), { loop: false, duration: 2 }),
-      // 张嘴欢呼（一开一合）
-      buildCurve('ParamMouthOpenY', kf([
-        [0, 0],
-        [0.2, 0.45],
-        [0.5, 0.12],
-        [0.8, 0.4],
-        [1.2, 0.1],
-        [2, 0.12],
-      ]), { loop: false, duration: 2 }),
-      buildCurve('ParamEyeLOpen', kf([[0, 1], [0.3, 0.85], [1.6, 0.85], [2, 0.9]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamEyeROpen', kf([[0, 1], [0.3, 0.85], [1.6, 0.85], [2, 0.9]]), {
-        loop: false,
-        duration: 2,
-      }),
-      // 轻跳（躯干 Y 轴，物理输出权重 50）
-      buildCurve('ParamBodyAngleY0', kf([[0, 0], [0.25, 2], [0.6, 0], [1.0, 1.2], [2, 0]]), {
-        loop: false,
-        duration: 2,
-      }),
-    ],
-  },
-  {
-    group: 'Waiting',
-    file: 'waiting.motion3.json',
-    duration: 3,
-    loop: true,
-    build: () => [
-      // 左右张望：头与眼珠同步（一次完整左右往返）
-      buildCurve('ParamAngleX', periodic(3, 12, (tau) => 9 * Math.sin(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamEyeBallX', periodic(3, 12, (tau) => 0.45 * Math.sin(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamAngleZ', periodic(3, 12, (tau) => -1.5 * Math.sin(TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamAngleY', periodic(3, 12, (tau) => 0.8 * Math.sin(2 * TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      // 好奇地抬一点眉毛
-      buildCurve('ParamBrowLY', periodic(3, 12, (tau) => 0.12 + 0.06 * Math.sin(2 * TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-      buildCurve('ParamBrowRY', periodic(3, 12, (tau) => 0.12 + 0.06 * Math.sin(2 * TAU * tau)), {
-        loop: true,
-        duration: 3,
-      }),
-    ],
-  },
-  {
-    group: 'TapHead',
-    file: 'tap-head.motion3.json',
-    duration: 2,
-    loop: false,
-    build: () => [
-      // 被摸头：舒服地眯眼、笑、脸颊鼓一点、头轻轻左右蹭
-      buildCurve('ParamAngleZ', kf([
-        [0, 0],
-        [0.25, 3.5],
-        [0.55, -3.5],
-        [0.85, 2.5],
-        [1.15, -2],
-        [1.5, 1],
-        [2, 0],
-      ]), { loop: false, duration: 2 }),
-      buildCurve('ParamAngleX', kf([[0, 0], [0.4, 2], [0.9, -1.2], [1.4, 0.8], [2, 0]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamAngleY', kf([[0, 0], [0.35, 3], [1.2, 2], [2, 0]]), { loop: false, duration: 2 }),
-      buildCurve('ParamEyeLOpen', kf([[0, 1], [0.3, 0.3], [1.4, 0.32], [1.75, 0.8], [2, 1]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamEyeROpen', kf([[0, 1], [0.3, 0.3], [1.4, 0.32], [1.75, 0.8], [2, 1]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamEyeLSmile', kf([[0, 0], [0.35, 0.8], [1.6, 0.8], [2, 0.3]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamEyeRSmile', kf([[0, 0], [0.35, 0.8], [1.6, 0.8], [2, 0.3]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamMouthForm', kf([[0, 0], [0.35, 0.55], [1.6, 0.5], [2, 0.15]]), {
-        loop: false,
-        duration: 2,
-      }),
-      buildCurve('ParamCheekPuff', kf([[0, 0], [0.4, 0.45], [1.5, 0.4], [2, 0.1]]), {
-        loop: false,
-        duration: 2,
-      }),
-    ],
-  },
-  {
-    group: 'TapFace',
-    file: 'tap-face.motion3.json',
-    duration: 1.8,
-    loop: false,
-    build: () => [
-      // 被戳脸：头微偏、眼半闭、惊讶地小声「诶」
-      buildCurve('ParamAngleZ', kf([[0, 0], [0.25, 5], [0.7, 6], [1.2, 4], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamAngleX', kf([[0, 0], [0.3, 3], [0.8, 2.5], [1.8, 0]]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamAngleY', kf([[0, 0], [0.3, 1.5], [0.9, 1], [1.8, 0]]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamEyeLOpen', kf([[0, 1], [0.3, 0.45], [1.1, 0.5], [1.8, 1]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamEyeROpen', kf([[0, 1], [0.3, 0.45], [1.1, 0.5], [1.8, 1]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamEyeBallX', kf([[0, 0], [0.3, -0.35], [1.1, -0.3], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamMouthOpenY', kf([[0, 0], [0.2, 0.28], [0.7, 0.12], [1.3, 0.2], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamBrowLY', kf([[0, 0], [0.25, 0.2], [1.2, 0.15], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamBrowRY', kf([[0, 0], [0.25, 0.2], [1.2, 0.15], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-    ],
-  },
-  {
-    group: 'TapBody',
-    file: 'tap-body.motion3.json',
-    duration: 1.8,
-    loop: false,
-    build: () => [
-      // 被戳身体：身体轻微后仰/晃动 + 头微抬
-      buildCurve('ParamBodyAngleX0', kf([[0, 0], [0.3, -3], [0.8, -2.4], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamBodyAngleZ0', kf([[0, 0], [0.3, 3], [0.9, 2.4], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamBodyAngleY0', kf([[0, 0], [0.35, 1.5], [0.9, 0.8], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamAngleX', kf([[0, 0], [0.4, 4], [1.0, 2], [1.8, 0]]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamAngleY', kf([[0, 0], [0.3, 5], [1.0, 3.5], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamAngleZ', kf([[0, 0], [0.35, -2], [1.0, -1], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamEyeLOpen', kf([[0, 1], [0.35, 0.85], [1.2, 0.9], [1.8, 1]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamEyeROpen', kf([[0, 1], [0.35, 0.85], [1.2, 0.9], [1.8, 1]]), {
-        loop: false,
-        duration: 1.8,
-      }),
-      buildCurve('ParamMouthOpenY', kf([[0, 0], [0.3, 0.15], [1.2, 0.1], [1.8, 0]]), {
-        loop: false,
-        duration: 1.8,
-      }),
     ],
   },
 ]
@@ -829,29 +527,28 @@ function main() {
       )
     }
   }
-  check(generated.size === EXPECTED_GROUPS.length, `应生成 ${EXPECTED_GROUPS.length} 个动作，实际 ${generated.size}`)
+  check(generated.size === MOTION_DEFS.length, `应生成 ${MOTION_DEFS.length} 个自建动作，实际 ${generated.size}`)
 
   // 2. 逐个动作从磁盘校验
   const reports = []
-  for (const group of EXPECTED_GROUPS) {
-    const item = generated.get(group)
-    check(!!item, `缺少动作组 ${group}`)
+  for (const def of MOTION_DEFS) {
+    const item = generated.get(def.group)
+    check(!!item, `缺少动作组 ${def.group}`)
     if (!item) continue
     const result = validateMotionFile(item.file, item.def)
     if (!result) continue
     const segInfo = result.motion.Curves.map((c) => `${c.Id}=${paramRangeText(c)}`)
     reports.push({
-      group,
-      file: item.def.file,
-      duration: item.def.duration,
-      loop: item.def.loop,
+      group: def.group,
+      file: def.file,
+      duration: def.duration,
+      loop: def.loop,
       curveCount: result.motion.Meta.CurveCount,
       segments: result.motion.Meta.TotalSegmentCount,
       points: result.motion.Meta.TotalPointCount,
       params: segInfo,
     })
   }
-
   // 3. model3.json 校验（引用文件存在 / Motions 组名 / Groups / 文件互引）
   const model3 = parseJsonFile(MODEL3_FILE, '简.model3.json')
   if (model3) {
@@ -960,7 +657,7 @@ function main() {
     process.exitCode = 1
     return
   }
-  console.log('✓ 全部校验通过（JSON 可解析 / 参数均在 cdi3 / Meta 计数自洽 / 时长=末关键帧 / 引用文件存在）')
+  console.log('✓ 全部校验通过（JSON 可解析 / 参数均在 cdi3 / Meta 计数自洽 / 引用文件存在）')
 }
 
 main()

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- **动作集精简**：删除自建的 Thinking / Error / Done / Waiting / TapHead / TapFace / TapBody，只保留 `Idle`；原始资产 `Scene1` 经调研确认缺失参数（9 条曲线 7 条无效）几乎无可见表演，未采用（ADR-017）。默认映射仅 `idle → Idle`，其余事件/默认触摸部位不挂动作；`scripts/gen-jian-motions.mjs` 改为只生成 Idle
 - 调试面板改为浮在角色模型上方的绝对定位浮层（不再占据布局把画布往下推）；调试面板可见时对白气泡避让叠在其上方
 - **插件更名**：包名/插件 id/bundle 行统一为 `dsh-waifu`；API 前缀改为 `/api/dsh-waifu`、素材路由 `/waifu-assets`、插件私有目录 `$DSH_HOME/waifu/`（ADR-016）
 - **移除自定义模型支持**：删除模型选择/导入 UI、`/models`、`/custom-models`、`/pet-local-models` 路由与 local-models/custom-models 模块（ADR-016，supersede ADR-009/010）

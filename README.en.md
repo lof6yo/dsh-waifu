@@ -16,7 +16,7 @@ It ships one built-in model, **Jian**, and drives motion + speech from **event b
 
 ## Features
 
-- **Built-in model “Jian”**: shipped inside the package (moc3 / textures / physics / cdi3), no model download; the plugin authors 8 motions (Idle / Thinking / Error / Done / Waiting / TapHead / TapFace / TapBody). This version has **no** model selection/import UI.
+- **Built-in model “Jian”**: shipped inside the package (moc3 / textures / physics / cdi3), no model download; only one motion group is bundled: the authored **Idle**. (The original asset's Scene1 was researched and dropped — most of its target parameters are missing from the exported model, see ADR-017.) This version has **no** model selection/import UI.
 - **Event bindings (animation + lines)**: each of the 6 events has motion-group candidates and a line pool; thinking / waiting support three staged line pools (on-entry / 15s / 40s and on-entry / 30s / 90s) with timed progression; each card can reset to defaults.
 - **User-defined touchboxes**: no longer relies on the model's HitAreas. A part = name + one or more normalized rectangles (entered as 0–100% of the character bounding box) + layer + its own line pool and touch motion groups. Overlaps resolve by **layer order** (upper part wins), reorderable with ↑/↓.
 - **Preview editing**: “Touch parts” → “Preview boxes” draws every box on the character live; click the character in preview mode to try the part's lines/motions.

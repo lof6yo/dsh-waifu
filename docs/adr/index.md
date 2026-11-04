@@ -22,3 +22,4 @@
 | [014](014-bundled-jian-model-and-touchbox-parts.md) | 内置「简」模型（随包分发 + 自建动作）与用户自定义 touchbox 部位 | Accepted |
 | [015](015-event-bindings-replace-personas.md) | 移除固定人设，改为事件绑定（动画 + 台词；后续 LLM 人设） | Accepted（supersede ADR-007） |
 | [016](016-rename-to-dsh-waifu-and-drop-custom-models.md) | 插件更名为 dsh-waifu，并移除自定义模型支持 | Accepted（supersede ADR-009/010） |
+| [017](017-motion-set-idle-only.md) | 动作集精简为仅 Idle；原始 Scene1 调研后不采用 | Accepted（部分取代 ADR-014） |
