@@ -1,14 +1,14 @@
 /**
  * 设置页 → 宠物悬浮层的命令事件（window CustomEvent，同页面内通信）。
  *
- * `dsh-live2d-pets:recenter`：设置页点「归位」时广播；宠物按「显示区中心距右/距下」的
+ * `dsh-waifu:recenter`：设置页点「归位」时广播；宠物按「显示区中心距右/距下」的
  * 配置（config.homeRight / config.homeBottom）重新计算位置并持久化（需要视口与画布尺寸，
  * 只有宠物半边知道，所以不在 Host 侧直接重置）。
- * @module dsh-live2d-pets/client/pet-commands
+ * @module dsh-waifu/client/pet-commands
  */
 
 /** 归位命令事件名。 */
-export const RECENTER_EVENT = 'dsh-live2d-pets:recenter'
+export const RECENTER_EVENT = 'dsh-waifu:recenter'
 
 /** 广播归位命令（设置页调用）。 */
 export function emitRecenter(): void {

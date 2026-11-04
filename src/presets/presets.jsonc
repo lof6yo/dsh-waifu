@@ -2,7 +2,7 @@
   // 内置模型清单（只读，随包分发）。
   // ⚠ 修改会随插件升级/重装被覆盖；用户自定义模型请用设置页「我的模型」（custom-models.jsonc）。
   // 字段说明：
-  //   - modelUrl   : .model3.json 地址。内置模型随包分发，走 Host 同源 /pet-assets/models/<id>/ 路由
+  //   - modelUrl   : .model3.json 地址。内置模型随包分发，走 Host 同源 /waifu-assets/models/<id>/ 路由
   //   - animationMap: 状态动画映射（Idle/Thinking/Error/Done/Waiting 动作组名）
   //   - touchParts : 默认触摸部位（用户保存过自定义部位后以其为准，见 touch-parts.jsonc）
   "version": 4,
@@ -11,7 +11,7 @@
       "id": "jian",
       "name": "简",
       "author": "用户自备模型",
-      "modelUrl": "/pet-assets/models/jian/简.model3.json",
+      "modelUrl": "/waifu-assets/models/jian/简.model3.json",
       "license": {
         "type": "用户自备模型（随包内置；公开分发前请确认模型授权）",
         "url": "https://www.live2d.com/eula/"

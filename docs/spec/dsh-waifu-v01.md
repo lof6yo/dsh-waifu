@@ -1,6 +1,6 @@
 # Spec: Live2D 宠物插件（v0.2：内置「简」+ 自定义触摸部位）
 
-用户可感知行为规格。对应 Intent：[`../intent/live2d-pet-plugin.md`](../intent/live2d-pet-plugin.md)。
+用户可感知行为规格。对应 Intent：[`../intent/dsh-waifu.md`](../intent/dsh-waifu.md)。
 状态事件与挂载点基于实测（ADR-002）；渲染技术基于 ADR-003；内置模型与自建动作、touchbox 部位见 ADR-014；DSH 0.2.x settings 适配见 ADR-013。
 
 ## 1. 概述
@@ -10,7 +10,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 ## 2. 启用与设置
 
 - 插件启用后宠物默认显示在**右下角**（停靠角固定右下角，不可配置；拖动后可自由放置）
-- 设置入口：DSH 设置面板顶层「桌宠配置」tab（`settings.section`）；设置持久化到插件私有 `$DSH_HOME/live2d-pet/settings.jsonc`（JSONC；ADR-013）
+- 设置入口：DSH 设置面板顶层「桌宠配置」tab（`settings.section`）；设置持久化到插件私有 `$DSH_HOME/waifu/settings.jsonc`（JSONC；ADR-013）
 - 单页设置流程（从上到下，每个 Section 有统一标题与说明）：**显示 → 事件绑定 → 触摸部位 → 开发者选项**（本版只内置「简」模型，不提供模型选择/导入）。「显示」内含三张带标题的卡片：基础显示（开关/尺寸/渲染帧率）、画布与位置（留白/默认位置/归位）、对白气泡（位置与样式）；采用**显式保存**（无自动保存；切模型/离开设置时自动补存）：事件绑定分组在 `eventsDirty/saving/error` 时显示保存状态行（已保存时间/失败原因）；触摸部位按**部位粒度**：只有被改动的部位卡片顶部显示「● 未保存改动 · 保存」，新建/删除/排序等结构变更在分组顶部提示保存
 - 设置项：
   - 开关（显示/隐藏）
@@ -76,7 +76,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
   - **动画映射**：部位建立后，该部位出现在「动画映射」中，可勾选当前模型 `.model3.json` 的任意动作组（多选 = 触摸时随机播一个）
   - **图层排序**：部位卡片带「↑ 上移 / ↓ 下移」与层号（#1 顶层…），列表从上到下 = 顶层到底层；新建部位插入最上层
   - **状态动画映射（当前模型）**：6 个状态槽位各可多选动作组（含内置「简」），保存为该模型的状态动画覆盖层；未配置的槽位沿用内置默认
-- 任何草稿变更即时反映到宠物叠加层（预览开启时，未保存也实时）；改动按**部位粒度**标记未保存（卡片顶部「保存」按钮），点保存写回 `$DSH_HOME/live2d-pet/touch-parts.jsonc`（或切换模型/离开设置时自动补存）；保存成功后短暂显示「已保存 HH:MM:SS」
+- 任何草稿变更即时反映到宠物叠加层（预览开启时，未保存也实时）；改动按**部位粒度**标记未保存（卡片顶部「保存」按钮），点保存写回 `$DSH_HOME/waifu/touch-parts.jsonc`（或切换模型/离开设置时自动补存）；保存成功后短暂显示「已保存 HH:MM:SS」
 - 关闭预览后宠物恢复常规显示；当前模型切换时自动退出预览并载入新模型的部位（未保存改动先自动补存）
 - 用户未保存过部位时，使用内置默认部位（「简」：脸/头/胸/臀，含示例台词与部位动作，见 presets.jsonc）；保存后以用户文件为准
 - 部位数据（含「保存过」状态）经 SSE 随快照下发，宠物即时使用新部位判定
@@ -90,11 +90,11 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 
 ## 6. 模型清单与加载
 
-- **本版只内置「简」**（`presets.jsonc` 唯一一条，`modelUrl: /pet-assets/models/jian/简.model3.json`）；不提供模型选择/导入 UI（自定义模型能力暂不对用户暴露，后续版本再考虑）：
+- **本版只内置「简」**（`presets.jsonc` 唯一一条，`modelUrl: /waifu-assets/models/jian/简.model3.json`）；不提供模型选择/导入 UI（自定义模型能力暂不对用户暴露，后续版本再考虑）：
   - 模型资源**随包分发**在 `assets/models/jian/`（moc3、纹理、physics3、cdi3、model3.json、motions）
   - 自建动作组：`Idle` / `Thinking` / `Error` / `Done` / `Waiting` / `TapHead` / `TapFace` / `TapBody`，由 `scripts/gen-jian-motions.mjs` 幂等生成；`model3.json` 声明 `EyeBlink`（ParamEyeLOpen/ROpen）与 `LipSync`（ParamMouthOpenY）参数组
   - 许可标注：作者「用户自备模型」、许可类型「用户自备模型（随包内置；公开分发前请确认模型授权）」
-- 素材经 Host 同源 `/pet-assets/*` prefix 路由提供（带目录穿越防护；moc3/json/png 等 MIME 正确）
+- 素材经 Host 同源 `/waifu-assets/*` prefix 路由提供（带目录穿越防护；moc3/json/png 等 MIME 正确）
 - 动作组选项来自当前模型 `.model3.json` 的 `Motions`（设置页事件绑定/触摸动画的复选框），解析失败时可保存但无动作可选
 - 旧配置里失效的内置模型 id（如 `hiyori`）自动回退到「简」，升级不出现空白
 - **加载失败兜底**：显示静态头像占位 + 错误气泡提示，不影响 GUI 其它功能
@@ -119,7 +119,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - [ ] 触摸部位重启/刷新后保持；换模型后部位随之切换；无默认部位的模型点击不响应
 - [ ] 「显示触摸部位色块」开发者选项可独立开关叠加层
 - [ ] 鼠标跟随（移动/拖拽/移出/隐藏）；完成庆祝与交付庆祝；标签页隐藏暂停；WebGL 不可用降级静态头像
-- [ ] 设置面板：开关/尺寸/帧率/模型列表/事件绑定/触摸部位/调试模式生效并持久化（设置写 `$DSH_HOME/live2d-pet/settings.jsonc`；事件绑定与触摸部位写 `$DSH_HOME/live2d-pet/touch-parts.jsonc`；刷新后保持）
+- [ ] 设置面板：开关/尺寸/帧率/模型列表/事件绑定/触摸部位/调试模式生效并持久化（设置写 `$DSH_HOME/waifu/settings.jsonc`；事件绑定与触摸部位写 `$DSH_HOME/waifu/touch-parts.jsonc`；刷新后保持）
 - [ ] 事件绑定：6 事件的动作组与台词可改并即时生效；长状态三阶段台词按时间推进；「恢复默认」可用
 - [ ] 本版不显示模型选择/导入入口；固定加载内置「简」；加载失败显示静态头像
 - [ ] debug 开关：显示调试面板、「演示状态」可强制状态、动画预览可播放模型原生动作
@@ -128,12 +128,12 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 
 - 渲染：pixi-live2d-display 0.4.0 + PixiJS 6.5.10 + Cubism Core 4（ADR-003）
 - 挂载：Client Slot `shell.overlay`；设置入口：Client Slot `settings.section`（ADR-002）
-- 设置：插件私有 `$DSH_HOME/live2d-pet/settings.jsonc`（ADR-013；DSH 0.2.x `ctx.settings` 不再是 namespace 注册表，写入会触发整插件重载；`settings.configure({auto:false})` 隐藏自动表单页）；读写经 `/api/live2d-pet/settings`（GET `{value,error,path,writable}` / POST `{ops}`）
+- 设置：插件私有 `$DSH_HOME/waifu/settings.jsonc`（ADR-013；DSH 0.2.x `ctx.settings` 不再是 namespace 注册表，写入会触发整插件重载；`settings.configure({auto:false})` 隐藏自动表单页）；读写经 `/api/dsh-waifu/settings`（GET `{value,error,path,writable}` / POST `{ops}`）
 - 状态源：Host 订阅 `agent/status`、`agent/error`、`agent/turn-stopping`、`approval/request`（ADR-002）；交付态订阅 `session/event` 的 `deliverables/presented`（ADR-012）
-- 状态传输：Host→Client 同源 SSE `/api/live2d-pet/events`（快照 + 变更推送 + 30s 心跳，ADR-006）；首帧走 `GET /api/live2d-pet/state`
+- 状态传输：Host→Client 同源 SSE `/api/dsh-waifu/events`（快照 + 变更推送 + 30s 心跳，ADR-006）；首帧走 `GET /api/dsh-waifu/state`
 - **事件绑定**（ADR-015）：`EventBindings`（`models.ts`）随 `PetStateView.config.events` 下发；默认台词常量 `DEFAULT_EVENT_BINDINGS` + 模型 `animationMap` 提供动作组，用户覆盖存 `touch-parts.jsonc` 的 `models[<id>].events`（整事件替换）；无固定人设，后续 LLM 人设走提示词
-- **模型与素材**：内置模型随包（`assets/models/jian/`），`/pet-assets/*` prefix 路由（目录穿越防护）；本版 UI 不暴露模型选择/自定义模型
-- **触摸部位**（ADR-014）：`TouchPart`/`TouchBox` 共享类型与纯函数（`normalizeTouchParts` / `pointToBoundsRatio` / `hitTestTouchParts`）在 `src/models.ts`；Host `TouchPartsStore` 读写 `$DSH_HOME/live2d-pet/touch-parts.jsonc`（按模型 id 分组：`parts` + 可选 `animationMap` 覆盖层；未保存回退内置默认）；client 设置页与宠物层通过 `window` CustomEvent（`dsh-live2d-pets:touch-edit`）传递编辑态与草稿部位；宠物层用 `model.getBounds()` 换算 box 到画布坐标绘制叠加层
+- **模型与素材**：内置模型随包（`assets/models/jian/`），`/waifu-assets/*` prefix 路由（目录穿越防护）；本版 UI 不暴露模型选择/自定义模型
+- **触摸部位**（ADR-014）：`TouchPart`/`TouchBox` 共享类型与纯函数（`normalizeTouchParts` / `pointToBoundsRatio` / `hitTestTouchParts`）在 `src/models.ts`；Host `TouchPartsStore` 读写 `$DSH_HOME/waifu/touch-parts.jsonc`（按模型 id 分组：`parts` + 可选 `animationMap` 覆盖层；未保存回退内置默认）；client 设置页与宠物层通过 `window` CustomEvent（`dsh-waifu:touch-edit`）传递编辑态与草稿部位；宠物层用 `model.getBounds()` 换算 box 到画布坐标绘制叠加层
 - 动作管理：pixi-live2d-display `MotionPriority`（IDLE=1 / NORMAL=2 / FORCE=3），idle 用 IDLE、状态与互动用 FORCE；重播同一动作前先 `stopAllMotions()`；完成信号统一用 `motionFinish`（ADR-008）
 - focus 抑制：非 idle 动作播放期间 `focusController.focus(0, 0, true)` 归零 + `pointermove` 门控，`motionFinish` 后恢复（ADR-008）
 - 动画映射：`resolveMotionMap()` 合并 `DEFAULT_MOTION_MAP` + 自定义条目/内置 preset；状态槽位 6 个；部位动作走 `part.motions`（ADR-014）

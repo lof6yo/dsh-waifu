@@ -23,8 +23,8 @@
 
 ### 1. 模型随包分发
 
-- 内置模型资源放在 `assets/models/<id>/`（moc3 / texture / physics3 / cdi3 / model3.json / motions），由 Host 的 `/pet-assets/*` prefix 路由同源提供（复用素材路由，带目录穿越防护）。
-- `presets.jsonc` 只剩 `jian` 一条：`modelUrl: "/pet-assets/models/jian/简.model3.json"`。许可证字段标注「用户自备模型（随包内置；公开分发前请确认模型授权）」。
+- 内置模型资源放在 `assets/models/<id>/`（moc3 / texture / physics3 / cdi3 / model3.json / motions），由 Host 的 `/waifu-assets/*` prefix 路由同源提供（复用素材路由，带目录穿越防护）。
+- `presets.jsonc` 只剩 `jian` 一条：`modelUrl: "/waifu-assets/models/jian/简.model3.json"`。许可证字段标注「用户自备模型（随包内置；公开分发前请确认模型授权）」。
 - 自定义模型能力保留（任意 http(s) URL / 本机绝对路径，ADR-010）。
 - 旧配置里的失效模型 id（如 `hiyori`）由 `resolveModelUrl` 回退默认内置模型，升级后不空白。
 
@@ -43,7 +43,7 @@
 - `TouchPart { id, name, boxes: TouchBox[], motions: string[] }`
 - `TouchBox { left, top, right, bottom }`：相对**模型包围盒**的 0–1 归一化坐标（左上右下）。
 - 命中判定 `hitTestTouchParts(parts, nx, ny)`：只用 box；**部位有图层（parts 数组顺序，第 0 项最上层），重叠时上层部位生效**（设置页可上移/下移排序），未命中不响应。
-- 部位数据按模型 id 存在插件私有 `$DSH_HOME/live2d-pet/touch-parts.jsonc`；用户没保存过时回退 `presets.jsonc` 的默认部位（简：头/脸/身体）。
+- 部位数据按模型 id 存在插件私有 `$DSH_HOME/waifu/touch-parts.jsonc`；用户没保存过时回退 `presets.jsonc` 的默认部位（简：头/脸/身体）。
 
 交互/设置流：
 

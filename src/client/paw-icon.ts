@@ -4,7 +4,7 @@
  * DSH `dsh-client-ui-settings-general` 当前按 section id 硬编码导航图标
  * （未知 id 一律齿轮），settings.section 的 `icon` 选项尚未接入投影。
  * 因此在导航出现「桌宠配置」时用爪印 SVG 替换齿轮，作为可随插件发布的兼容方案。
- * @module dsh-live2d-pets/client/paw-icon
+ * @module dsh-waifu/client/paw-icon
  */
 
 import { createElement } from 'react'

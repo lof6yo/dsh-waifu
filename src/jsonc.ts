@@ -1,7 +1,7 @@
 /**
  * 插件私有 JSONC 文件解析工具：去注释后交给 JSON.parse。
- * 供 settings-store / custom-models / touch-parts 等插件私有配置文件共用。
- * @module dsh-live2d-pets/jsonc
+ * 供 settings-store / touch-parts 等插件私有配置文件共用。
+ * @module dsh-waifu/jsonc
  */
 
 export function stripJsonComments(text: string): string {

@@ -12,7 +12,7 @@ Confirmed intent（已经用户确认的方向）。
 
 **触摸部位（2026-11 重做）**：不再固定「头/腿/手/身体」四档，也不依赖模型 HitArea；部位抽象为**用户自定义 touchbox**：每个部位有名字 + 一到多个矩形 box + 该部位的触摸动作组。设置页「触摸部位」提供：编辑开关（模型进入编辑态、box 实时显示在角色上）、新建部位、添加 box、输入左上右下百分比、一个部位多个 box、按部位多选触摸动画。
 
-内置 DSH 设置面板「桌宠配置」tab（`settings.section`），单页设置项：**开关 / 尺寸滑杆 / 渲染帧率 / 画布留白 / 默认位置与归位 / 对白气泡 / 事件绑定 / 触摸部位 / 开发者选项**；标量配置持久化于插件私有 `$DSH_HOME/live2d-pet/settings.jsonc`（DSH 0.2.x settings 服务适配，ADR-013）；事件绑定与触摸部位走 `$DSH_HOME/live2d-pet/touch-parts.jsonc`（ADR-014/015）。
+内置 DSH 设置面板「桌宠配置」tab（`settings.section`），单页设置项：**开关 / 尺寸滑杆 / 渲染帧率 / 画布留白 / 默认位置与归位 / 对白气泡 / 事件绑定 / 触摸部位 / 开发者选项**；标量配置持久化于插件私有 `$DSH_HOME/waifu/settings.jsonc`（DSH 0.2.x settings 服务适配，ADR-013）；事件绑定与触摸部位走 `$DSH_HOME/waifu/touch-parts.jsonc`（ADR-014/015）。
 
 ## User
 

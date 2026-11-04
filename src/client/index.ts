@@ -1,11 +1,11 @@
 /**
- * dsh-live2d-pets 浏览器半区：挂载 Live2D 桌宠 + 「桌宠配置」设置页。
+ * dsh-waifu 浏览器半区：挂载 Live2D 桌宠 + 「桌宠配置」设置页。
  *
  * 架构（ADR-005 / 004，spike pkg-9 实证）：
  * - `shell.overlay` 注册零尺寸锚点（生命周期/设置锚点）
  * - 视觉层用 Popover API（top layer，零 z-index）渲染，旧浏览器回退 body + 最大 z-index
- * - 运行时脚本与预设模型走 Host 同源路由（/pet-assets/*），无 CDN 依赖
- * - agent 状态经 /api/live2d-pet/events SSE 推送（首帧快照 + 变更推送，ADR-006）；
+ * - 运行时脚本与预设模型走 Host 同源路由（/waifu-assets/*），无 CDN 依赖
+ * - agent 状态经 /api/dsh-waifu/events SSE 推送（首帧快照 + 变更推送，ADR-006）；
  *   标签页隐藏/窗口失焦暂停渲染循环，恢复时继续（spec §7）
  * - 点击/拖动按 6px 阈值判定；自由位置拖动，松手持久化（spec §4）
  * - 触摸部位完全由用户自定义 box 决定（相对模型包围盒 0–1 归一化矩形）；点击命中部位后
@@ -19,7 +19,7 @@
  * - 配置（enabled/size/maxFps/debug/model/events）经状态推送运行时应用：开关→显隐+停启渲染、
  *   尺寸→重设画布与模型适配、帧率→ticker.maxFPS、调试→动态面板、模型→按 modelUrl 重载、
  *   事件绑定（动作组 + 台词池）→热更新状态表现（spec §2/§3/§6/§7）
- * @module dsh-live2d-pets/client
+ * @module dsh-waifu/client
  */
 
 import { createElement, useEffect, useRef } from 'react'
@@ -120,12 +120,12 @@ function normalizeMaxFps(raw: unknown): number {
   return DEFAULT_MAX_FPS
 }
 const VENDOR_SCRIPTS = [
-  '/pet-assets/vendor/pixi.min.js',
-  '/pet-assets/vendor/live2dcubismcore.min.js',
-  '/pet-assets/vendor/live2d-display.cubism4.min.js',
+  '/waifu-assets/vendor/pixi.min.js',
+  '/waifu-assets/vendor/live2dcubismcore.min.js',
+  '/waifu-assets/vendor/live2d-display.cubism4.min.js',
 ]
 
-const PET_API = '/api/live2d-pet'
+const PET_API = '/api/dsh-waifu'
 
 /** PIXI 全局（script 注入，非模块导入）。 */
 declare const PIXI: {
@@ -1703,12 +1703,12 @@ export function apply(ctx: ClientContext): void {
   const slots = ctx.get('slots') as SlotsLike | undefined
   if (slots === undefined) { clientLog('warn', 'apply: slots service unavailable'); return }
   slots.inject('shell.overlay', () => slots.register(
-    { name: 'shell.overlay', id: 'live2d-pet' },
+    { name: 'shell.overlay', id: 'waifu' },
     () => createElement(PetAnchor),
   ))
 
   // 桌宠配置设置页（settings.section，spec §2）：开关/尺寸/模型列表/事件绑定/触摸部位/调试，
-  // 读写经插件自身 API（/api/live2d-pet/settings，Host 直连插件私有 JSONC 文件；
+  // 读写经插件自身 API（/api/dsh-waifu/settings，Host 直连插件私有 JSONC 文件；
   // 不走 settingsScope wire，见 docs/research/settings-tab.md「设置服务不可用」根因）。
   // 导航爪印：平台 settings-general 按 id 硬编码图标（未知 id→齿轮），故 register.icon
   // 暂不生效；installPetSettingsNavIcon 在 DOM 层替换，卸载时一并清理。
@@ -1717,7 +1717,7 @@ export function apply(ctx: ClientContext): void {
     const disposeSection = slots.register(
       {
         name: 'settings.section',
-        id: 'live2d-pet',
+        id: 'waifu',
         order: 200,
         label: () => '桌宠配置',
         icon: pawNavIcon,

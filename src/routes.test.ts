@@ -7,7 +7,6 @@ import type { IncomingMessage } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { makePetRoutes, PET_API_PREFIX, PET_ASSET_PREFIX } from './routes.ts'
 import { PetService } from './service.ts'
-import { CustomModelsStore } from './custom-models.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 import type { PetSettings } from './settings-store.ts'
 
@@ -64,7 +63,7 @@ const BASE_SETTINGS: PetSettings = {
 }
 
 function makeRoutes() {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-live2d-pets-route-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-route-'))
   mkdirSync(join(dir, 'assets', 'vendor'), { recursive: true })
   mkdirSync(join(dir, 'assets', 'models', 'jian'), { recursive: true })
   writeFileSync(join(dir, 'assets', 'vendor', 'pixi.min.js'), 'fake-pixi-js')
@@ -80,15 +79,14 @@ function makeRoutes() {
     },
     effect: (fn: () => () => void) => { fn() },
   } as unknown as Context
-  const customModelsStore = new CustomModelsStore()
   const touchPartsStore = new TouchPartsStore()
-  const service = new PetService(ctx, () => BASE_SETTINGS, customModelsStore, touchPartsStore)
+  const service = new PetService(ctx, () => BASE_SETTINGS, touchPartsStore)
   const emit = (event: string, payload?: unknown) => {
     const next = vi.fn()
     for (const fn of handlers.get(event) ?? []) fn(payload, next)
     return next
   }
-  const view = () => ({ value: BASE_SETTINGS, writable: true, error: null, path: join(dir, 'home', 'live2d-pet', 'settings.jsonc') })
+  const view = () => ({ value: BASE_SETTINGS, writable: true, error: null, path: join(dir, 'home', 'waifu', 'settings.jsonc') })
   const settings = {
     view,
     write: vi.fn(async () => {}),
@@ -118,18 +116,6 @@ describe('makePetRoutes API 路由', () => {
     cleanup()
   })
 
-  it('GET /models 返回内置（仅简）+ 自定义清单与配置文件路径', async () => {
-    const { route, cleanup } = makeRoutes()
-    const res = fakeRes()
-    route(`${PET_API_PREFIX}/models`)!.handler(fakeReq('GET'), res as never)
-    await flush()
-    const body = JSON.parse(res.state.body.toString('utf8'))
-    expect(body.builtin.length).toBe(1)
-    expect(body.builtin[0].id).toBe('jian')
-    expect(body.custom).toEqual([])
-    expect(body.touchPartsPath).toContain('touch-parts.jsonc')
-    cleanup()
-  })
 
   it('错误方法返回 405', () => {
     const { route, cleanup } = makeRoutes()
@@ -308,13 +294,13 @@ describe('makePetRoutes 素材路由（prefix：vendor + 内置模型）', () =>
   it('命中返回 200 + mime + 内容，HEAD 无 body', async () => {
     const { routes, cleanup } = makeRoutes()
     const get = fakeRes()
-    await assetRoute(routes).handler(fakeReq('GET', undefined, '/pet-assets/vendor/pixi.min.js'), get as never)
+    await assetRoute(routes).handler(fakeReq('GET', undefined, '/waifu-assets/vendor/pixi.min.js'), get as never)
     expect(get.state.status).toBe(200)
     expect(get.state.headers['content-type']).toBe('text/javascript')
     expect(get.state.body.toString('utf8')).toBe('fake-pixi-js')
 
     const head = fakeRes()
-    await assetRoute(routes).handler(fakeReq('HEAD', undefined, '/pet-assets/vendor/pixi.min.js'), head as never)
+    await assetRoute(routes).handler(fakeReq('HEAD', undefined, '/waifu-assets/vendor/pixi.min.js'), head as never)
     expect(head.state.status).toBe(200)
     expect(head.state.body.byteLength).toBe(0)
     cleanup()
@@ -324,7 +310,7 @@ describe('makePetRoutes 素材路由（prefix：vendor + 内置模型）', () =>
     const { routes, cleanup } = makeRoutes()
     const res = fakeRes()
     await assetRoute(routes).handler(
-      fakeReq('GET', undefined, `/pet-assets/models/jian/${encodeURIComponent('简.model3.json')}`),
+      fakeReq('GET', undefined, `/waifu-assets/models/jian/${encodeURIComponent('简.model3.json')}`),
       res as never,
     )
     expect(res.state.status).toBe(200)
@@ -335,7 +321,7 @@ describe('makePetRoutes 素材路由（prefix：vendor + 内置模型）', () =>
   it('目录穿越被拒绝（404）', async () => {
     const { routes, cleanup } = makeRoutes()
     const res = fakeRes()
-    await assetRoute(routes).handler(fakeReq('GET', undefined, '/pet-assets/../package.json'), res as never)
+    await assetRoute(routes).handler(fakeReq('GET', undefined, '/waifu-assets/../package.json'), res as never)
     expect(res.state.status).toBe(404)
     cleanup()
   })
@@ -343,11 +329,11 @@ describe('makePetRoutes 素材路由（prefix：vendor + 内置模型）', () =>
   it('文件缺失返回 404；非 GET/HEAD 返回 405', async () => {
     const { routes, cleanup } = makeRoutes()
     const missing = fakeRes()
-    await assetRoute(routes).handler(fakeReq('GET', undefined, '/pet-assets/vendor/nope.js'), missing as never)
+    await assetRoute(routes).handler(fakeReq('GET', undefined, '/waifu-assets/vendor/nope.js'), missing as never)
     expect(missing.state.status).toBe(404)
 
     const post = fakeRes()
-    await assetRoute(routes).handler(fakeReq('POST', undefined, '/pet-assets/vendor/pixi.min.js'), post as never)
+    await assetRoute(routes).handler(fakeReq('POST', undefined, '/waifu-assets/vendor/pixi.min.js'), post as never)
     expect(post.state.status).toBe(405)
     cleanup()
   })

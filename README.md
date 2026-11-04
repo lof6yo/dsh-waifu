@@ -1,27 +1,27 @@
-# dsh-live2d-pets 🐾
+# dsh-waifu 🐾
 
 [English](README.en.md) | 简体中文
 
-[![npm](https://img.shields.io/npm/v/dsh-live2d-pets.svg)](https://www.npmjs.com/package/dsh-live2d-pets)
+[![npm](https://img.shields.io/npm/v/dsh-waifu.svg)](https://www.npmjs.com/package/dsh-waifu)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/node/v/dsh-live2d-pets.svg)](https://nodejs.org/)
-[![GitHub release](https://img.shields.io/github/v/release/cyanfish-x/dsh-live2d-pets)](https://github.com/cyanfish-x/dsh-live2d-pets/releases)
+[![Node.js](https://img.shields.io/node/v/dsh-waifu.svg)](https://nodejs.org/)
+[![GitHub release](https://img.shields.io/github/v/release/lof6yo/dsh-waifu)](https://github.com/lof6yo/dsh-waifu/releases)
 [![dsh-plugin](https://img.shields.io/badge/topic-dsh--plugin-1f6feb)](https://github.com/topics/dsh-plugin)
 
 给 DeepSeek Harness 请了个看板娘：你思考它歪头，你完成它撒花，还能摸头！
 
 <p align="center">
-  <img src="docs/media/hero.jpg" alt="dsh-live2d-pets 主视觉" width="920" />
+  <img src="docs/media/hero.jpg" alt="dsh-waifu 主视觉" width="920" />
 </p>
 
 ## 特性
 
 - **内置模型「简」**：随插件包分发（Cubism 4 半身像：moc3 / 纹理 / 物理 / cdi3），开箱即用；自带插件创建的 5 个状态动作（Idle / Thinking / Error / Done / Waiting）+ 3 个触摸动作（TapHead / TapFace / TapBody），并启用眨眼与口型参数组
-- **用户自定义触摸部位（touchbox）**：部位不再固定「头/手/腿/身体」——在设置 →「桌宠配置」→「触摸部位」点「编辑触摸部位」，宠物进入编辑态并实时显示 box；新建部位、输入名称、添加 box、输入左上/右下百分比（0–100），一个部位可对应多个 box；每个部位可多选触摸时播放的动作组。命中判定按 box（重叠时最小 box 优先），不依赖模型 HitArea
+- **用户自定义触摸部位（touchbox）**：部位不再固定「头/手/腿/身体」——在设置 →「桌宠配置」→「触摸部位」点「编辑触摸部位」，宠物进入编辑态并实时显示 box；新建部位、输入名称、添加 box、输入左上/右下百分比（0–100），一个部位可对应多个 box；每个部位可多选触摸时播放的动作组。命中判定按 touchbox（重叠时按图层顺序，上层部位生效），不依赖模型 HitArea
 - **状态镜像**：宠物实时反映 agent 思考 / 空闲 / 出错 / 完成 / 交付 / 等审批（动画 + 气泡，SSE 推送）
 - **事件绑定（动画 + 台词）**：空闲 / 思考中 / 出错 / 完成 / 交付 / 等审批各配动作组与台词池（长状态三阶段），设置页直接编辑、可恢复默认；不再有固定人设（后续规划 LLM 人设提示词说话）
 - **互动陪伴**：分部位触摸反应 / 鼠标跟随（头、眼、身体看向鼠标）/ 拖动停靠，任务完成庆祝
-- **桌宠配置设置面板**：DSH 设置 →「桌宠配置」，单页流程：显示 → 事件绑定 → 触摸部位 → 开发者选项；设置写入插件私有 `$DSH_HOME/live2d-pet/settings.jsonc`（DSH 0.2.x 适配，见 ADR-013），事件绑定与触摸部位存 `~/.dsh/live2d-pet/touch-parts.jsonc`，即时生效
+- **桌宠配置设置面板**：DSH 设置 →「桌宠配置」，单页流程：显示 → 事件绑定 → 触摸部位 → 开发者选项；设置写入插件私有 `$DSH_HOME/waifu/settings.jsonc`（DSH 0.2.x 适配，见 ADR-013），事件绑定与触摸部位存 `~/.dsh/waifu/touch-parts.jsonc`，即时生效
 - **不打扰**：默认右下角、小尺寸、可拖动、可隐藏、标签页隐藏暂停渲染、限帧渲染、低配降级静态头像
 - **清晰不拖慢**：内置贴图 4096²（4.9MB），渲染按设备像素比 2x 缓冲 + antialias，Retina 上边缘清晰
 
@@ -36,9 +36,9 @@
 把下面这段提示词复制给你的 DSH agent（在 Web GUI 对话中直接粘贴即可），它会自己安装并验证：
 
 ```text
-请帮我安装 dsh-live2d-pets 插件（DSH 的 Live2D 桌宠插件）：
-1. 执行 dsh plugin --profile web add dsh-live2d-pets 安装
-2. 执行 dsh plugin --profile web list，确认 dsh-live2d-pets 出现在已安装列表中
+请帮我安装 dsh-waifu 插件（DSH 的 Live2D 桌宠插件）：
+1. 执行 dsh plugin --profile web add dsh-waifu 安装
+2. 执行 dsh plugin --profile web list，确认 dsh-waifu 出现在已安装列表中
 3. 告诉我安装结果；如果失败，请附上错误信息
 ```
 
@@ -49,7 +49,7 @@
 在终端执行（`web` profile 首次使用时自动初始化）：
 
 ```sh
-dsh plugin --profile web add dsh-live2d-pets
+dsh plugin --profile web add dsh-waifu
 ```
 
 安装后插件默认启用。启动 DSH：
@@ -76,7 +76,7 @@ dsh web
 4. 一个部位可加多个 box 拼出不规则区域；每个部位可写自己的**台词**（一行一条，留空则只播动作不出气泡）并勾选触摸时随机播放的动作组；
 5. 部位有**图层**：列表从上到下 = 从顶层到底层，box 重叠时上层部位生效，可用「↑ 上移 / ↓ 下移」排序（新建部位默认在最上层）；
 6. 「触摸部位」分组内还有「状态动画映射（当前模型）」：6 个状态各可多选动作组，可覆盖内置「简」的默认映射；
-7. 改动自动保存到 `$DSH_HOME/live2d-pet/touch-parts.jsonc`，退出编辑即生效。
+7. 改动自动保存到 `$DSH_HOME/waifu/touch-parts.jsonc`，退出编辑即生效。
 
 <p align="center">
   <img src="docs/media/settings-pet-config.png" alt="DSH 设置中的「桌宠配置」入口与面板" width="920" />
@@ -98,7 +98,7 @@ dsh web
 ### 卸载
 
 ```sh
-dsh plugin --profile web remove dsh-live2d-pets
+dsh plugin --profile web remove dsh-waifu
 ```
 
 
@@ -109,8 +109,8 @@ dsh plugin --profile web remove dsh-live2d-pets
 | 需求        | 文档                                                                     |
 | --------- | ---------------------------------------------------------------------- |
 | 英文 README | `[README.en.md](README.en.md)`                                         |
-| 产品意图      | `[docs/intent/live2d-pet-plugin.md](docs/intent/live2d-pet-plugin.md)` |
-| 行为规格      | `[docs/spec/live2d-pet-v01.md](docs/spec/live2d-pet-v01.md)`           |
+| 产品意图      | `[docs/intent/dsh-waifu.md](docs/intent/dsh-waifu.md)` |
+| 行为规格      | `[docs/spec/dsh-waifu-v01.md](docs/spec/dsh-waifu-v01.md)`           |
 | 架构决策      | `[docs/adr/](docs/adr/)`（渲染栈见 ADR-003，内置模型与 touchbox 见 ADR-014）       |
 | 调研记录      | `[docs/research/](docs/research/)`（设置面板接入机制见 settings-tab.md）          |
 
@@ -121,9 +121,9 @@ dsh plugin --profile web remove dsh-live2d-pets
 
 - pixi-live2d-display 0.4.0 + PixiJS 6.5.10 + Cubism Core 4（[ADR-003](docs/adr/003-spike-results-and-rendering-stack.md)）
 - 客户端渲染于 DSH Web GUI 的 `shell.overlay` 悬浮层（视觉层 Popover 顶层，[ADR-005](docs/adr/005-pet-visual-top-layer-popover.md)），设置页注册于 `settings.section`（[ADR-002](docs/adr/002-pet-mount-and-state-source.md)）
-- 状态推送：Host 订阅 `agent/*` 事件 → 同源 SSE `/api/live2d-pet/events`（[ADR-006](docs/adr/006-push-state-sse.md)）；标签页隐藏 / 失焦暂停渲染
-- 内置模型与自建动作：`assets/models/jian/` + `scripts/gen-jian-motions.mjs`（幂等生成 motion3.json，[ADR-014](docs/adr/014-bundled-jian-model-and-touchbox-parts.md)）；事件绑定与触摸部位存 `~/.dsh/live2d-pet/touch-parts.jsonc`，设置同为插件私有 JSONC
-- 设置持久化：插件私有 `$DSH_HOME/live2d-pet/settings.jsonc`（DSH 0.2.x settings 服务适配，[ADR-013](docs/adr/013-dsh-0.2.x-settings-plugin-private-file.md)）；传输走插件自身 API `/api/live2d-pet/settings`
+- 状态推送：Host 订阅 `agent/*` 事件 → 同源 SSE `/api/dsh-waifu/events`（[ADR-006](docs/adr/006-push-state-sse.md)）；标签页隐藏 / 失焦暂停渲染
+- 内置模型与自建动作：`assets/models/jian/` + `scripts/gen-jian-motions.mjs`（幂等生成 motion3.json，[ADR-014](docs/adr/014-bundled-jian-model-and-touchbox-parts.md)）；事件绑定与触摸部位存 `~/.dsh/waifu/touch-parts.jsonc`，设置同为插件私有 JSONC
+- 设置持久化：插件私有 `$DSH_HOME/waifu/settings.jsonc`（DSH 0.2.x settings 服务适配，[ADR-013](docs/adr/013-dsh-0.2.x-settings-plugin-private-file.md)）；传输走插件自身 API `/api/dsh-waifu/settings`
 
 
 

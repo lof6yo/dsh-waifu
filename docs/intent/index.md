@@ -16,6 +16,6 @@
 
 | 文档 | 说明 |
 |------|------|
-| [`live2d-pet-plugin.md`](live2d-pet-plugin.md) | Live2D 宠物插件：实用陪伴型，状态镜像 + 触摸/鼠标互动；内置「简」随包分发 + 用户自定义 touchbox 部位 |
+| [`dsh-waifu.md`](dsh-waifu.md) | Live2D 宠物插件：实用陪伴型，状态镜像 + 触摸/鼠标互动；内置「简」随包分发 + 用户自定义 touchbox 部位 |
 
 新篇可参考 Skill 内 `templates/intent-template.md`。

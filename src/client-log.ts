@@ -1,10 +1,10 @@
 /**
- * 浏览器侧诊断日志：Client 半区经 POST /api/live2d-pet/client-log 上报，
- * Host 追加到 `$DSH_HOME/live2d-pet/client.log`（超过上限自动截断）。
+ * 浏览器侧诊断日志：Client 半区经 POST /api/dsh-waifu/client-log 上报，
+ * Host 追加到 `$DSH_HOME/waifu/client.log`（超过上限自动截断）。
  *
  * 用途：桌宠渲染在浏览器里失败时（WebGL / 模型加载 / 脚本注入），
  * 没有浏览器控制台也能在 Host 侧看到启动里程碑与错误栈（spec §9）。
- * @module dsh-live2d-pets/client-log
+ * @module dsh-waifu/client-log
  */
 
 import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
@@ -21,7 +21,7 @@ function petHomeDir(): string {
 
 /** 日志文件绝对路径。 */
 export function clientLogPath(): string {
-  return join(petHomeDir(), 'live2d-pet', 'client.log')
+  return join(petHomeDir(), 'waifu', 'client.log')
 }
 
 /** 追加一行浏览器侧诊断日志（失败静默，不影响主流程）。 */

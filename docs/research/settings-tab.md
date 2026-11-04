@@ -1,15 +1,15 @@
-# Research: 将 dsh-live2d-pets 配置接入 DSH 设置面板（开一个 tab）
+# Research: 将 dsh-waifu 配置接入 DSH 设置面板（开一个 tab）
 
 > 调研报告（Research），非决策记录。结论基于 DSH 官方包（已装版本 0.1.0-rc.6）的 README、类型契约与源码；官方仓库 docs 链接见文末。
-> 状态：**范围已确认**（2026-08，interview-me 结论）——四项设置（开关/尺寸滑杆/模型列表/调试模式），其余移除；模型列表 = 内置 presets.jsonc 只读 + 自定义模型可增删改（名称 + URL），持久化到 settings 用户层。已同步 `docs/intent/live2d-pet-plugin.md` 与 `docs/spec/live2d-pet-v01.md`（§2/§4/§6/§8/§9/§10）。**实现进行中**：v0.1.2 已按 §5 落地，设置传输经 §3.5 方案 B（插件自身 API，因 §3.4 wire 白名单限制）；待 DSH 落地插件自助暴露后迁移回 settingsScope wire。
+> 状态：**范围已确认**（2026-08，interview-me 结论）——四项设置（开关/尺寸滑杆/模型列表/调试模式），其余移除；模型列表 = 内置 presets.jsonc 只读 + 自定义模型可增删改（名称 + URL），持久化到 settings 用户层。已同步 `docs/intent/dsh-waifu.md` 与 `docs/spec/dsh-waifu-v01.md`（§2/§4/§6/§8/§9/§10）。**实现进行中**：v0.1.2 已按 §5 落地，设置传输经 §3.5 方案 B（插件自身 API，因 §3.4 wire 白名单限制）；待 DSH 落地插件自助暴露后迁移回 settingsScope wire。
 
 ## 1. 结论摘要
 
 **可行，且官方机制现成，无需改 DSH 本体或 profile 配置。**
 
-- 设置面板的顶层导航项由 Client slot `settings.section` 驱动：一个列表项 = 一个设置页。截图里「侧边卡片」正是已装插件 `dsh-better-sidebar` 用它贡献的页面，dsh-live2d-pets 走同一条路即可。
+- 设置面板的顶层导航项由 Client slot `settings.section` 驱动：一个列表项 = 一个设置页。截图里「侧边卡片」正是已装插件 `dsh-better-sidebar` 用它贡献的页面，dsh-waifu 走同一条路即可。
 - 配置持久化走 Host 服务 `ctx.settings`（写 `$DSH_HOME/settings.yaml`，文件 provider 已随 base bundle 挂载，热重载、atomic 写、带 revision 并发控制）。
-- 全部改动集中在 dsh-live2d-pets 仓库内部：host 半区注册 settings namespace + client 半区注册 section 页面。
+- 全部改动集中在 dsh-waifu 仓库内部：host 半区注册 settings namespace + client 半区注册 section 页面。
 
 ## 2. 官方资料清单（一手来源）
 
@@ -92,14 +92,14 @@ ctx.slots.inject('settings.section', () => ctx.slots.register({
 ### 3.5 传输层决策（已确认：方案 B）
 
 因 3.4 白名单限制，设置页**不走 settingsScope wire**，改走**插件自身同源 HTTP API**：
-`GET/POST /api/live2d-pet/settings`（Host 直连 `ctx.settings`：`get` / `mutate`，持久化仍是 settings.yaml
+`GET/POST /api/dsh-waifu/settings`（Host 直连 `ctx.settings`：`get` / `mutate`，持久化仍是 settings.yaml
 用户层、base 层语义不变）。优点：随插件发布、任何用户可用、无需改 DSH；代价：无 wire 的 revision 冲突检测
 （mutate 写队列本身串行，冲突仅影响并发外部编辑器，v0.1 接受）。待 DSH 落地插件自助暴露后，可迁移回
 settingsScope wire（迁移点：client 数据层 + host 路由移除）。
 
 > 实现注意：`dsh-host-webserver` 的 `exact` 表按 **path 唯一**（不按 HTTP method 分表），同 path 的
 > GET/POST 必须合并进**一条** `register`（handler 内按 `req.method` 分发），否则启动报
-> `duplicate exact route "/api/live2d-pet/settings"`。
+> `duplicate exact route "/api/dsh-waifu/settings"`。
 
 ## 4. 三种接入路径对比
 
@@ -109,7 +109,7 @@ settingsScope wire（迁移点：client 数据层 + host 路由移除）。
 | B. `settings.plugins.tab` | 导航「插件」下多一个子 tab | ✗ 藏在插件分区内 | 备选 |
 | C. `settings.plugin.item` | 插件 → configurable tab 下的可展开配置卡（bash / agent-loop 同款） | ✗ 非独立页 | ADR-002 提过的「插件配置卡」，体验弱于独立页 |
 
-## 5. dsh-live2d-pets 接入路径（方案，未实现）
+## 5. dsh-waifu 接入路径（方案，未实现）
 
 ### 5.1 现状
 
@@ -119,8 +119,8 @@ settingsScope wire（迁移点：client 数据层 + host 路由移除）。
 
 ### 5.2 Host 改动
 
-1. `ctx.settings.register('live2d-pet', Config, { base: config })`——注册 namespace，cordis.yml 配置自动成为 base 层；
-2. `PetService` 改读 `ctx.settings.get('live2d-pet')`（或 `watch`）取三层解析值，GUI 改动即时生效（不改则 GUI 写入无人读取）；
+1. `ctx.settings.register('waifu', Config, { base: config })`——注册 namespace，cordis.yml 配置自动成为 base 层；
+2. `PetService` 改读 `ctx.settings.get('waifu')`（或 `watch`）取三层解析值，GUI 改动即时生效（不改则 GUI 写入无人读取）；
 3. 现有 `webServer` 路由不动。
 
 ### 5.3 Client 改动
@@ -130,7 +130,7 @@ settingsScope wire（迁移点：client 数据层 + host 路由移除）。
 ```ts
 ctx.slots.inject('settings.section', () => ctx.slots.register({
   name: 'settings.section',
-  id: 'live2d-pet',
+  id: 'waifu',
   order: 200,
   label: () => '桌宠配置',
   inject: () => ({ scope: /* ctx.settingsScope.bind(spec) */ }),

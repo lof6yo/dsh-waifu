@@ -26,7 +26,7 @@ const BASE: PetSettings = {
 let home: string
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'dsh-live2d-pet-settings-'))
+  home = mkdtempSync(join(tmpdir(), 'dsh-waifu-settings-'))
   process.env.DSH_HOME = home
 })
 
@@ -74,7 +74,7 @@ describe('normalizeSettings', () => {
 describe('SettingsStore', () => {
   it('首次落地模板文件并读取 base', () => {
     const store = new SettingsStore(BASE)
-    expect(store.path).toBe(join(home, 'live2d-pet', SETTINGS_FILENAME))
+    expect(store.path).toBe(join(home, 'waifu', SETTINGS_FILENAME))
     expect(store.get()).toEqual(BASE)
     expect(readFileSync(store.path, 'utf8')).toContain('桌宠设置文件')
   })

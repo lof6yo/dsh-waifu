@@ -14,10 +14,11 @@
 | [006](006-push-state-sse.md) | Host→Client 状态传输：SSE 推送替代轮询（supersede ADR-004 通信条款） | Accepted |
 | [007](007-personas-plugin-owned-jsonc-file.md) | 自定义人设走插件独有 JSONC 文件（不进 DSH settings 体系） | Accepted |
 | [008](008-motion-priority-and-focus-suppression.md) | Live2D 动作优先级与 focus 抑制规则 | Accepted |
-| [009](009-custom-model-animation-mapping.md) | 自定义模型动画映射与 debug 动画预览 | Accepted |
-| [010](010-local-model-host-route.md) | 本地模型通过 Host 路由加载 | Accepted |
+| [009](009-custom-model-animation-mapping.md) | 自定义模型动画映射与 debug 动画预览 | Superseded by ADR-016 |
+| [010](010-local-model-host-route.md) | 本地模型通过 Host 路由加载 | Superseded by ADR-016 |
 | [011](011-dsh-0.1.5-rc.1-adaptation.md) | 适配 DSH 0.1.5-rc.1（client-runtime 移除、settings namespace 字符串化、依赖策略对齐官方） | Accepted |
 | [012](012-dsh-0.1.5-rc.3-session-plane.md) | 适配 DSH 0.1.5-rc.3 并接入会话面能力（直达打开恢复、交付庆祝） | Accepted |
 | [013](013-dsh-0.2.x-settings-plugin-private-file.md) | 适配 DSH 0.2.x settings 服务（插件私有设置文件） | Accepted |
 | [014](014-bundled-jian-model-and-touchbox-parts.md) | 内置「简」模型（随包分发 + 自建动作）与用户自定义 touchbox 部位 | Accepted |
 | [015](015-event-bindings-replace-personas.md) | 移除固定人设，改为事件绑定（动画 + 台词；后续 LLM 人设） | Accepted（supersede ADR-007） |
+| [016](016-rename-to-dsh-waifu-and-drop-custom-models.md) | 插件更名为 dsh-waifu，并移除自定义模型支持 | Accepted（supersede ADR-009/010） |

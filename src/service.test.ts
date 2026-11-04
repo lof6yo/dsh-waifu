@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { PetService } from './service.ts'
 import type { PetSettings } from './settings-store.ts'
-import { CustomModelsStore } from './custom-models.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
 const BASE_SETTINGS: PetSettings = {
@@ -48,15 +47,14 @@ function makeHarness(overrides: Partial<PetSettings> = {}) {
     for (const fn of handlers.get(event) ?? []) (fn as (...a: unknown[]) => unknown)(...args)
   }
   const settings = { ...BASE_SETTINGS, ...overrides }
-  const customModelsStore = new CustomModelsStore()
   const touchPartsStore = new TouchPartsStore()
-  const service = new PetService(ctx, () => settings, customModelsStore, touchPartsStore)
-  return { service, emit, emitArgs, customModelsStore, touchPartsStore, dispose: () => { for (const fn of effects) fn() } }
+  const service = new PetService(ctx, () => settings, touchPartsStore)
+  return { service, emit, emitArgs, touchPartsStore, dispose: () => { for (const fn of effects) fn() } }
 }
 
 beforeEach(() => {
-  // 隔离持久化：避免读到真实 $DSH_HOME 下的 live2d-pet.json
-  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-live2d-pet-svc-'))
+  // 隔离持久化：避免读到真实 $DSH_HOME 下的 waifu.json
+  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-waifu-svc-'))
   vi.useFakeTimers()
 })
 
@@ -251,24 +249,13 @@ describe('PetService 显示配置', () => {
     expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 160 })
   })
 
-  it('snapshot 解析模型 URL：内置同源路径 / 自定义 URL / 失效 id 回退内置', () => {
-    const { service, customModelsStore } = makeHarness()
-    expect(service.snapshot().config.modelUrl).toBe('/pet-assets/models/jian/简.model3.json')
-
-    customModelsStore.write([{ id: 'custom-a', name: 'A', modelUrl: 'https://example.com/a.model3.json' }])
-    const custom = makeHarness({ model: 'custom-a' })
-    custom.customModelsStore.write([{ id: 'custom-a', name: 'A', modelUrl: 'https://example.com/a.model3.json' }])
-    expect(custom.service.snapshot().config.modelUrl).toBe('https://example.com/a.model3.json')
-
+  it('snapshot 解析模型 URL：内置同源路径；失效 id 回退内置', () => {
+    const { service } = makeHarness()
+    expect(service.snapshot().config.modelUrl).toBe('/waifu-assets/models/jian/简.model3.json')
     // 旧配置的失效模型 id 回退默认内置模型，避免升级后空白
-    expect(makeHarness({ model: 'hiyori' }).service.snapshot().config.modelUrl).toBe('/pet-assets/models/jian/简.model3.json')
+    expect(makeHarness({ model: 'hiyori' }).service.snapshot().config.modelUrl).toBe('/waifu-assets/models/jian/简.model3.json')
   })
 
-  it('listCustomModels 返回自定义清单', () => {
-    const { service, customModelsStore } = makeHarness()
-    customModelsStore.write([{ id: 'x', name: 'X', modelUrl: 'https://x/m3.json' }])
-    expect(service.listCustomModels()).toEqual([{ id: 'x', name: 'X', modelUrl: 'https://x/m3.json' }])
-  })
 })
 
 describe('PetService 变更订阅', () => {

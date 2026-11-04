@@ -1,7 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import {
   listBuiltinPresets,
   resolveModelUrl,
@@ -29,7 +26,7 @@ describe('listBuiltinPresets', () => {
     const jian = presets[0]
     expect(jian.id).toBe('jian')
     expect(jian.name).toBe('简')
-    expect(jian.modelUrl).toBe('/pet-assets/models/jian/简.model3.json')
+    expect(jian.modelUrl).toBe('/waifu-assets/models/jian/简.model3.json')
     expect(jian.cubism).toBe(4)
     expect(jian.license.type).toBeTruthy()
     expect(defaultModelId()).toBe('jian')
@@ -46,62 +43,26 @@ describe('listBuiltinPresets', () => {
 })
 
 describe('resolveModelUrl', () => {
-  it('http(s) URL 原样返回', () => {
-    expect(resolveModelUrl('https://cdn.example.com/a.model3.json', [])).toBe('https://cdn.example.com/a.model3.json')
-    expect(resolveModelUrl('http://cdn.example.com/a.model3.json', [])).toBe('http://cdn.example.com/a.model3.json')
-  })
 
   it('preset id 命内置清单（同源素材路径）', () => {
-    expect(resolveModelUrl('jian', [])).toBe('/pet-assets/models/jian/简.model3.json')
+    expect(resolveModelUrl('jian')).toBe('/waifu-assets/models/jian/简.model3.json')
   })
 
-  it('自定义 id 命中用户清单', () => {
-    const custom = [{ id: 'my-model', name: '我的模型', modelUrl: 'https://custom.example.com/m.model3.json' }]
-    expect(resolveModelUrl('my-model', custom)).toBe('https://custom.example.com/m.model3.json')
-  })
 
-  it('本地路径自定义模型转成同源虚拟 URL（文件需存在）', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-live2d-pet-model-'))
-    try {
-      const file = join(dir, 'a.model3.json')
-      writeFileSync(file, '{"Version":3}')
-      const custom = [{ id: 'local', name: '本地', modelUrl: file }]
-      expect(resolveModelUrl('local', custom)).toBe(`/pet-local-models/local/${encodeURIComponent('a.model3.json')}`)
-      // 文件不存在的本地路径无法生成 URL（客户端降级静态头像）
-      expect(resolveModelUrl('local', [{ id: 'local', name: '本地', modelUrl: join(dir, 'nope.model3.json') }])).toBeNull()
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
 
   it('未命中回退默认内置模型（旧配置升级不空白）', () => {
-    expect(resolveModelUrl('hiyori', [])).toBe('/pet-assets/models/jian/简.model3.json')
+    expect(resolveModelUrl('hiyori')).toBe('/waifu-assets/models/jian/简.model3.json')
   })
 })
 
 describe('resolveMotionMap', () => {
   it('无配置时返回默认映射', () => {
-    expect(resolveMotionMap('custom-missing', [])).toEqual(DEFAULT_MOTION_MAP)
+    expect(resolveMotionMap('custom-missing')).toEqual(DEFAULT_MOTION_MAP)
   })
 
-  it('自定义模型动画映射覆盖对应槽位，其余沿用默认', () => {
-    const custom = [{
-      id: 'my-jian',
-      name: '简',
-      modelUrl: '/Users/me/jian.model3.json',
-      animationMap: {
-        thinking: ['Idle', 'Thinking'],
-        idle: ['Idle'],
-      },
-    }]
-    const map = resolveMotionMap('my-jian', custom)
-    expect(map.thinking).toEqual(['Idle', 'Thinking'])
-    expect(map.idle).toEqual(['Idle'])
-    expect(map.done).toEqual(DEFAULT_MOTION_MAP.done)
-  })
 
   it('内置 presets 的 animationMap 生效', () => {
-    const map = resolveMotionMap('jian', [])
+    const map = resolveMotionMap('jian')
     expect(map.idle).toEqual(['Idle'])
     expect(map.error).toEqual(['Error'])
     expect(map.delivered).toEqual(['Done'])

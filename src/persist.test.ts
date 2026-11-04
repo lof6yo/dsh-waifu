@@ -7,7 +7,7 @@ import { DEFAULT_DISPLAY, loadPetPersist, normalizeDisplay, savePetPersist } fro
 let dir: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'dsh-live2d-pet-'))
+  dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-'))
   process.env.DSH_HOME = dir
 })
 
@@ -22,17 +22,17 @@ describe('loadPetPersist', () => {
   })
 
   it('读取合法值', () => {
-    writeFileSync(join(dir, 'live2d-pet.json'), JSON.stringify({ right: 100, bottom: 50, size: 220 }))
+    writeFileSync(join(dir, 'waifu.json'), JSON.stringify({ right: 100, bottom: 50, size: 220 }))
     expect(loadPetPersist()).toEqual({ right: 100, bottom: 50, size: 220 })
   })
 
   it('越界值 clamp 到合法边界（位置允许负值，便于拖到窗口外一半）', () => {
-    writeFileSync(join(dir, 'live2d-pet.json'), JSON.stringify({ right: -10, bottom: 99999, size: 1e9 }))
+    writeFileSync(join(dir, 'waifu.json'), JSON.stringify({ right: -10, bottom: 99999, size: 1e9 }))
     expect(loadPetPersist()).toEqual({ right: -10, bottom: 8000, size: 400 })
   })
 
   it('损坏 JSON 回退默认值', () => {
-    writeFileSync(join(dir, 'live2d-pet.json'), '{oops')
+    writeFileSync(join(dir, 'waifu.json'), '{oops')
     expect(loadPetPersist()).toEqual(DEFAULT_DISPLAY)
   })
 })
@@ -41,7 +41,7 @@ describe('savePetPersist', () => {
   it('写入后原样读回', () => {
     savePetPersist({ right: 30, bottom: 40, size: 180 })
     expect(loadPetPersist()).toEqual({ right: 30, bottom: 40, size: 180 })
-    expect(JSON.parse(readFileSync(join(dir, 'live2d-pet.json'), 'utf8'))).toEqual({ right: 30, bottom: 40, size: 180 })
+    expect(JSON.parse(readFileSync(join(dir, 'waifu.json'), 'utf8'))).toEqual({ right: 30, bottom: 40, size: 180 })
   })
 })
 

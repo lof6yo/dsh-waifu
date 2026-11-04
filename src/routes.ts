@@ -1,8 +1,8 @@
 /**
- * 宠物 HTTP 路由：浏览器半区通过同源 JSON 端点（/api/live2d-pet/*）、
- * SSE 状态推送端点（/api/live2d-pet/events，ADR-006）与素材静态路由
- * （/pet-assets/*，含内置模型 assets/models/），以及本地模型虚拟路由通信。
- * @module dsh-live2d-pets/routes
+ * 宠物 HTTP 路由：浏览器半区通过同源 JSON 端点（/api/dsh-waifu/*）、
+ * SSE 状态推送端点（/api/dsh-waifu/events，ADR-006）与素材静态路由
+ * （/waifu-assets/*，含内置模型 assets/models/）。
+ * @module dsh-waifu/routes
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -11,10 +11,7 @@ import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { PetService } from './service.ts'
-import { listBuiltinPresets } from './models-host.ts'
-import type { CustomModelEntry, EventBindings, TouchPart } from './models.ts'
-import { isLocalModelPath } from './models.ts'
-import { resolveLocalModelFile } from './local-models.ts'
+import type { EventBindings, TouchPart } from './models.ts'
 import { appendClientLog, clientLogPath } from './client-log.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 
@@ -25,13 +22,10 @@ export interface SettingsRoutesApi {
 }
 
 /** 浏览器侧宠物 API 基路径。 */
-export const PET_API_PREFIX = '/api/live2d-pet'
+export const PET_API_PREFIX = '/api/dsh-waifu'
 
 /** 浏览器侧素材静态路由基路径（vendor 运行时脚本 + 内置模型 assets）。 */
-export const PET_ASSET_PREFIX = '/pet-assets'
-
-/** 本地模型静态路由基路径（Host 按自定义模型 id 映射到用户本地路径）。 */
-export const PET_LOCAL_MODELS_PREFIX = '/pet-local-models'
+export const PET_ASSET_PREFIX = '/waifu-assets'
 
 /** 包根目录（从本模块自身位置解析）。 */
 export function petPackageRoot(importMetaUrl: string): string {
@@ -239,21 +233,6 @@ export function makePetRoutes(deps: {
   const apiRoutes: WebRoute[] = [
     sseStateRoute(`${PET_API_PREFIX}/events`, service, onStream),
     getRoute(`${PET_API_PREFIX}/state`, async () => service.snapshot()),
-    getRoute(`${PET_API_PREFIX}/models`, async () => ({
-      builtin: listBuiltinPresets(),
-      custom: service.listCustomModels(),
-      presetsPath: join(packageRoot, 'src', 'presets', 'presets.jsonc'),
-      customModelsPath: service.customModelsFile().path,
-      touchPartsPath: service.touchPartsFile().path,
-    })),
-    getPostRoute(
-      `${PET_API_PREFIX}/custom-models`,
-      async () => service.customModelsFile(),
-      (body) => {
-        const models = Array.isArray(body.models) ? body.models as CustomModelEntry[] : []
-        return Promise.resolve(service.saveCustomModels(models))
-      },
-    ),
     // 触摸部位（spec §4）：GET 读当前模型 + 文件视图；POST 保存某模型的部位列表
     getPostRoute(
       `${PET_API_PREFIX}/touch-parts`,
@@ -321,41 +300,6 @@ export function makePetRoutes(deps: {
     ),
   ]
 
-  const localModelRoute: WebRoute = {
-    kind: 'prefix',
-    path: PET_LOCAL_MODELS_PREFIX,
-    handler: (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405)
-        res.end()
-        return Promise.resolve()
-      }
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      const parts = url.pathname.split('/').filter(Boolean)
-      // /pet-local-models/<id>/<relative...>
-      if (parts.length < 3) {
-        res.writeHead(404)
-        res.end()
-        return Promise.resolve()
-      }
-      const id = decodeURIComponent(parts[1])
-      const relativePath = parts.slice(2).map(decodeURIComponent).join('/')
-      const entry = service.listCustomModels().find((c) => c.id === id)
-      if (!entry || !isLocalModelPath(entry.modelUrl)) {
-        res.writeHead(404)
-        res.end()
-        return Promise.resolve()
-      }
-      const file = resolveLocalModelFile(entry.modelUrl, relativePath)
-      if (!file) {
-        res.writeHead(404)
-        res.end()
-        return Promise.resolve()
-      }
-      return serveFile(req, res, file)
-    },
-  }
-
   // 素材静态路由：vendor 运行时脚本 + 内置模型（assets/models/<id>/……，含 moc3/png/json）
   const assetsRoot = join(packageRoot, 'assets')
   const assetRoute: WebRoute = {
@@ -390,5 +334,5 @@ export function makePetRoutes(deps: {
     },
   }
 
-  return [...apiRoutes, assetRoute, localModelRoute]
+  return [...apiRoutes, assetRoute]
 }

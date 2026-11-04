@@ -4,12 +4,12 @@
  * 事件绑定（当前模型：6 事件的动作组 + 分阶段台词池）/ 触摸部位
  * （box / 台词 / 触摸动画）/ 开发者选项。仅内置「简」模型，不再有模型选择/导入、
  * 固定人设、跳转链接或文件路径展示。
- * 读写经插件自己的同源 API `/api/live2d-pet/settings` 与 `/api/live2d-pet/touch-parts`
+ * 读写经插件自己的同源 API `/api/dsh-waifu/settings` 与 `/api/dsh-waifu/touch-parts`
  * （Host 直连插件私有配置文件 settings.jsonc / touch-parts.jsonc，ADR-013）——不走
  * client settingsScope wire，因为 dsh-host-apiproxy 只把内置 allowlist 的 namespace
  * 暴露给浏览器（见 docs/research/settings-tab.md「设置服务不可用」根因）。
  * 不引入任何非平台模块值导入。
- * @module dsh-live2d-pets/client/settings
+ * @module dsh-waifu/client/settings
  */
 
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
@@ -69,7 +69,7 @@ export interface PetSettingsValue {
   showTapZones: boolean
 }
 
-/** GET /api/live2d-pet/settings 视图（settings.jsonc 读取结果）。 */
+/** GET /api/dsh-waifu/settings 视图（settings.jsonc 读取结果）。 */
 interface SettingsView {
   value?: PetSettingsValue
   writable?: boolean
@@ -243,7 +243,7 @@ function nextTouchPartId(parts: readonly TouchPart[]): string {
   return id
 }
 
-/** 触摸部位 + 事件绑定文件视图（GET /api/live2d-pet/touch-parts 响应）。 */
+/** 触摸部位 + 事件绑定文件视图（GET /api/dsh-waifu/touch-parts 响应）。 */
 interface TouchPartsView {
   model: string
   parts: TouchPart[]
@@ -323,9 +323,9 @@ async function resolveSelectedModelUrl(model: string): Promise<string | null> {
   return null
 }
 
-const SETTINGS_API = '/api/live2d-pet/settings'
-const STATE_API = '/api/live2d-pet/state'
-const TOUCH_PARTS_API = '/api/live2d-pet/touch-parts'
+const SETTINGS_API = '/api/dsh-waifu/settings'
+const STATE_API = '/api/dsh-waifu/state'
+const TOUCH_PARTS_API = '/api/dsh-waifu/touch-parts'
 
 /* ---- 设计 token（DSH Theme 变量；深/浅色自动适配） ---- */
 const C = {

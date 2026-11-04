@@ -1,9 +1,9 @@
 /**
- * 触摸部位文件（$DSH_HOME/live2d-pet/touch-parts.jsonc，JSONC，插件私有）：
+ * 触摸部位文件（$DSH_HOME/waifu/touch-parts.jsonc，JSONC，插件私有）：
  * 用户自定义的触摸部位按模型 id 分组持久化；首次启动落地模板，保存时写回并保留文件头注释。
  * 与内置 preset 的默认部位的关系：用户保存过该模型 → 以用户文件为准；
  * 没有保存过（或文件被删）→ 回退 preset.touchParts → 再回退空表。
- * @module dsh-live2d-pets/touch-parts
+ * @module dsh-waifu/touch-parts
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -13,7 +13,7 @@ import type { EventBindings, TouchPart } from './models.ts'
 import { normalizeEventBindings, normalizeTouchParts } from './models.ts'
 import { stripJsonComments } from './jsonc.ts'
 
-/** 触摸部位文件名（$DSH_HOME/live2d-pet 下）。 */
+/** 触摸部位文件名（$DSH_HOME/waifu 下）。 */
 export const TOUCH_PARTS_FILENAME = 'touch-parts.jsonc'
 
 /** 文件内每个模型 id 的配置。 */
@@ -30,14 +30,14 @@ export interface TouchPartsFileView {
   path: string
 }
 
-/** DSH home 目录（与 persist.ts / custom-models.ts / settings-store.ts 同一规则）。 */
+/** DSH home 目录（与 persist.ts / settings-store.ts 同一规则）。 */
 function petHomeDir(): string {
   return process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
 
 /** 文件头注释：每次写回时保留，提示用户这是插件私有配置。 */
 const TOUCH_PARTS_HEADER = `// 触摸部位配置文件（插件私有，JSONC 支持注释）。
-// 路径：$DSH_HOME/live2d-pet/touch-parts.jsonc
+// 路径：$DSH_HOME/waifu/touch-parts.jsonc
 // 建议通过设置页「触摸部位」编辑；直接编辑后刷新页面即可生效。
 // 结构：models[<模型 id>].parts[] = { id, name, boxes[{left,top,right,bottom}], motions[] }
 // left/top/right/bottom 为相对模型包围盒的 0–1 归一化坐标（左上右下）。`
@@ -92,7 +92,7 @@ export class TouchPartsStore {
   private lastError: string | null = null
 
   constructor(path?: string) {
-    this.path = path ?? join(petHomeDir(), 'live2d-pet', TOUCH_PARTS_FILENAME)
+    this.path = path ?? join(petHomeDir(), 'waifu', TOUCH_PARTS_FILENAME)
     try {
       mkdirSync(dirname(this.path), { recursive: true })
     } catch {

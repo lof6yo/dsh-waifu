@@ -25,15 +25,15 @@ Proposed
    ```yaml
    - insert:
        - id: live2d-pet
-         name: dsh-live2d-pets
+         name: dsh-waifu
    ```
    安装：`dsh plugin --profile web add <包>`（自动追加进 `dsh.profile.bundles`）；分发走 npm 或 `pnpm pack` tarball（避开 git 安装的 prepare 构建授权坑，官方文档明确推荐）。
 
 2. **配置机制（官方 config 规范）**：插件导出 `Config` 接口 + Schemastery schema（默认值写进 schema）；用户经 cordis.yml 插件行 `config:` 传参；schema 校验、非法配置加载失败、**改配置触发 HMR 热替换**。v0.1 配置字段：enabled / size / corner / model。
 
-3. **Host 半区**：插件模块导出 `apply(ctx, config)`；用 `ctx.webServer.register(route)` 注册同源 JSON API（`/api/live2d-pet/*`）与模型资产静态路由（`/pet-assets/*`）；订阅 `agent/status`、`agent/error`、`agent/turn-stopping`、`approval/request`、`agent/inbox/inserted` → 宠物状态机（事件经 `Event.listEvents` 实测存在）。
+3. **Host 半区**：插件模块导出 `apply(ctx, config)`；用 `ctx.webServer.register(route)` 注册同源 JSON API（`/api/dsh-waifu/*`）与模型资产静态路由（`/waifu-assets/*`）；订阅 `agent/status`、`agent/error`、`agent/turn-stopping`、`approval/request`、`agent/inbox/inserted` → 宠物状态机（事件经 `Event.listEvents` 实测存在）。
 
-4. **Client 半区**：`package.json` 声明 `"dsh": { "client": { "platform": "web", "inject": [...] } }` 与 `exports["./client"]`（构建为 `window.__ModuleLoader__.load` 契约，tsdown）；优先挂载 `shell.overlay`（实测存在，root 级、replaceRisk=none），不可用则回退 `document.body` 全局 React root；状态通信为同源 **SSE 推送**（`/api/live2d-pet/events`，ADR-006，取代本稿原定的 fetch 轮询）；配置读写为同源 JSON API。
+4. **Client 半区**：`package.json` 声明 `"dsh": { "client": { "platform": "web", "inject": [...] } }` 与 `exports["./client"]`（构建为 `window.__ModuleLoader__.load` 契约，tsdown）；优先挂载 `shell.overlay`（实测存在，root 级、replaceRisk=none），不可用则回退 `document.body` 全局 React root；状态通信为同源 **SSE 推送**（`/api/dsh-waifu/events`，ADR-006，取代本稿原定的 fetch 轮询）；配置读写为同源 JSON API。
 
 5. **构建链**：TypeScript + `tsc -b && tsdown` + vitest；CSS Modules 由 lightningcss 内联；React/cordis 外部化。
 

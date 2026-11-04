@@ -1,5 +1,5 @@
 /**
- * 桌宠设置文件（$DSH_HOME/live2d-pet/settings.jsonc，JSONC，插件私有）。
+ * 桌宠设置文件（$DSH_HOME/waifu/settings.jsonc，JSONC，插件私有）。
  *
  * 为什么不再用 DSH settings.yaml：dsh 0.2.x 的 `ctx.settings` 变成「Config schema →
  * 设置页表单」投影，写入会经 Loader 重新应用插件条目（整插件重载），热设置（尺寸滑杆、
@@ -7,7 +7,7 @@
  * 保持即时生效，不再触发插件重载（ADR-013）。
  *
  * 内置 preset 的默认值来自 cordis.patch.yml 的 config（作为 base 层），用户改动落到本文件。
- * @module dsh-live2d-pets/settings-store
+ * @module dsh-waifu/settings-store
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -16,7 +16,7 @@ import { homedir } from 'node:os'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { stripJsonComments } from './jsonc.ts'
 
-/** 设置文件名（$DSH_HOME/live2d-pet 下）。 */
+/** 设置文件名（$DSH_HOME/waifu 下）。 */
 export const SETTINGS_FILENAME = 'settings.jsonc'
 
 /** 宠物标量设置（Host Config 同构）。 */
@@ -63,13 +63,13 @@ export interface PetSettingsView {
   writable: boolean
 }
 
-/** DSH home 目录（与 persist.ts / custom-models.ts 同一规则）。 */
+/** DSH home 目录（与 persist.ts / touch-parts.ts 同一规则）。 */
 function petHomeDir(): string {
   return process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
 
 const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注释）。
-// 路径：$DSH_HOME/live2d-pet/settings.jsonc
+// 路径：$DSH_HOME/waifu/settings.jsonc
 // 建议通过设置页「桌宠配置」修改；直接编辑保存后刷新页面生效。
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor`
@@ -165,7 +165,7 @@ export class SettingsStore {
   constructor(base: PetSettings, path?: string) {
     this.base = { ...base }
     this.lastGood = { ...base }
-    this.path = path ?? join(petHomeDir(), 'live2d-pet', SETTINGS_FILENAME)
+    this.path = path ?? join(petHomeDir(), 'waifu', SETTINGS_FILENAME)
     try {
       mkdirSync(dirname(this.path), { recursive: true })
     } catch {

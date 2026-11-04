@@ -5,7 +5,7 @@
  *   session/event 总线上的 deliverables/presented（交付庆祝，ADR-012）。
  * 配置经 getSettings() 读取插件设置文件快照（settings-store，ADR-013）；
  * 事件绑定（动画组 + 台词池）与触摸部位存于 touch-parts.jsonc（ADR-015）。
- * @module dsh-live2d-pets/service
+ * @module dsh-waifu/service
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -13,10 +13,9 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-tool-present/types'
 import type {} from '@deepseek-ai/dsh-user-approval'
-import type { CustomModelEntry, EventBindings, TouchPart } from './models.ts'
+import type { EventBindings, TouchPart } from './models.ts'
 import { DEFAULT_EVENT_BINDINGS, PET_EVENTS, mergeEventBindings } from './models.ts'
 import { resolveModelUrl, resolveMotionMap, resolveDefaultTouchParts } from './models-host.ts'
-import { CustomModelsStore, type CustomModelsFileView } from './custom-models.ts'
 import {
   loadPetPersistDetailed,
   savePetPersist,
@@ -86,7 +85,6 @@ export class PetService {
   constructor(
     private readonly ctx: Context,
     private readonly getSettings: () => PetSettings,
-    private readonly customModelsStore?: CustomModelsStore,
     private readonly touchPartsStore?: TouchPartsStore,
   ) {
     const loaded = loadPetPersistDetailed(DEFAULT_DISPLAY)
@@ -168,7 +166,7 @@ export class PetService {
    * 再叠加用户在该模型上的覆盖（touch-parts.jsonc 的 events；整事件替换）。
    */
   effectiveEvents(model: string): EventBindings {
-    const resolvedMotions = resolveMotionMap(model, this.listCustomModels())
+    const resolvedMotions = resolveMotionMap(model)
     const base = {} as EventBindings
     for (const event of PET_EVENTS) {
       const fallback = DEFAULT_EVENT_BINDINGS[event]
@@ -184,7 +182,6 @@ export class PetService {
   /** 浏览器轮询用的状态快照（配置实时读取设置文件快照，spec §2）。 */
   snapshot(): PetStateView {
     const settings = this.getSettings()
-    const customModels = this.listCustomModels()
     return {
       state: this.state,
       agent: this.agent,
@@ -193,7 +190,7 @@ export class PetService {
         size: settings.size,
         maxFps: settings.maxFps,
         model: settings.model,
-        modelUrl: resolveModelUrl(settings.model, customModels),
+        modelUrl: resolveModelUrl(settings.model),
         debug: settings.debug,
         showTapZones: !!settings.showTapZones,
         homeRight: settings.homeRight,
@@ -212,24 +209,6 @@ export class PetService {
       displaySaved: this.displaySaved,
       version: this.version,
     }
-  }
-
-  /** 用户自定义模型列表（设置面板模型列表的 custom 部分，Host 权威视图）。 */
-  listCustomModels(): CustomModelEntry[] {
-    return this.customModelsStore?.load().models ?? []
-  }
-
-  /** 自定义模型文件视图（路径/错误/列表），供设置面板模型列表使用。 */
-  customModelsFile(): CustomModelsFileView {
-    return this.customModelsStore?.load() ?? { models: [], error: null, path: '' }
-  }
-
-  /** 写回自定义模型列表（设置面板保存后调用），并推送配置变化。 */
-  saveCustomModels(models: CustomModelEntry[]): CustomModelsFileView {
-    const view = this.customModelsStore?.write(models) ?? { models, error: null, path: '' }
-    this.version += 1
-    this.emitChange()
-    return view
   }
 
   /** 触摸部位文件视图（设置页读取用）。 */

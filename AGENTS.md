@@ -1,4 +1,4 @@
-# dsh-live2d-pets
+# dsh-waifu
 
 DSH 的 Live2D 桌宠插件项目（文档驱动开发）。
 
@@ -39,4 +39,4 @@ DSH 的 Live2D 桌宠插件项目（文档驱动开发）。
 5. 打 **annotated** tag 并推送：`git tag -a vX.Y.Z -m "Release vX.Y.Z"` + `git push --follow-tags`（轻量 tag 不会被 `--follow-tags` 推送，勿用）。
 6. **手动 `bun publish`——助手禁止代跑**（npm 鉴权常需浏览器跳转）；若默认 registry 是镜像，显式 `--registry https://registry.npmjs.org/`。
 7. 发版说明：调用 `release-notes` skill（起草 → 用户确认 → `gh release create`，最新版不加 `--latest=false`）。
-8. 验证：`gh release view vX.Y.Z`、`npm view dsh-live2d-pets version`。
+8. 验证：`gh release view vX.Y.Z`、`npm view dsh-waifu version`。

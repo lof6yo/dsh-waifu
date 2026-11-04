@@ -8,7 +8,7 @@
  *    宠物悬浮层据此实时重绘 box（box 实时显示在角色上）；
  * 3. 退出编辑 → emitTouchEdit({active:false, ...})，宠物恢复常规显示；
  * 4. 保存成功 → Host 经 SSE 推送新配置，宠物用 config.touchParts 作为非编辑态数据源。
- * @module dsh-live2d-pets/client/touch-edit
+ * @module dsh-waifu/client/touch-edit
  */
 
 import type { TouchPart } from '../models.ts'
@@ -26,7 +26,7 @@ export interface TouchEditState {
 }
 
 /** 编辑态事件名。 */
-export const TOUCH_EDIT_EVENT = 'dsh-live2d-pets:touch-edit'
+export const TOUCH_EDIT_EVENT = 'dsh-waifu:touch-edit'
 
 /** 广播编辑态（设置页调用）。 */
 export function emitTouchEdit(state: TouchEditState): void {

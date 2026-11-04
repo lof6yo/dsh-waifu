@@ -1,7 +1,7 @@
 {
-  "name": "dsh-live2d-pets",
+  "name": "dsh-waifu",
   "version": "0.3.0",
-  "description": "Live2D pet plugin for DeepSeek Harness: a characterful agent companion — follows session state, switchable personas, bring-your-own models",
+  "description": "Live2D desktop waifu plugin for DeepSeek Harness: bundled 'Jian' model, user-defined touchboxes and event-based animations/lines",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -26,7 +26,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cyanfish-x/dsh-live2d-pets.git"
+    "url": "git+https://github.com/lof6yo/dsh-waifu.git"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

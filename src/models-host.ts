@@ -2,7 +2,7 @@
  * Host 侧模型清单读取与解析：内置 presets.jsonc（JSONC 支持注释）由 Node 读取。
  * 本模块不可被 client 打包引入（依赖 node:fs / node:path / node:url）。
  * 共享类型与默认值见 `models.ts`。
- * @module dsh-live2d-pets/models-host
+ * @module dsh-waifu/models-host
  */
 
 import { readFileSync } from 'node:fs'
@@ -10,13 +10,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_MOTION_MAP,
-  isRemoteModelUrl,
   type BuiltinPreset,
-  type CustomModelEntry,
   type MotionMap,
   type TouchPart,
 } from './models.ts'
-import { localModelUrlPath } from './local-models.ts'
 
 /** 简易 JSONC 解析：去掉行注释和块注释（字符串内的注释保留）后 JSON.parse。 */
 function parseJsonc(text: string): unknown {
@@ -77,13 +74,10 @@ export function defaultModelId(): string {
 }
 
 /**
- * 按当前选中模型解析生效状态动画映射：
- * 自定义条目 animationMap 优先；否则内置 preset 的 animationMap；再否则默认映射。
+ * 按当前模型解析生效状态动画映射：内置 preset 的 animationMap 覆盖默认映射。
  * 只做浅合并：配置过的槽位覆盖，未配置槽位沿用默认。
  */
-export function resolveMotionMap(model: string, customModels: CustomModelEntry[]): MotionMap {
-  const custom = customModels.find((c) => c.id === model)
-  if (custom?.animationMap) return { ...DEFAULT_MOTION_MAP, ...custom.animationMap }
+export function resolveMotionMap(model: string): MotionMap {
   const preset = presetsData.presets.find((p) => p.id === model)
   if (preset?.animationMap) return { ...DEFAULT_MOTION_MAP, ...preset.animationMap }
   return { ...DEFAULT_MOTION_MAP }
@@ -100,21 +94,12 @@ export function resolveDefaultTouchParts(model: string): TouchPart[] {
 
 /**
  * 把 `config.model` 解析为可加载的 `.model3.json` URL：
- * - 已是 http(s) URL → 原样返回
  * - preset id → presets.jsonc 匹配
- * - 自定义模型 id → 用户清单匹配
  * - 旧配置里的失效模型 id → 回退默认内置模型（避免升级后宠物空白）
  */
-export function resolveModelUrl(model: string, customModels: CustomModelEntry[]): string | null {
-  if (isRemoteModelUrl(model)) return model
+export function resolveModelUrl(model: string): string | null {
   const preset = presetsData.presets.find((p) => p.id === model)
   if (preset) return preset.modelUrl
-  const custom = customModels.find((c) => c.id === model)
-  if (custom) {
-    // 本地路径：转成 Host 同源虚拟 URL，浏览器通过 /pet-local-models/<id>/... 加载
-    if (isRemoteModelUrl(custom.modelUrl)) return custom.modelUrl
-    return localModelUrlPath(custom.id, custom.modelUrl)
-  }
   const fallback = presetsData.presets[0]
   return fallback ? fallback.modelUrl : null
 }

@@ -47,7 +47,7 @@ Accepted
 ## Consequences
 
 - 自定义模型可按实际动作组配置状态/互动动画，解决“只有气泡变化”问题。
-- 配置保存在 `$DSH_HOME/live2d-pet/custom-models.jsonc` 的 `models[].animationMap`，由 `CustomModelsStore` 读写，不再写入 settings.yaml。
+- 配置保存在 `$DSH_HOME/waifu/custom-models.jsonc` 的 `models[].animationMap`，由 `CustomModelsStore` 读写，不再写入 settings.yaml。
 - client 端播放逻辑从“固定候选链”改为“配置映射优先 + 默认兜底”，多选随机打乱后逐个尝试，避免选中组失效时完全无动作。
 - debug 面板新增**全部具体动画**预览，便于用户逐条判断动画内容后再映射到动作组。
 - 新增字段对旧 settings 文件向后兼容：缺省 `animationMap` 时沿用默认映射。

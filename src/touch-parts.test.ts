@@ -7,7 +7,7 @@ import { TouchPartsStore, TOUCH_PARTS_FILENAME } from './touch-parts.ts'
 let home: string
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'dsh-live2d-pet-parts-'))
+  home = mkdtempSync(join(tmpdir(), 'dsh-waifu-parts-'))
   process.env.DSH_HOME = home
 })
 
@@ -19,7 +19,7 @@ afterEach(() => {
 describe('TouchPartsStore', () => {
   it('首次构造落地模板文件，partsFor 返回 null 表示未保存', () => {
     const store = new TouchPartsStore()
-    expect(store.path).toBe(join(home, 'live2d-pet', TOUCH_PARTS_FILENAME))
+    expect(store.path).toBe(join(home, 'waifu', TOUCH_PARTS_FILENAME))
     expect(store.load().models).toEqual({})
     expect(store.partsFor('jian')).toBeNull()
     expect(readFileSync(store.path, 'utf8')).toContain('触摸部位配置文件')

@@ -17,13 +17,13 @@ v0.1–v0.3 的台词体系是「六种固定人设 × 14 个台词池」：内�
 ## 决策
 
 1. **删除固定人设系统**：
-   - 移除内置六人设文案、`personas.jsonc` 文件、Host `PersonasStore`、`POST /api/live2d-pet/reload-personas`、`PetStateView` 的 persona 相关字段，以及设置页「人设台词」分组与此前的「自定义人设 ↗」跳转。
+   - 移除内置六人设文案、`personas.jsonc` 文件、Host `PersonasStore`、`POST /api/dsh-waifu/reload-personas`、`PetStateView` 的 persona 相关字段，以及设置页「人设台词」分组与此前的「自定义人设 ↗」跳转。
    - 旧 `personas.jsonc` 文件保留在磁盘但不再读取（无害残留）。
 2. **事件绑定模型**（`src/models.ts`）：
    - `PetEventKey` = 空闲 / 思考中 / 出错 / 完成 / 交付 / 等审批（与状态动画槽位同构）。
    - `EventBinding { motions: string[]; lines: string[][] }`：动作组候选（随机播一个）+ 台词池；普通事件 1 组台词，长状态（思考/等审批）按阶段 3 组（`EVENT_STAGE_DELAYS`：思考 0/15s/40s，等审批 0/30s/90s）。
    - `DEFAULT_EVENT_BINDINGS`：中性中文默认文案（不再绑定任何性格）；模型侧动作组仍由 presets/自定义模型的 `animationMap` 提供。
-3. **存储**：用户的逐事件覆盖写进 `$DSH_HOME/live2d-pet/touch-parts.jsonc` 的 `models[<模型 id>].events`（与触摸部位同一文件、同一次保存），整事件替换；未覆盖事件回退默认。旧格式 `animationMap` 读取时迁移为 events 的 motions。
+3. **存储**：用户的逐事件覆盖写进 `$DSH_HOME/waifu/touch-parts.jsonc` 的 `models[<模型 id>].events`（与触摸部位同一文件、同一次保存），整事件替换；未覆盖事件回退默认。旧格式 `animationMap` 读取时迁移为 events 的 motions。
 4. **设置页重做为单页流程**（无弹窗、无跳转链接、无文件路径展示）：显示 → 模型 → 事件绑定 → 触摸部位 → 开发者选项；保存走插件自身 API，`events` 仅在用户实际改过事件绑定时携带，避免把默认值固化成覆盖层。
 5. **触摸部位台词**：`part.lines` 为空 = 只播动作、不显示气泡（不再有固定人设池兜底）；默认部位（脸/头/胸/臀）随包带示例台词。
 6. **后续 LLM 人设**：口子留在事件绑定层——后续可用 LLM 根据人设提示词生成台词写入/覆盖 `lines`，不改变事件/动作结构。

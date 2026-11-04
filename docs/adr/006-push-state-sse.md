@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-- v0.1 客户端用 **800ms 轮询**拉取 `GET /api/live2d-pet/state`（ADR-003 spike 验证、ADR-004 固化）
+- v0.1 客户端用 **800ms 轮询**拉取 `GET /api/dsh-waifu/state`（ADR-003 spike 验证、ADR-004 固化）
 - 轮询的代价：
   - 固定的 ≤800ms 状态延迟，与 spec §3「状态变化即时反映（事件驱动，无轮询延迟感知）」矛盾
   - 空闲时每 800ms 一次 fetch + JSON 解析，长时间停留持续消耗主线程/网络；配合旧版「每轮询重启状态动画」的缺陷，表现为长时间停留后页面卡死
@@ -18,7 +18,7 @@ Accepted
 
 ## Decision
 
-1. **Host 新增同源 SSE 端点 `GET /api/live2d-pet/events`**：
+1. **Host 新增同源 SSE 端点 `GET /api/dsh-waifu/events`**：
    - 连接即回发当前快照（`data:` 帧），之后每次服务变化（状态/显示/配置）推送新快照
    - `retry: 3000` 指示 EventSource 重连间隔；30s 心跳注释帧（`: ping`）保持连接活性
    - 连接断开（req/res close）时退订并清理心跳；`res` error 吞掉避免写后抛异常

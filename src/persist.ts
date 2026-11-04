@@ -1,7 +1,7 @@
 /**
- * 宠物显示偏好持久化：$DSH_HOME/live2d-pet.json（拖动位置/尺寸）。
+ * 宠物显示偏好持久化：$DSH_HOME/waifu.json（拖动位置/尺寸）。
  * v0.1 采用简单同步读写；原子写入（dsh-atomic-write）留待后续。
- * @module dsh-live2d-pets/persist
+ * @module dsh-waifu/persist
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -50,7 +50,7 @@ function petHomeDir(): string {
 }
 
 function petFile(): string {
-  return join(petHomeDir(), 'live2d-pet.json')
+  return join(petHomeDir(), 'waifu.json')
 }
 
 /**

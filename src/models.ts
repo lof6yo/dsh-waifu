@@ -2,14 +2,14 @@
  * 模型清单与触摸部位的共享类型/纯函数：presets.jsonc（内置策展，只读，JSONC 支持注释）
  * 由 host 侧 `models-host.ts` 负责读取；本模块保持 client 可安全打包。
  *
- * 模型加载：内置模型随包分发（assets/models/<id>/，经 Host 同源 `/pet-assets/...` 路由），
+ * 模型加载：内置模型随包分发（assets/models/<id>/，经 Host 同源 `/waifu-assets/...` 路由），
  * 自定义模型仍支持任意 http(s) URL 或本机绝对路径（spec §6）。
  *
  * 触摸部位（spec §4）：部位完全由用户自定义——每个部位 = 名字 + 若干归一化矩形 box
  * （相对模型包围盒 0–1，左上右下）+ 该部位被触摸时播放的动作组列表。命中判定只用 box，
  * 不再依赖模型自带 HitArea 或空间阈值分档；部位有**图层**概念——parts 数组顺序即图层顺序，
  * 第 0 项最上层，box 重叠时上层部位生效（设置页可排序）。
- * @module dsh-live2d-pets/models
+ * @module dsh-waifu/models
  */
 
 /** 内置策展条目（presets.jsonc 结构）。 */
@@ -17,7 +17,7 @@ export interface BuiltinPreset {
   id: string
   name: string
   author: string
-  /** .model3.json 地址：随包内置为同源 `/pet-assets/models/<id>/...` 路径。 */
+  /** .model3.json 地址：随包内置为同源 `/waifu-assets/models/<id>/...` 路径。 */
   modelUrl: string
   license: { type: string; url: string }
   cubism: number
@@ -200,18 +200,6 @@ export interface TouchPart {
   lines?: string[]
 }
 
-/** 用户自定义模型条目（$DSH_HOME/live2d-pet/custom-models.jsonc，spec §6）。 */
-export interface CustomModelEntry {
-  /** 稳定 id（也作为触摸部位文件的 model key）。 */
-  id: string
-  /** 展示名。 */
-  name: string
-  /** .model3.json URL：http(s) 远程地址或本机绝对路径（Host 转同源虚拟路由）。 */
-  modelUrl: string
-  /** 可选：该模型的状态动画映射（6 个状态槽位）。 */
-  animationMap?: MotionMap
-}
-
 /** 无默认触摸部位时的空表（用户未创建部位 → 点击不触发互动，spec §4）。 */
 export const DEFAULT_TOUCH_PARTS: readonly TouchPart[] = []
 
@@ -338,20 +326,4 @@ export function hitTestTouchParts(parts: readonly TouchPart[], nx: number, ny: n
     }
   }
   return null
-}
-
-/** 判断是否为 http(s) 远程模型 URL。 */
-export function isRemoteModelUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value.trim())
-}
-
-/** 判断是否为本地绝对路径（Windows 盘符 / UNC / Unix 根路径）。 */
-export function isLocalModelPath(value: string): boolean {
-  const v = value.trim()
-  return /^[a-zA-Z]:[\\/]/.test(v) || /^\\\\/.test(v) || /^\//.test(v)
-}
-
-/** 自定义模型位置是否受支持（远程 URL 或本地绝对路径）。 */
-export function isSupportedModelLocation(value: string): boolean {
-  return isRemoteModelUrl(value) || isLocalModelPath(value)
 }
