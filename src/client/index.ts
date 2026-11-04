@@ -321,7 +321,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let canvas: HTMLCanvasElement | null = null
   /** 画布外包一层，便于绝对定位触摸部位叠加层。 */
   let petLayer: HTMLDivElement | null = null
-  let zoneOverlay: HTMLCanvasElement | null = null
+  let touchboxOverlay: HTMLCanvasElement | null = null
   /** 开发者选项：显示触摸部位色块（SSE config.showTapZones；编辑态强制显示，spec §2）。 */
   let showTapZones = false
   /** 触摸部位编辑态（设置页草稿；null = 非编辑态）。编辑态强制显示宠物与草稿 box（spec §4）。 */
@@ -738,14 +738,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** 同步触摸部位叠加层的缓冲/CSS 尺寸（缓冲按渲染倍数放大，绘制时 ctx 再缩放）。 */
   function resizeOverlay(width: number, height: number): void {
-    if (!zoneOverlay) return
+    if (!touchboxOverlay) return
     const scale = renderScale()
     const bufferW = Math.max(1, Math.round(width * scale))
     const bufferH = Math.max(1, Math.round(height * scale))
-    if (zoneOverlay.width !== bufferW) zoneOverlay.width = bufferW
-    if (zoneOverlay.height !== bufferH) zoneOverlay.height = bufferH
-    zoneOverlay.style.width = `${width}px`
-    zoneOverlay.style.height = `${height}px`
+    if (touchboxOverlay.width !== bufferW) touchboxOverlay.width = bufferW
+    if (touchboxOverlay.height !== bufferH) touchboxOverlay.height = bufferH
+    touchboxOverlay.style.width = `${width}px`
+    touchboxOverlay.style.height = `${height}px`
   }
 
   /** 按当前尺寸重新适配模型（画布已就绪时调用；基准尺寸为 scale=1 时捕获值）。 */
@@ -858,8 +858,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     model = null
     baseModelW = 0
     baseModelH = 0
-    if (zoneOverlay && zoneOverlay.parentNode) zoneOverlay.parentNode.removeChild(zoneOverlay)
-    zoneOverlay = null
+    if (touchboxOverlay && touchboxOverlay.parentNode) touchboxOverlay.parentNode.removeChild(touchboxOverlay)
+    touchboxOverlay = null
     if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas)
     canvas = null
     // 气泡临时移回 box，等待下次 petLayer 重建时再挂回（隐藏避免旧位置残影）
@@ -891,15 +891,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       canvas.height = placeholder.height
       // 点击穿透（spec §4）：canvas 不接收事件，透明区域直接落到下层 UI；命中由 hitLayer 承接
       canvas.style.cssText = 'pointer-events:none;display:block'
-      zoneOverlay = document.createElement('canvas')
-      zoneOverlay.width = Math.round(canvas.width * renderScale())
-      zoneOverlay.height = Math.round(canvas.height * renderScale())
-      zoneOverlay.style.cssText = `position:absolute;left:0;top:0;width:${canvas.width}px;height:${canvas.height}px;pointer-events:none;z-index:2;display:${touchboxOverlayVisible() ? 'block' : 'none'}`
+      touchboxOverlay = document.createElement('canvas')
+      touchboxOverlay.width = Math.round(canvas.width * renderScale())
+      touchboxOverlay.height = Math.round(canvas.height * renderScale())
+      touchboxOverlay.style.cssText = `position:absolute;left:0;top:0;width:${canvas.width}px;height:${canvas.height}px;pointer-events:none;z-index:2;display:${touchboxOverlayVisible() ? 'block' : 'none'}`
       // 命中层：透明 div 按触摸部位 box 定位，承接点击/拖动（不遮挡下层 UI 的其余区域）
       hitLayer = document.createElement('div')
       hitLayer.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3'
       petLayer.appendChild(canvas)
-      petLayer.appendChild(zoneOverlay)
+      petLayer.appendChild(touchboxOverlay)
       petLayer.appendChild(hitLayer)
       // 气泡改为相对 petLayer 定位，避免调试面板插入后把气泡顶到面板上方
       if (bubble && bubble.parentNode !== petLayer) petLayer.appendChild(bubble)
@@ -1003,13 +1003,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 不同部位按调色板循环取色，highlightPartId 高亮部位用更亮更粗的描边。
    */
   function paintTouchBoxes(): void {
-    if (!touchboxOverlayVisible() || !zoneOverlay || !canvas || !model) return
+    if (!touchboxOverlayVisible() || !touchboxOverlay || !canvas || !model) return
     const { width: w, height: h } = logicalCanvasSize()
     if (!(w > 0 && h > 0)) return
     resizeOverlay(w, h)
-    const overlayScale = zoneOverlay.width / w
-    zoneOverlay.style.cssText = `position:absolute;left:0;top:0;width:${w}px;height:${h}px;pointer-events:none;z-index:2;display:block`
-    const ctx = zoneOverlay.getContext('2d')
+    const overlayScale = touchboxOverlay.width / w
+    touchboxOverlay.style.cssText = `position:absolute;left:0;top:0;width:${w}px;height:${h}px;pointer-events:none;z-index:2;display:block`
+    const ctx = touchboxOverlay.getContext('2d')
     if (!ctx) return
     // 统一放大到缓冲坐标：包围盒/box 都是逻辑坐标，缩放后绘制保持清晰
     ctx.setTransform(overlayScale, 0, 0, overlayScale, 0, 0)
@@ -1057,7 +1057,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 启动触摸部位叠加层重绘循环（跟随模型动作/尺寸变化，spec §4）。 */
   function startTouchboxLoop(): void {
     stopTouchboxLoop()
-    if (!touchboxOverlayVisible() || !zoneOverlay) return
+    if (!touchboxOverlayVisible() || !touchboxOverlay) return
     const tick = () => {
       paintTouchBoxes()
       touchboxRaf = window.requestAnimationFrame(tick)
@@ -1068,7 +1068,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 同步叠加层显隐与重绘循环（编辑态强制显示；非编辑态由 showTapZones 决定，spec §2/§4）。 */
   function syncTouchboxOverlay(): void {
     const on = touchboxOverlayVisible()
-    if (zoneOverlay) zoneOverlay.style.display = on ? 'block' : 'none'
+    if (touchboxOverlay) touchboxOverlay.style.display = on ? 'block' : 'none'
     if (on) startTouchboxLoop()
     else stopTouchboxLoop()
   }

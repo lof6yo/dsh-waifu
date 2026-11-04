@@ -102,7 +102,7 @@ function makeRoutes() {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('makePetRoutes API 路由', () => {
-  it('GET /state 返回 200 + 快照 JSON（含 touchParts，无 spatialTap）', async () => {
+  it('GET /state 返回 200 + 快照 JSON（含 touchParts/events，不含旧 spatialTap 字段）', async () => {
     const { route, cleanup } = makeRoutes()
     const res = fakeRes()
     route(`${PET_API_PREFIX}/state`)!.handler(fakeReq('GET'), res as never)
