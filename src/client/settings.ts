@@ -1,8 +1,9 @@
 /**
  * 桌宠配置设置页（`settings.section` 注册体，spec §2）。
- * 单页信息架构（从上到下）：显示（开关 / 尺寸 / 帧率）/ 模型（内置只读 + 我的模型
- * 名称+URL）/ 事件绑定（当前模型：6 事件的动作组 + 分阶段台词池）/ 触摸部位
- * （box / 台词 / 触摸动画）/ 开发者选项。不再有固定人设、跳转链接或文件路径展示。
+ * 单页信息架构（从上到下）：显示（开关 / 尺寸 / 留白 / 位置 / 气泡 / 帧率）/
+ * 事件绑定（当前模型：6 事件的动作组 + 分阶段台词池）/ 触摸部位
+ * （box / 台词 / 触摸动画）/ 开发者选项。仅内置「简」模型，不再有模型选择/导入、
+ * 固定人设、跳转链接或文件路径展示。
  * 读写经插件自己的同源 API `/api/live2d-pet/settings` 与 `/api/live2d-pet/touch-parts`
  * （Host 直连插件私有配置文件 settings.jsonc / touch-parts.jsonc，ADR-013）——不走
  * client settingsScope wire，因为 dsh-host-apiproxy 只把内置 allowlist 的 namespace
@@ -14,8 +15,6 @@
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent, MouseEvent, ReactNode, ReactElement } from 'react'
 import type {
-  BuiltinPreset,
-  CustomModelEntry,
   EventBinding,
   EventBindings,
   PetEventKey,
@@ -30,7 +29,6 @@ import {
   MAX_LINES_PER_PART,
   MAX_LINES_PER_POOL,
   PET_EVENTS,
-  isSupportedModelLocation,
   mergeEventBindings,
   normalizeEventBindings,
 } from '../models.ts'
@@ -307,37 +305,25 @@ async function loadStateEvents(): Promise<EventBindings> {
 }
 
 /**
- * 选中模型 → 可 fetch 的 .model3.json URL。
- * 优先用 /state 的 config.modelUrl（Host 已把自定义模型本地路径改写成同源虚拟 URL）；
- * /state 不可达或模型尚未同步时回退到模型清单。
+ * 当前模型 → 可 fetch 的 .model3.json URL（仅内置「简」）：从 /state 的
+ * config.modelUrl 取；不可达/尚未同步时返回 null（动作组多选降级为空）。
  */
-async function resolveSelectedModelUrl(
-  model: string,
-  builtin: readonly BuiltinPreset[],
-  custom: readonly CustomModelEntry[],
-): Promise<string | null> {
+async function resolveSelectedModelUrl(model: string): Promise<string | null> {
   try {
     const response = await fetch(STATE_API)
-    if (response.ok) {
-      const view = await response.json() as { config?: { model?: string; modelUrl?: string | null } }
-      const config = view?.config
-      if (config?.model === model && typeof config.modelUrl === 'string' && config.modelUrl) {
-        return config.modelUrl
-      }
+    if (!response.ok) return null
+    const view = await response.json() as { config?: { model?: string; modelUrl?: string | null } }
+    const config = view?.config
+    if (config?.model === model && typeof config.modelUrl === 'string' && config.modelUrl) {
+      return config.modelUrl
     }
   } catch {
-    // 回退到模型清单
+    // ignore
   }
-  const preset = builtin.find((p) => p.id === model)
-  if (preset?.modelUrl) return preset.modelUrl
-  const entry = custom.find((c) => c.id === model)
-  if (entry && /^https?:\/\//i.test(entry.modelUrl)) return entry.modelUrl
   return null
 }
 
 const SETTINGS_API = '/api/live2d-pet/settings'
-const MODELS_API = '/api/live2d-pet/models'
-const CUSTOM_MODELS_API = '/api/live2d-pet/custom-models'
 const STATE_API = '/api/live2d-pet/state'
 const TOUCH_PARTS_API = '/api/live2d-pet/touch-parts'
 
@@ -361,24 +347,49 @@ const C = {
 /** 间距网格（4/8/12/16/24/32；分组之间 28）。 */
 const GAP = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, section: 28 } as const
 
-/** Section：标题 13/600 secondary + 说明 12 secondary + 内容上下间距。 */
+/** Section：标题 15/600 primary + 说明 12 secondary + 右侧可选操作，组间距 28。 */
 const sectionStyle: CSSProperties = { marginTop: GAP.section }
-const sectionHeadStyle: CSSProperties = {
+const sectionHeaderStyle: CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   justifyContent: 'space-between',
   gap: GAP.sm,
-  margin: 0,
-  marginBottom: GAP.xs,
+  marginBottom: GAP.sm,
 }
-const sectionTitleStyle: CSSProperties = { margin: 0, fontSize: 13, fontWeight: 600, color: C.textSecondary }
+const sectionHeaderMainStyle: CSSProperties = { flex: 1, minWidth: 0 }
+const sectionHeadingStyle: CSSProperties = {
+  margin: 0,
+  fontSize: 15,
+  fontWeight: 600,
+  color: C.textPrimary,
+  lineHeight: 1.4,
+}
 const sectionDescStyle: CSSProperties = {
-  margin: `0 0 ${GAP.sm}px`,
+  margin: '4px 0 0',
   fontSize: 12,
   color: C.textSecondary,
   lineHeight: 1.6,
 }
-const subTitleStyle: CSSProperties = { margin: '12px 0 4px', fontSize: 12, fontWeight: 600, color: C.textSecondary }
+const sectionHeaderActionStyle: CSSProperties = { flexShrink: 0, display: 'flex', alignItems: 'center', gap: GAP.sm }
+/** 卡片内标题 13/600 primary。 */
+const cardHeadingStyle: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: C.textPrimary,
+  marginBottom: GAP.sm,
+}
+
+/** 统一 SectionHeader：标题 + 说明（放标题下方）+ 右侧可选操作。 */
+function SectionHeader(props: { title: string; description?: ReactNode; action?: ReactNode }): ReactElement {
+  const { title, description, action } = props
+  return createElement('div', { style: sectionHeaderStyle },
+    createElement('div', { style: sectionHeaderMainStyle },
+      createElement('h3', { style: sectionHeadingStyle }, title),
+      description !== undefined ? createElement('div', { style: sectionDescStyle }, description) : null,
+    ),
+    action !== undefined ? createElement('div', { style: sectionHeaderActionStyle }, action) : null,
+  )
+}
 
 /** Card：容器 0 padding；标题行/内容区分别控制，卡片间距 10。 */
 const cardStyle: CSSProperties = {
@@ -443,7 +454,7 @@ const cardSummaryStyle: CSSProperties = {
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 }
-const cardBodyStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: GAP.sm, padding: '0 14px 14px' }
+const cardBodyStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: GAP.sm, padding: '0 14px 12px' }
 const chevronStyle: CSSProperties = {
   width: 20,
   height: 20,
@@ -966,63 +977,6 @@ async function writeSettings(ops: SettingsOp[]): Promise<SettingsView | null> {
   }
 }
 
-/** 读取自定义模型文件（GET）。 */
-async function loadCustomModels(): Promise<{
-  models: CustomModelEntry[]
-  error: string | null
-  path: string
-} | null> {
-  try {
-    const response = await fetch(CUSTOM_MODELS_API)
-    if (!response.ok) return null
-    return await response.json() as { models: CustomModelEntry[]; error: string | null; path: string }
-  } catch {
-    return null
-  }
-}
-
-/** 写回自定义模型文件（POST 全量列表）。 */
-async function saveCustomModelsFile(models: CustomModelEntry[]): Promise<{
-  models: CustomModelEntry[]
-  error: string | null
-  path: string
-} | null> {
-  try {
-    const response = await fetch(CUSTOM_MODELS_API, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ models }),
-    })
-    if (!response.ok) return null
-    return await response.json() as { models: CustomModelEntry[]; error: string | null; path: string }
-  } catch {
-    return null
-  }
-}
-
-/** 单个模型行（自绘 radio + 元信息 + 右侧操作；圆点与帧率档共用 ThemeRadioDot）。 */
-function modelRow(
-  key: string,
-  selected: boolean,
-  onSelect: () => void,
-  meta: string,
-  disabled: boolean,
-  actions?: ReactNode,
-): ReactElement {
-  return createElement('div', { key, style: { ...rowStyle, display: 'flex', alignItems: 'center', gap: 8 } },
-    createElement(ThemeRadioOption, {
-      selected,
-      disabled,
-      onSelect,
-      style: { ...labelStyle, margin: 0, flex: 1 },
-      children: createElement('span', {
-        style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' },
-      }, meta),
-    }),
-    actions,
-  )
-}
-
 /** 设置页组件 props：保留空对象以便入口 `createElement(PetSettingsSection, {})`。 */
 export interface PetSettingsProps {}
 
@@ -1051,32 +1005,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   /** 当前选中模型（设置未就绪时为空，事件绑定/触摸部位分组暂不加载）。 */
   const selectedModel = state.status === 'ready' ? value.model : ''
 
-  // 内置清单（Host API，只读）
-  const [builtin, setBuiltin] = useState<BuiltinPreset[]>([])
-  useEffect(() => {
-    let alive = true
-    fetch(MODELS_API)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!alive || !data) return
-        if (Array.isArray(data.builtin)) setBuiltin(data.builtin)
-      })
-      .catch(() => {})
-    return () => { alive = false }
-  }, [])
-
-  // 自定义模型（保持插件私有 JSONC 文件，不在 UI 暴露路径）
-  const [customModels, setCustomModels] = useState<CustomModelEntry[]>([])
-  const [customModelsError, setCustomModelsError] = useState<string | null>(null)
-  const reloadCustomModels = useCallback(() => {
-    loadCustomModels().then((view) => {
-      if (view === null) return
-      setCustomModels(view.models)
-      setCustomModelsError(view.error)
-    })
-  }, [])
-  useEffect(() => { reloadCustomModels() }, [reloadCustomModels])
-
   // 尺寸滑杆：拖动中本地草稿，松手/失焦提交（避免拖动写满 settings.jsonc）
   const [draftSize, setDraftSize] = useState<number | null>(null)
   useEffect(() => { setDraftSize(null) }, [value.size])
@@ -1099,17 +1027,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     resetNoticeTimer.current = setTimeout(() => setResetNotice(null), 2000)
   }
 
-  // 自定义模型表单（添加 + 编辑）：仅名称 + URL
-  const [newName, setNewName] = useState('')
-  const [newUrl, setNewUrl] = useState('')
-  const [editId, setEditId] = useState<string | null>(null)
-  const [editName, setEditName] = useState('')
-  const [editUrl, setEditUrl] = useState('')
-
-  const custom = customModels
-  const customRef = useRef(custom)
-  customRef.current = custom
-
   // 写入串行化：ops 在出队时基于最新视图合成，避免快速操作读到过期状态。
   const writeQueue = useRef<Promise<void>>(Promise.resolve())
   const enqueueWrite = (compose: (current: PetSettingsValue) => SettingsOp[]): void => {
@@ -1118,58 +1035,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       const view = await writeSettings(compose(current))
       if (view !== null) setSettingsState({ status: 'ready', value: view.value, writable: view.writable !== false, error: view.error ?? null })
     })
-  }
-
-  // 自定义模型文件写入串行化（独立于 settings 写入队列）
-  const customWriteQueue = useRef<Promise<void>>(Promise.resolve())
-  const enqueueCustomWrite = (compose: (current: CustomModelEntry[]) => CustomModelEntry[]): void => {
-    customWriteQueue.current = customWriteQueue.current.then(async () => {
-      const view = await saveCustomModelsFile(compose(customRef.current))
-      if (view !== null) {
-        setCustomModels(view.models)
-        setCustomModelsError(view.error)
-      }
-    })
-  }
-
-  const addModel = () => {
-    const name = newName.trim()
-    const url = newUrl.trim()
-    if (!name || !isSupportedModelLocation(url)) return
-    const entry: CustomModelEntry = { id: `m${Date.now()}`, name, modelUrl: url }
-    enqueueCustomWrite((current) => [...current, entry])
-    setNewName('')
-    setNewUrl('')
-  }
-
-  const saveEdit = (id: string) => {
-    const name = editName.trim()
-    const url = editUrl.trim()
-    if (!name || !isSupportedModelLocation(url)) return
-    enqueueCustomWrite((current) => current.map((c) => {
-      if (c.id !== id) return c
-      // 保留条目上可能存在的 animationMap（事件绑定统一由「事件绑定」覆盖层管理）
-      const next: CustomModelEntry = c.animationMap
-        ? { id: c.id, name, modelUrl: url, animationMap: c.animationMap }
-        : { id: c.id, name, modelUrl: url }
-      return next
-    }))
-    setEditId(null)
-  }
-
-  const beginEdit = (c: CustomModelEntry) => {
-    setEditId(c.id)
-    setEditName(c.name)
-    setEditUrl(c.modelUrl)
-  }
-
-  const removeModel = (id: string) => {
-    // 删除的是当前选中模型时，回退到第一个内置模型（builtin 加载完成前用默认 id）
-    const fallbackModel = builtin[0]?.id ?? 'hiyori'
-    enqueueCustomWrite((current) => current.filter((c) => c.id !== id))
-    if (value.model === id) {
-      enqueueWrite(() => [{ op: 'set', path: ['model'], value: fallbackModel }])
-    }
   }
 
   // ---- 事件绑定 + 触摸部位（同一模型、同一份草稿、同一保存队列） ----
@@ -1231,9 +1096,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   /** 事件台词 textarea 原始输入缓冲（按 `${event}:${stage}`）：同上。 */
   const [eventLineDrafts, setEventLineDrafts] = useState<Record<string, string>>({})
 
-  /** 服务端当前模型与设置页选中模型不一致（极少见）：临时只读，避免写错模型。 */
-  const modelMismatch = !!modelDraft && !!selectedModel && modelDraft !== selectedModel
-  const readOnly = !writable || partStatus !== 'ready' || modelMismatch
+  const readOnly = !writable || partStatus !== 'ready'
 
   const setExpandedPart = (id: string | null): void => {
     expandedPartRef.current = id
@@ -1498,9 +1361,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         })
       }
       setPartStatus('ready')
-      setLoadError(view.error ?? (view.model !== selectedModel
-        ? `服务端当前模型（${view.model || '无'}）与选中模型不同步，请稍后重新进入`
-        : null))
+      setLoadError(view.error ?? null)
     })
     return () => { alive = false }
   }, [selectedModel, state.status, reloadKey])
@@ -1510,7 +1371,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     if (state.status !== 'ready' || !selectedModel) return
     let alive = true
     setMotionGroupsStatus('loading')
-    void resolveSelectedModelUrl(selectedModel, builtin, customModels).then((url) => {
+    void resolveSelectedModelUrl(selectedModel).then((url) => {
       if (!alive) return
       if (!url) {
         setMotionGroups([])
@@ -1528,7 +1389,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       })
     })
     return () => { alive = false }
-  }, [selectedModel, state.status, builtin, customModels, motionReloadKey])
+  }, [selectedModel, state.status, motionReloadKey])
 
   // 卸载：若有未保存改动则自动补存（防丢），并通知宠物退出 box 预览
   useEffect(() => () => {
@@ -1962,48 +1823,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   }
 
   // ---- 组装页面 ----
-  const builtinRows = builtin.map((p) => modelRow(
-    `builtin-${p.id}`,
-    value.model === p.id,
-    () => enqueueWrite(() => [{ op: 'set', path: ['model'], value: p.id }]),
-    `${p.name}（${p.author}）· ${p.license?.type ?? '许可'}`,
-    !writable,
-  ))
-
-  const customRows = custom.map((c) => {
-    if (editId === c.id) {
-      return createElement('div', { key: c.id, style: { ...rowStyle, display: 'flex', flexDirection: 'column', gap: GAP.sm } },
-        createElement('div', { style: { display: 'flex', gap: GAP.sm, alignItems: 'center', flexWrap: 'wrap' } },
-          createElement('input', {
-            style: inputStyle,
-            value: editName,
-            placeholder: '名称',
-            onChange: (e: ChangeEvent<HTMLInputElement>) => setEditName(e.target.value),
-          }),
-          createElement('input', {
-            style: { ...inputStyle, flex: 1, minWidth: 120 },
-            value: editUrl,
-            placeholder: 'https://…/model3.json 或 C:/models/...',
-            onChange: (e: ChangeEvent<HTMLInputElement>) => setEditUrl(e.target.value),
-          }),
-          createElement('button', { className: 'dsh-btn dsh-btn-primary', style: buttonPrimaryStyle, onClick: () => saveEdit(c.id) }, '保存'),
-          createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: buttonSecondaryStyle, onClick: () => setEditId(null) }, '取消'),
-        ),
-      )
-    }
-    return modelRow(
-      `custom-${c.id}`,
-      value.model === c.id,
-      () => enqueueWrite(() => [{ op: 'set', path: ['model'], value: c.id }]),
-      c.name,
-      !writable,
-      createElement('span', { key: 'actions' },
-        createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: buttonSecondaryStyle, onClick: () => beginEdit(c) }, '修改'),
-        createElement('button', { className: 'dsh-btn dsh-btn-danger', style: buttonDangerStyle, onClick: () => removeModel(c.id) }, '删除'),
-      ),
-    )
-  })
-
   const hasChanges = partsDirty || eventsDirty
   const motionGroupsHint = motionGroupsStatus === 'loading'
     ? '正在解析模型动画列表…'
@@ -2055,53 +1874,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ))
   }
 
-  // 1. 显示：开关
-  children.push(createElement('div', { key: 'enabled', style: rowStyle },
-    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-      createElement('span', { style: formLabelStyle }, '显示'),
-      createElement('label', { style: { ...labelStyle, flex: 'none' } },
-        createElement('input', {
-          type: 'checkbox',
-          checked: !!value.enabled,
-          disabled: !writable,
-          // 受控 checkbox 的事件期捕获：React 在 onChange 后会同步把 DOM
-          // 复位回上次渲染值，若出队时才读 e.target.checked 永远读到旧值
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = e.target.checked
-            enqueueWrite(() => [{ op: 'set', path: ['enabled'], value: next }])
-          },
-        }),
-        createElement('span', null, '显示宠物'),
-      ),
-    ),
-  ))
-
-  // 2. 显示：尺寸滑杆
-  children.push(createElement('div', { key: 'size', style: rowStyle },
-    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-      createElement('span', { style: formLabelStyle }, '尺寸'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'range',
-          min: 40,
-          max: 400,
-          step: 1,
-          value: size,
-          disabled: !writable,
-          style: { flex: 1, minWidth: 0 },
-          onChange: (e: ChangeEvent<HTMLInputElement>) => setDraftSize(Number(e.target.value)),
-          onPointerUp: commitSize,
-          onKeyUp: commitSize,
-          onBlur: commitSize,
-        }),
-        createElement('span', { style: { width: 56, textAlign: 'right', color: C.textSecondary, fontSize: 12 } }, `${size}px`),
-      ),
-    ),
-  ))
-
-  // 2.5 显示：画布留白（百分比；防动作甩尾被裁切）
+  // 1. 显示（Section）：基础显示 / 画布与位置 / 对白气泡
+  const maxFps = normalizeMaxFps(value.maxFps)
   const canvasPadX = normalizeCanvasPad(state.value?.canvasPadX, 130)
   const canvasPadY = normalizeCanvasPad(state.value?.canvasPadY, 70)
+  const homeRight = normalizeHomePosition(state.value?.homeRight, 300)
+  const homeBottom = normalizeHomePosition(state.value?.homeBottom, 260)
+  const bubbleOffsetX = normalizeBubbleOffset(state.value?.bubbleOffsetX, 0)
+  const bubbleOffsetY = normalizeBubbleOffset(state.value?.bubbleOffsetY, -10)
+  const bubbleBgColor = normalizeHexColor(state.value?.bubbleBgColor, '#ffffff')
+  const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
+  const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
   const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
   const colorInputStyle: CSSProperties = {
     ...inputStyle,
@@ -2110,294 +1893,289 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     padding: 2,
     cursor: writable ? 'pointer' : 'not-allowed',
   }
-  children.push(createElement('div', { key: 'canvas-pad', style: rowStyle },
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '水平留白（%）'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'number',
-          min: 0,
-          max: 300,
-          step: 5,
-          value: canvasPadX,
-          disabled: !writable,
-          style: numberInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeCanvasPad(e.target.value, 0)
-            enqueueWrite(() => [{ op: 'set', path: ['canvasPadX'], value: next }])
-          },
-        }),
+  children.push(createElement('div', { key: 'display-section', style: sectionStyle },
+    createElement(SectionHeader, {
+      title: '显示',
+      description: '基础显示、画布与默认位置，以及对白气泡的位置与配色。',
+    }),
+    // A. 基础显示
+    createElement('div', { key: 'basic-display', style: rowStyle },
+      createElement('div', { style: cardHeadingStyle }, '基础显示'),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '显示'),
+        createElement('label', { style: { ...labelStyle, flex: 'none' } },
+          createElement('input', {
+            type: 'checkbox',
+            checked: !!value.enabled,
+            disabled: !writable,
+            // 受控 checkbox 的事件期捕获：React 在 onChange 后会同步把 DOM
+            // 复位回上次渲染值，若出队时才读 e.target.checked 永远读到旧值
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = e.target.checked
+              enqueueWrite(() => [{ op: 'set', path: ['enabled'], value: next }])
+            },
+          }),
+          createElement('span', null, '显示宠物'),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '尺寸'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'range',
+            min: 40,
+            max: 400,
+            step: 1,
+            value: size,
+            disabled: !writable,
+            style: { flex: 1, minWidth: 0 },
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setDraftSize(Number(e.target.value)),
+            onPointerUp: commitSize,
+            onKeyUp: commitSize,
+            onBlur: commitSize,
+          }),
+          createElement('span', { style: { width: 56, textAlign: 'right', color: C.textSecondary, fontSize: 12 } }, `${size}px`),
+        ),
+      ),
+      createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+        createElement('span', { style: formLabelStyle }, '渲染帧率'),
+        createElement('div', { style: formControlStyle },
+          createElement(ThemeRadioGroup, {
+            name: '渲染帧率',
+            value: String(maxFps),
+            options: MAX_FPS_OPTIONS,
+            disabled: !writable,
+            onChange: (id: string) => {
+              enqueueWrite(() => [{ op: 'set', path: ['maxFps'], value: normalizeMaxFps(Number(id)) }])
+            },
+          }),
+        ),
       ),
     ),
-    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-      createElement('span', { style: formLabelStyle }, '垂直留白（%）'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'number',
-          min: 0,
-          max: 300,
-          step: 5,
-          value: canvasPadY,
-          disabled: !writable,
-          style: numberInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeCanvasPad(e.target.value, 0)
-            enqueueWrite(() => [{ op: 'set', path: ['canvasPadY'], value: next }])
-          },
-        }),
+    // B. 画布与位置
+    createElement('div', { key: 'canvas-home', style: rowStyle },
+      createElement('div', { style: cardHeadingStyle }, '画布与位置'),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '水平留白（%）'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 300,
+            step: 5,
+            value: canvasPadX,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeCanvasPad(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['canvasPadX'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '垂直留白（%）'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 300,
+            step: 5,
+            value: canvasPadY,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeCanvasPad(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['canvasPadY'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '中心距右（px）'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 4000,
+            step: 10,
+            value: homeRight,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeHomePosition(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['homeRight'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '中心距下（px）'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 4000,
+            step: 10,
+            value: homeBottom,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeHomePosition(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '操作'),
+        createElement('div', { style: { ...formControlStyle, flexWrap: 'wrap' } },
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-btn dsh-btn-secondary',
+            style: buttonSecondaryStyle,
+            disabled: !writable,
+            onClick: requestRecenter,
+          }, '归位'),
+          resetNotice
+            ? createElement('span', {
+              key: 'reset-notice',
+              style: { ...statusTextStyle, color: C.success },
+            }, resetNotice)
+            : null,
+        ),
+      ),
+      createElement('div', { style: { ...hintStyle, marginTop: GAP.sm } },
+        '角色四周的画布留白，防止动作甩尾被裁切。',
+        createElement('br'),
+        '中心距右/下：显示区中心点距窗口右/底边的距离；首次启动与「归位」使用。'),
+    ),
+    // C. 对白气泡
+    createElement('div', { key: 'bubble-style', style: rowStyle },
+      createElement('div', { style: cardHeadingStyle }, '对白气泡'),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '水平偏移（px）'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'number',
+            min: -1000,
+            max: 1000,
+            step: 5,
+            value: bubbleOffsetX,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeBubbleOffset(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetX'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '垂直偏移（px）'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'number',
+            min: -1000,
+            max: 1000,
+            step: 5,
+            value: bubbleOffsetY,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeBubbleOffset(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetY'], value: next }])
+            },
+          }),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, '相对角色顶部中心，负值向上。'),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '背景色'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'color',
+            value: bubbleBgColor,
+            disabled: !writable,
+            style: colorInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeHexColor(e.target.value, '#ffffff')
+              enqueueWrite(() => [{ op: 'set', path: ['bubbleBgColor'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement('span', { style: formLabelStyle }, '背景不透明度（%）'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 100,
+            step: 1,
+            value: bubbleBgOpacity,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeBubbleOpacity(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+        createElement('span', { style: formLabelStyle }, '文字颜色'),
+        createElement('div', { style: formControlStyle },
+          createElement('input', {
+            type: 'color',
+            value: bubbleTextColor,
+            disabled: !writable,
+            style: colorInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeHexColor(e.target.value, '#222222')
+              enqueueWrite(() => [{ op: 'set', path: ['bubbleTextColor'], value: next }])
+            },
+          }),
+        ),
       ),
     ),
-    createElement('div', { style: { ...sectionDescStyle, margin: '8px 0 0' } },
-      '角色四周的画布留白，防止动作甩尾被裁切。'),
   ))
 
-  // 2.6 显示：默认位置（显示区中心点距右/距下） + 归位
-  const homeRight = normalizeHomePosition(state.value?.homeRight, 300)
-  const homeBottom = normalizeHomePosition(state.value?.homeBottom, 260)
-  children.push(createElement('div', { key: 'home-position', style: rowStyle },
-    createElement('div', { style: { fontSize: 13, fontWeight: 600, color: C.textPrimary, marginBottom: GAP.sm } },
-      '默认位置（中心点）'),
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '中心距右（px）'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'number',
-          min: 0,
-          max: 4000,
-          step: 10,
-          value: homeRight,
-          disabled: !writable,
-          style: numberInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeHomePosition(e.target.value, 0)
-            enqueueWrite(() => [{ op: 'set', path: ['homeRight'], value: next }])
-          },
-        }),
-      ),
-    ),
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '中心距下（px）'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'number',
-          min: 0,
-          max: 4000,
-          step: 10,
-          value: homeBottom,
-          disabled: !writable,
-          style: numberInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeHomePosition(e.target.value, 0)
-            enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
-          },
-        }),
-      ),
-    ),
-    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-      createElement('span', { style: formLabelStyle }, '操作'),
-      createElement('div', { style: { ...formControlStyle, flexWrap: 'wrap' } },
-        createElement('button', {
-          type: 'button',
-          className: 'dsh-btn dsh-btn-secondary',
-          style: buttonSecondaryStyle,
-          disabled: !writable,
-          onClick: requestRecenter,
-        }, '归位'),
-        resetNotice
-          ? createElement('span', {
-            key: 'reset-notice',
-            style: { ...statusTextStyle, color: C.success },
-          }, resetNotice)
+  // 4. 事件绑定（当前模型）：6 事件的动作组 + 分阶段台词池
+  children.push(createElement('div', { key: 'event-bindings', style: sectionStyle },
+    createElement(SectionHeader, {
+      title: '事件绑定（当前模型）',
+      description: createElement('div', null,
+        '每个事件可配置动作组与台词池：动作组来自当前模型 Motions（不选 = 不播动作）；',
+        createElement('br'),
+        '台词一行一条，留空 = 该阶段不显示气泡；修改后点击对应事件卡里的「保存」写入。',
+        motionGroupsStatus === 'error'
+          ? createElement('div', { style: { ...noticeErrorStyle, marginTop: 8, marginBottom: 0 } },
+            '无法解析当前模型的动作组，动作多选暂不可用（可稍后重试）。',
+            createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: { ...buttonSecondaryStyle, marginLeft: 8 }, onClick: retryMotionGroups }, '重试'),
+          )
           : null,
       ),
-    ),
-    createElement('div', { style: { ...sectionDescStyle, margin: '8px 0 0' } },
-      '显示区中心点距窗口右/底边的距离；首次启动与「归位」使用。'),
-  ))
-
-  // 2.7 显示：对白气泡（位置 + 背景/文字样式）
-  const bubbleOffsetX = normalizeBubbleOffset(state.value?.bubbleOffsetX, 0)
-  const bubbleOffsetY = normalizeBubbleOffset(state.value?.bubbleOffsetY, -10)
-  const bubbleBgColor = normalizeHexColor(state.value?.bubbleBgColor, '#ffffff')
-  const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
-  const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
-  children.push(createElement('div', { key: 'bubble-style', style: rowStyle },
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '水平偏移（px）'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'number',
-          min: -1000,
-          max: 1000,
-          step: 5,
-          value: bubbleOffsetX,
-          disabled: !writable,
-          style: numberInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeBubbleOffset(e.target.value, 0)
-            enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetX'], value: next }])
-          },
-        }),
-      ),
-    ),
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '垂直偏移（px）'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'number',
-          min: -1000,
-          max: 1000,
-          step: 5,
-          value: bubbleOffsetY,
-          disabled: !writable,
-          style: numberInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeBubbleOffset(e.target.value, 0)
-            enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetY'], value: next }])
-          },
-        }),
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, '相对角色顶部中心，负值向上。'),
-      ),
-    ),
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '背景色'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'color',
-          value: bubbleBgColor,
-          disabled: !writable,
-          style: colorInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeHexColor(e.target.value, '#ffffff')
-            enqueueWrite(() => [{ op: 'set', path: ['bubbleBgColor'], value: next }])
-          },
-        }),
-      ),
-    ),
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '背景不透明度（%）'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'number',
-          min: 0,
-          max: 100,
-          step: 1,
-          value: bubbleBgOpacity,
-          disabled: !writable,
-          style: numberInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeBubbleOpacity(e.target.value, 0)
-            enqueueWrite(() => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
-          },
-        }),
-      ),
-    ),
-    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-      createElement('span', { style: formLabelStyle }, '文字颜色'),
-      createElement('div', { style: formControlStyle },
-        createElement('input', {
-          type: 'color',
-          value: bubbleTextColor,
-          disabled: !writable,
-          style: colorInputStyle,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => {
-            const next = normalizeHexColor(e.target.value, '#222222')
-            enqueueWrite(() => [{ op: 'set', path: ['bubbleTextColor'], value: next }])
-          },
-        }),
-      ),
-    ),
-  ))
-
-  // 3. 显示：渲染帧率
-  const maxFps = normalizeMaxFps(value.maxFps)
-  children.push(createElement('div', { key: 'maxFps', style: sectionStyle },
-    createElement('div', { style: sectionTitleStyle }, '渲染帧率'),
-    createElement('div', { style: rowStyle },
-      createElement(ThemeRadioGroup, {
-        name: '渲染帧率',
-        value: String(maxFps),
-        options: MAX_FPS_OPTIONS,
-        disabled: !writable,
-        onChange: (id: string) => {
-          enqueueWrite(() => [{ op: 'set', path: ['maxFps'], value: normalizeMaxFps(Number(id)) }])
-        },
-      }),
-    ),
-  ))
-
-  // 4. 模型：内置只读 + 我的模型（名称 + URL）
-  children.push(createElement('div', { key: 'models', style: sectionStyle },
-    createElement('div', { style: sectionTitleStyle }, '模型'),
-    createElement('div', { role: 'radiogroup', 'aria-label': '内置模型' },
-      builtinRows.length > 0 ? builtinRows : createElement('div', { style: { ...noticeMutedStyle, marginBottom: 0 } }, '清单加载中…'),
-    ),
-    createElement('div', { style: subTitleStyle }, '我的模型'),
-    customModelsError
-      ? createElement('div', { key: 'custom-models-error', style: noticeErrorStyle },
-        `自定义模型文件：${customModelsError}`)
-      : null,
-    createElement('div', { role: 'radiogroup', 'aria-label': '我的模型' },
-      customRows.length > 0 ? customRows : createElement('div', { style: { ...noticeMutedStyle, marginBottom: 8 } }, '尚未添加自定义模型'),
-    ),
-    createElement('div', { style: { ...sectionDescStyle, marginTop: 8 } },
-      '仅名称与 URL；动画映射与台词在下方「事件绑定」按事件统一配置。'),
-    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-      createElement('span', { style: formLabelStyle }, '添加模型'),
-      createElement('div', { style: { display: 'flex', gap: GAP.sm, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 } },
-        createElement('input', {
-          style: { ...inputStyle, flex: '1 1 120px' },
-          value: newName,
-          placeholder: '名称',
-          disabled: !writable,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => setNewName(e.target.value),
-        }),
-        createElement('input', {
-          style: { ...inputStyle, flex: '2 1 200px' },
-          value: newUrl,
-          placeholder: 'https://…/xxx.model3.json 或 C:/models/...',
-          disabled: !writable,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value),
-        }),
-        createElement('button', { className: 'dsh-btn dsh-btn-primary', style: buttonPrimaryStyle, onClick: addModel, disabled: !writable }, '添加'),
-      ),
-    ),
-  ))
-
-  // 5. 事件绑定（当前模型）：6 事件的动作组 + 分阶段台词池
-  children.push(createElement('div', { key: 'event-bindings', style: sectionStyle },
-    createElement('div', { style: sectionHeadStyle },
-      createElement('div', { style: sectionTitleStyle }, '事件绑定（当前模型）'),
-      motionGroupsHint
+      action: motionGroupsHint
         ? createElement('span', { style: statusTextStyle, color: C.textSecondary }, motionGroupsHint)
-        : null,
-    ),
-    createElement('div', { style: sectionDescStyle },
-      '每个事件可配置动作组与台词池：动作组来自当前模型 Motions（不选 = 不播动作）；',
-      createElement('br'),
-      '台词一行一条，留空 = 该阶段不显示气泡；修改后点击对应事件卡里的「保存」写入。',
-      motionGroupsStatus === 'error'
-        ? createElement('div', { style: { ...noticeErrorStyle, marginTop: 8, marginBottom: 0 } },
-          '无法解析当前模型的动作组，动作多选暂不可用（可稍后重试）。',
-          createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: { ...buttonSecondaryStyle, marginLeft: 8 }, onClick: retryMotionGroups }, '重试'),
-        )
-        : null,
-    ),
+        : undefined,
+    }),
     ...EVENT_ORDER.map((event) => renderEventCard(event)),
   ))
 
-  // 6. 触摸部位（当前模型）：所有输入始终可编辑；预览开关只控制宠物上的 box 叠加
+  // 5. 触摸部位（当前模型）：所有输入始终可编辑；预览开关只控制宠物上的 box 叠加
   children.push(createElement('div', { key: 'touch-parts', style: sectionStyle },
-    createElement('div', { style: sectionHeadStyle },
-      createElement('div', { style: sectionTitleStyle }, '触摸部位（当前模型）'),
-      createElement('button', {
+    createElement(SectionHeader, {
+      title: '触摸部位（当前模型）',
+      description: '预览只控制角色上的 box 叠加/强制可见，不影响编辑与保存。',
+      action: createElement('button', {
         type: 'button',
         className: 'dsh-btn dsh-btn-secondary',
         style: buttonSecondaryStyle,
         disabled: readOnly,
         onClick: toggleTouchEditing,
       }, touchEditing ? '退出预览' : '预览 box（在角色上显示）'),
-    ),
+    }),
     structureDirty
       ? saveRow('touch-structure-save-row', '部位顺序/新增/删除未保存', 'warn', saveStructureNow)
       : null,
@@ -2405,8 +2183,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       ? createElement('div', { key: 'touch-saved-flash', style: stickyRowStyle },
         createElement('span', { style: { ...statusTextStyle, color: C.success } }, `已保存 ${touchSavedFlash}`))
       : null,
-    createElement('div', { style: sectionDescStyle },
-      '预览只控制角色上的 box 叠加/强制可见，不影响编辑与保存。'),
     partStatus === 'loading'
       ? createElement('div', { key: 'touch-loading', style: noticeMutedStyle }, '正在读取当前模型的配置…')
       : partStatus === 'error'
@@ -2435,18 +2211,19 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     }, '+ 新建部位'),
   ))
 
-  // 7. 开发者选项
+  // 6. 开发者选项
   children.push(createElement('div', { key: 'devtools', style: sectionStyle },
-    createElement('div', { style: sectionHeadStyle },
-      createElement('div', { style: sectionTitleStyle }, '开发者选项'),
-      createElement(ThemeSwitch, {
+    createElement(SectionHeader, {
+      title: '开发者选项',
+      description: '调试面板与触摸部位色块叠加（仅开发排查用）。',
+      action: createElement(ThemeSwitch, {
         checked: !!value.developerMode,
         disabled: !writable,
         onChange: (next) => {
           enqueueWrite(() => [{ op: 'set', path: ['developerMode'], value: next }])
         },
       }),
-    ),
+    }),
     !!value.developerMode && createElement('div', { style: rowStyle },
       createElement('label', { style: labelStyle },
         createElement('input', {

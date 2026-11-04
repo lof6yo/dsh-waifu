@@ -5,13 +5,13 @@
 
 ## 1. 概述
 
-DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话 agent 状态（思考/空闲/出错/完成/交付/等审批），支持**用户自定义触摸部位**（touchbox）互动、任务完成庆祝；台词与动画按**事件**绑定配置（空闲/思考/出错/完成/交付/等审批各配动作组与台词池，去掉了固定人设；后续版本再加入 LLM 人设提示词说话）。内置模型**只有「简」一个**，随插件包分发（含插件自建的 Idle/Thinking/Error/Done/Waiting/TapHead/TapFace/TapBody 动作），开箱即可用；用户仍可添加自定义模型（http(s) URL 或本机绝对路径）。默认开启、默认右下角、小尺寸、可隐藏。
+DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话 agent 状态（思考/空闲/出错/完成/交付/等审批），支持**用户自定义触摸部位**（touchbox）互动、任务完成庆祝；台词与动画按**事件**绑定配置（空闲/思考/出错/完成/交付/等审批各配动作组与台词池，去掉了固定人设；后续版本再加入 LLM 人设提示词说话）。内置模型**只有「简」一个**，随插件包分发（含插件自建的 Idle/Thinking/Error/Done/Waiting/TapHead/TapFace/TapBody 动作），开箱即可用。本版设置页不提供模型选择/导入。默认开启、默认右下角、小尺寸、可隐藏。
 
 ## 2. 启用与设置
 
 - 插件启用后宠物默认显示在**右下角**（停靠角固定右下角，不可配置；拖动后可自由放置）
 - 设置入口：DSH 设置面板顶层「桌宠配置」tab（`settings.section`）；设置持久化到插件私有 `$DSH_HOME/live2d-pet/settings.jsonc`（JSONC；ADR-013）
-- 单页设置流程（从上到下）：**显示 → 模型 → 事件绑定 → 触摸部位 → 开发者选项**；采用**显式保存**（无自动保存；切模型/离开设置时自动补存）：事件绑定分组在 `eventsDirty/saving/error` 时显示保存状态行（已保存时间/失败原因）；触摸部位按**部位粒度**：只有被改动的部位卡片顶部显示「● 未保存改动 · 保存」，新建/删除/排序等结构变更在分组顶部提示保存
+- 单页设置流程（从上到下，每个 Section 有统一标题与说明）：**显示 → 事件绑定 → 触摸部位 → 开发者选项**（本版只内置「简」模型，不提供模型选择/导入）。「显示」内含三张带标题的卡片：基础显示（开关/尺寸/渲染帧率）、画布与位置（留白/默认位置/归位）、对白气泡（位置与样式）；采用**显式保存**（无自动保存；切模型/离开设置时自动补存）：事件绑定分组在 `eventsDirty/saving/error` 时显示保存状态行（已保存时间/失败原因）；触摸部位按**部位粒度**：只有被改动的部位卡片顶部显示「● 未保存改动 · 保存」，新建/删除/排序等结构变更在分组顶部提示保存
 - 设置项：
   - 开关（显示/隐藏）
   - 尺寸滑杆（40–400px，默认 160）
@@ -20,7 +20,6 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
   - **对白气泡**：位置（相对角色包围盒顶部中心的水平/垂直偏移 px，默认 0/-10）、背景色/背景不透明度/文字颜色（默认 #ffffff / 92 / #222222）
   - **渲染帧率**（尺寸下方独立分组，标题「渲染帧率」）：一行三个**自绘圆形单选**（○ 30 / ○ 60 / ○ 不限制帧率；配置值 `maxFps`：`30` / `60` / `0`）；默认 **30**；改档经 SSE **立刻**作用到 PIXI `ticker.maxFPS`，无需重启/刷新
   - **事件绑定**（独立分组，标题「事件绑定」）：6 个事件各配「动作组多选 + 台词池」（思考/等审批为三阶段台词：入态 / 15s / 40s 与 入态 / 30s / 90s）；每张卡可「恢复默认」；改动即时保存并经 SSE 生效
-  - **模型列表**：内置「简」（只读，含名称/作者/许可信息）+ 用户自定义模型（可添加/删除/修改，名称 + `.model3.json` URL；**可选**配置**状态动画映射**——从模型 `Motions` 动作组中为 6 个状态各挂多个动作组，多选=触发时随机选一个，未配置沿用默认）；选中项决定加载模型
   - **触摸部位**（独立分组，见 §4）：编辑开关 + 部位/box/台词/触摸动画映射编辑器 + **当前模型状态动画映射**（6 状态多选，可覆盖内置默认）
   - **开发者选项**（独立分组）：总开关 `developerMode`；开启后显示**调试面板**开关（`debug`）与**显示触摸部位色块**（`showTapZones`；与调试面板可独立开关）
 - 调试面板（debug 开启时显示）：实时 agent 状态、宠物当前状态/动画、模型信息、最近气泡、错误日志、FPS；提供「演示状态」切换（强制 空闲/思考/等待/完成/交付/出错）与模型原生动画预览
@@ -79,7 +78,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
   - **状态动画映射（当前模型）**：6 个状态槽位各可多选动作组（含内置「简」），保存为该模型的状态动画覆盖层；未配置的槽位沿用内置默认
 - 任何草稿变更即时反映到宠物叠加层（预览开启时，未保存也实时）；改动按**部位粒度**标记未保存（卡片顶部「保存」按钮），点保存写回 `$DSH_HOME/live2d-pet/touch-parts.jsonc`（或切换模型/离开设置时自动补存）；保存成功后短暂显示「已保存 HH:MM:SS」
 - 关闭预览后宠物恢复常规显示；当前模型切换时自动退出预览并载入新模型的部位（未保存改动先自动补存）
-- 用户未保存过某模型的部位时，使用内置默认部位（「简」：脸/头/胸/臀，含示例台词与部位动作，见 presets.jsonc）；切到没有默认部位的自定义模型时无部位（点击不响应），需用户自行创建
+- 用户未保存过部位时，使用内置默认部位（「简」：脸/头/胸/臀，含示例台词与部位动作，见 presets.jsonc）；保存后以用户文件为准
 - 部位数据（含「保存过」状态）经 SSE 随快照下发，宠物即时使用新部位判定
 
 ## 5. 任务完成庆祝
@@ -91,12 +90,12 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 
 ## 6. 模型清单与加载
 
-- **内置模型只有「简」**（`presets.jsonc` 唯一一条，`modelUrl: /pet-assets/models/jian/简.model3.json`）：
+- **本版只内置「简」**（`presets.jsonc` 唯一一条，`modelUrl: /pet-assets/models/jian/简.model3.json`）；不提供模型选择/导入 UI（自定义模型能力暂不对用户暴露，后续版本再考虑）：
   - 模型资源**随包分发**在 `assets/models/jian/`（moc3、纹理、physics3、cdi3、model3.json、motions）
   - 自建动作组：`Idle` / `Thinking` / `Error` / `Done` / `Waiting` / `TapHead` / `TapFace` / `TapBody`，由 `scripts/gen-jian-motions.mjs` 幂等生成；`model3.json` 声明 `EyeBlink`（ParamEyeLOpen/ROpen）与 `LipSync`（ParamMouthOpenY）参数组
   - 许可标注：作者「用户自备模型」、许可类型「用户自备模型（随包内置；公开分发前请确认模型授权）」
 - 素材经 Host 同源 `/pet-assets/*` prefix 路由提供（带目录穿越防护；moc3/json/png 等 MIME 正确）
-- **自定义模型**（设置页「我的模型」）：添加/删除/修改（名称 + `.model3.json` URL，支持 http(s) 与本机绝对路径；本机路径经 `/pet-local-models/<id>/...` 同源虚拟路由加载）；编辑时可展开**状态动画映射**（实时解析该模型 `Motions`，为 6 个状态各选多个动作组；解析失败仍可保存并提示）；持久化到 `$DSH_HOME/live2d-pet/custom-models.jsonc`；删除/修改仅作用于自定义条目
+- 动作组选项来自当前模型 `.model3.json` 的 `Motions`（设置页事件绑定/触摸动画的复选框），解析失败时可保存但无动作可选
 - 旧配置里失效的内置模型 id（如 `hiyori`）自动回退到「简」，升级不出现空白
 - **加载失败兜底**：显示静态头像占位 + 错误气泡提示，不影响 GUI 其它功能
 
@@ -122,7 +121,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - [ ] 鼠标跟随（移动/拖拽/移出/隐藏）；完成庆祝与交付庆祝；标签页隐藏暂停；WebGL 不可用降级静态头像
 - [ ] 设置面板：开关/尺寸/帧率/模型列表/事件绑定/触摸部位/调试模式生效并持久化（设置写 `$DSH_HOME/live2d-pet/settings.jsonc`；事件绑定与触摸部位写 `$DSH_HOME/live2d-pet/touch-parts.jsonc`；刷新后保持）
 - [ ] 事件绑定：6 事件的动作组与台词可改并即时生效；长状态三阶段台词按时间推进；「恢复默认」可用
-- [ ] 模型列表：内置「简」只读展示（含许可信息）；自定义模型可增删改、可配置状态动画映射、可选中加载；加载失败显示静态头像
+- [ ] 本版不显示模型选择/导入入口；固定加载内置「简」；加载失败显示静态头像
 - [ ] debug 开关：显示调试面板、「演示状态」可强制状态、动画预览可播放模型原生动作
 
 ## 9. 技术边界（实现约定，非用户行为）
@@ -133,7 +132,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - 状态源：Host 订阅 `agent/status`、`agent/error`、`agent/turn-stopping`、`approval/request`（ADR-002）；交付态订阅 `session/event` 的 `deliverables/presented`（ADR-012）
 - 状态传输：Host→Client 同源 SSE `/api/live2d-pet/events`（快照 + 变更推送 + 30s 心跳，ADR-006）；首帧走 `GET /api/live2d-pet/state`
 - **事件绑定**（ADR-015）：`EventBindings`（`models.ts`）随 `PetStateView.config.events` 下发；默认台词常量 `DEFAULT_EVENT_BINDINGS` + 模型 `animationMap` 提供动作组，用户覆盖存 `touch-parts.jsonc` 的 `models[<id>].events`（整事件替换）；无固定人设，后续 LLM 人设走提示词
-- **模型与素材**：内置模型随包（`assets/models/jian/`），`/pet-assets/*` prefix 路由（目录穿越防护）；自定义本机路径经 `/pet-local-models/<id>/...`（ADR-010）；旧失效 id 回退默认内置模型
+- **模型与素材**：内置模型随包（`assets/models/jian/`），`/pet-assets/*` prefix 路由（目录穿越防护）；本版 UI 不暴露模型选择/自定义模型
 - **触摸部位**（ADR-014）：`TouchPart`/`TouchBox` 共享类型与纯函数（`normalizeTouchParts` / `pointToBoundsRatio` / `hitTestTouchParts`）在 `src/models.ts`；Host `TouchPartsStore` 读写 `$DSH_HOME/live2d-pet/touch-parts.jsonc`（按模型 id 分组：`parts` + 可选 `animationMap` 覆盖层；未保存回退内置默认）；client 设置页与宠物层通过 `window` CustomEvent（`dsh-live2d-pets:touch-edit`）传递编辑态与草稿部位；宠物层用 `model.getBounds()` 换算 box 到画布坐标绘制叠加层
 - 动作管理：pixi-live2d-display `MotionPriority`（IDLE=1 / NORMAL=2 / FORCE=3），idle 用 IDLE、状态与互动用 FORCE；重播同一动作前先 `stopAllMotions()`；完成信号统一用 `motionFinish`（ADR-008）
 - focus 抑制：非 idle 动作播放期间 `focusController.focus(0, 0, true)` 归零 + `pointermove` 门控，`motionFinish` 后恢复（ADR-008）
@@ -148,4 +147,4 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - 喂食/养成玩法、通知中心替代、音效、模型市场
 - LLM 人设提示词说话（后续版本）；人设随机切换/混合人格；`fs.watch` 热重载
 - 重置位置按钮、隐藏快捷键、可配置停靠角（固定右下角）、尺寸三档（连续滑杆）
-- 自定义模型的全字段元信息（作者/许可/Cubism 版本）
+- 自定义模型导入/选择（本版只专注内置「简」）

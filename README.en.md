@@ -17,12 +17,11 @@ A Live2D desk girl for **DeepSeek Harness (DSH)**: it tilts its head when you th
 ## Features
 
 - **Built-in model “Jian”**: shipped with the package (Cubism 4 half-body: moc3 / textures / physics / cdi3) and ready out of the box; the plugin also authors 5 state motions (Idle / Thinking / Error / Done / Waiting) + 3 touch motions (TapHead / TapFace / TapBody), and enables eye-blink and lip-sync parameter groups
-- **Custom models**: any `.model3.json` over **https / http**, or an **absolute local path** (e.g. `/Users/me/models/foo/foo.model3.json`) served by the plugin Host through a same-origin route; custom models support **state animation mapping** to bind native motion groups to the six pet states
 - **User-defined touch parts (touchboxes)**: parts are no longer a fixed set (head / hand / leg / body). Settings → “Pet config” → “Touch parts” → “Edit touch parts”: the pet enters edit mode and shows the current boxes live; create a part, type a name, add boxes with left/top/right/bottom percentages (0–100) — one part may own several boxes; each part can map several motion groups. Hit-testing uses the boxes only (smallest overlapping box wins), no model HitAreas needed
 - **State mirroring**: the pet reflects agent thinking / idle / error / done / file-delivery celebration / waiting-for-approval (motion + bubbles, SSE push)
 - **Event bindings (animation + lines)**: idle / thinking / error / done / delivery / waiting each map to motion-group candidates and a line pool (three stages for long states), editable on the single settings page with a reset-to-default action; the fixed persona system is gone (LLM persona prompts planned)
 - **Companionship**: part-based tap reactions / mouse-follow (head, eyes and body look toward the pointer) / free drag docking / task-done celebration
-- **Settings panel**: DSH Settings → “Pet config” — single page: display → models → event bindings → touch parts → developer options; settings are persisted to the plugin-owned `$DSH_HOME/live2d-pet/settings.jsonc` (DSH 0.2.x adaptation, ADR-013); event bindings and touch parts live in `touch-parts.jsonc`, custom models in `custom-models.jsonc`; applies immediately
+- **Settings panel**: DSH Settings → “Pet config” — single page: display → event bindings → touch parts → developer options; settings are persisted to the plugin-owned `$DSH_HOME/live2d-pet/settings.jsonc` (DSH 0.2.x adaptation, ADR-013); event bindings and touch parts live in `touch-parts.jsonc`, custom models in `custom-models.jsonc`; applies immediately
 - **Stay out of the way**: bottom-right by default, small size, draggable, hideable, pause rendering when the tab is hidden, FPS cap, static avatar fallback on low end
 
 ## Quick start
@@ -85,7 +84,6 @@ Open **DSH Settings → “Pet config”**. Changes apply immediately — no res
 - **Canvas padding**: horizontal/vertical (per side %, default 130/70) — keeps motion swings from being clipped
 - **Default position / recenter**: configure the display-area center distance from the right/bottom edge and recenter with one click
 - **Render FPS**: 30 / 60 / unlimited (default 30)
-- **Models**: built-in “Jian” (read-only, with license info); “My models” lets you add name + `.model3.json` URL (optional state animation mapping); custom models live in `$DSH_HOME/live2d-pet/custom-models.jsonc`
 - **Event bindings**: per-event motion groups + line pools (three stages for thinking/waiting), reset-to-default
 - **Touch parts**: edit parts / boxes / lines / touch motion mapping (see above)
 - **Developer options**: master toggle (off by default); when enabled, shows the debug panel (with native model animation list preview) and the touch-part overlay
