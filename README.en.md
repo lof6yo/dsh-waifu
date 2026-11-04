@@ -2,13 +2,13 @@
 
 English | [简体中文](README.md)
 
-[![npm](https://img.shields.io/npm/v/dsh-waifu.svg)](https://www.npmjs.com/package/dsh-waifu)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/node/v/dsh-waifu.svg)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/lof6yo/dsh-waifu)](https://github.com/lof6yo/dsh-waifu/releases)
 [![dsh-plugin](https://img.shields.io/badge/topic-dsh--plugin-1f6feb)](https://github.com/topics/dsh-plugin)
 
-A Live2D desk girl for **DeepSeek Harness (DSH)**: it tilts its head when you think, celebrates when you finish, and you can pet it!
+A Live2D desk waifu for **DeepSeek Harness (DSH)**: it tilts its head while you think, celebrates when you finish, and you can pet it — **with touch regions you draw yourself**.
+
+It ships one built-in model, **Jian**, and drives motion + speech from **event bindings**: idle / thinking / error / done / delivery / waiting-for-approval. Touch regions are user-defined **touchboxes**: a name, one or more rectangles, a layer order, and per-part lines + motions.
 
 <p align="center">
   <img src="docs/media/hero.jpg" alt="dsh-waifu hero" width="920" />
@@ -16,105 +16,166 @@ A Live2D desk girl for **DeepSeek Harness (DSH)**: it tilts its head when you th
 
 ## Features
 
-- **Built-in model “Jian”**: shipped with the package (Cubism 4 half-body: moc3 / textures / physics / cdi3) and ready out of the box; the plugin also authors 5 state motions (Idle / Thinking / Error / Done / Waiting) + 3 touch motions (TapHead / TapFace / TapBody), and enables eye-blink and lip-sync parameter groups
-- **User-defined touch parts (touchboxes)**: parts are no longer a fixed set (head / hand / leg / body). Settings → “Pet config” → “Touch parts” → “Edit touch parts”: the pet enters preview mode and shows the current boxes live; create a part, type a name, add boxes with left/top/right/bottom percentages (0–100) — one part may own several boxes; each part can map several motion groups. Hit-testing uses the boxes only (smallest overlapping box wins), no model HitAreas needed
-- **State mirroring**: the pet reflects agent thinking / idle / error / done / file-delivery celebration / waiting-for-approval (motion + bubbles, SSE push)
-- **Event bindings (animation + lines)**: idle / thinking / error / done / delivery / waiting each map to motion-group candidates and a line pool (three stages for long states), editable on the single settings page with a reset-to-default action; the fixed persona system is gone (LLM persona prompts planned)
-- **Companionship**: part-based tap reactions / mouse-follow (head, eyes and body look toward the pointer) / free drag docking / task-done celebration
-- **Settings panel**: DSH Settings → “Pet config” — single page: display → event bindings → touch parts → developer options; settings are persisted to the plugin-owned `$DSH_HOME/waifu/settings.jsonc` (DSH 0.2.x adaptation, ADR-013); event bindings and touch parts live in `touch-parts.jsonc`, custom models in `custom-models.jsonc`; applies immediately
-- **Stay out of the way**: bottom-right by default, small size, draggable, hideable, pause rendering when the tab is hidden, FPS cap, static avatar fallback on low end
+- **Built-in model “Jian”**: shipped inside the package (moc3 / textures / physics / cdi3), no model download; the plugin authors 8 motions (Idle / Thinking / Error / Done / Waiting / TapHead / TapFace / TapBody). This version has **no** model selection/import UI.
+- **Event bindings (animation + lines)**: each of the 6 events has motion-group candidates and a line pool; thinking / waiting support three staged line pools (on-entry / 15s / 40s and on-entry / 30s / 90s) with timed progression; each card can reset to defaults.
+- **User-defined touchboxes**: no longer relies on the model's HitAreas. A part = name + one or more normalized rectangles (entered as 0–100% of the character bounding box) + layer + its own line pool and touch motion groups. Overlaps resolve by **layer order** (upper part wins), reorderable with ↑/↓.
+- **Preview editing**: “Touch parts” → “Preview boxes” draws every box on the character live; click the character in preview mode to try the part's lines/motions.
+- **State mirroring**: agent state pushed over SSE; thinking / waiting bubbles persist and evolve by stage; completion and file delivery trigger celebrations.
+- **Display settings**: enable, size, render FPS, canvas padding (prevents motion clipping), default position (display-area center distance from the right/bottom) + one-click recenter, bubble offsets / background / text colors.
+- **Non-intrusive**: bottom-right by default, small, draggable, hideable; transparent canvas areas are **click-through** (only touchboxes receive clicks, so the pet never blocks the DSH UI); you can drag it half outside the window while its center stays inside the viewport; rendering pauses when the tab is hidden, FPS is capped, and it falls back to a static avatar on low-end devices.
+- **Rendering quality**: HiDPI 2× buffer + antialias; the touchbox overlay is drawn at the same scale.
+- **Debuggable**: browser-side boot milestones / errors are written to `$DSH_HOME/waifu/client.log` so model-loading problems can be diagnosed without devtools.
 
-## Quick start
+## Requirements
 
-### Option A: Paste a prompt for your agent (recommended)
+- DeepSeek Harness (DSH) **0.2.x** (Desktop or Web)
+- Network access to GitHub and the npm registry for install/update
+- The package ships prebuilt `lib/` artifacts — **no local build is required** to install it
 
-Copy this into a DSH Web GUI chat and let the agent install and verify:
+## Install
 
-```text
-Please install the dsh-waifu plugin (Live2D desk pet for DSH):
-1. Run: dsh plugin --profile web add dsh-waifu
-2. Run: dsh plugin --profile web list and confirm dsh-waifu is installed
-3. Report the result; if it fails, include the error output
-```
+### Install directly from GitHub (recommended)
 
-### Option B: Manual install
-
-```sh
-dsh plugin --profile web add dsh-waifu
-```
-
-The plugin is enabled by default after install. Start DSH:
+Run in a terminal (`<profile>` is your DSH profile, e.g. `desktop` / `web`):
 
 ```sh
-dsh web
+dsh plugin --profile <profile> add github:lof6yo/dsh-waifu
 ```
 
-Open the browser — a default pet (160px) appears at the bottom-right. The default model is the built-in “Jian” (shipped with the package; no model download needed).
+Or with a full Git URL:
 
-### Interaction
+```sh
+dsh plugin --profile <profile> add https://github.com/lof6yo/dsh-waifu.git
+```
 
-- **Mouse follow** (enabled by default): as the pointer moves anywhere on the page, the pet’s head, eyes and body smoothly look toward it; when the pointer leaves the page it resets to face front. It pauses while dragging, hidden, or when the tab/window is not focused.
-- **Tap interactions**: taps follow the touch parts you define; taps outside every part trigger nothing.
-- **Drag**: hold and drag the pet anywhere, then release to dock it; the position is persisted.
+> Equivalent specifiers (depending on the dsh version): `github:lof6yo/dsh-waifu#main`, `github:lof6yo/dsh-waifu#<commit>`.
+> The repository commits the built `lib/index.js` and `lib/client.js`, so a git install works without building.
 
-Custom models: Settings → “Pet config” → “My models”, add a name + `.model3.json` URL (CDN, self-hosted static, local HTTP, or an **absolute local path** such as `/Users/me/models/foo/foo.model3.json`; local paths are served by the plugin Host via `/pet-local-models/...`). Expand **Animation mapping** to parse the model’s native motion groups and bind them to the six states.
+Verify:
 
-### Touch parts (touchboxes)
+```sh
+dsh plugin --profile <profile> list
+```
 
-Settings → “Pet config” → “Touch parts”:
+The plugin appears as **dsh-waifu**. Refresh (or restart) DSH and “Jian” appears at the bottom-right; you can also check and enable it in DSH Settings → Plugins.
 
-1. Click “Edit touch parts” — the pet enters edit mode and draws the current boxes live on the model;
-2. Click “New part” and type a name (e.g. “Head”, “Hand”, “Tail”);
-3. Click “Add box”, enter left / top / right / bottom as percentages of the model bounding box (0–100); boxes render live as you type;
-4. One part may have several boxes (compose irregular regions); each part can define its own **lines** (one per row; empty = motion only, no bubble) and map several motion groups to pick from on touch;
-5. Parts have **layers**: the list runs top layer → bottom layer; when boxes overlap the upper part wins. Reorder with “↑ / ↓” (a new part is inserted on top);
-6. The “Touch parts” group also offers **state animation mapping (current model)**: multi-select motion groups per state, overriding the built-in “Jian” defaults;
-7. Changes are auto-saved to `$DSH_HOME/waifu/touch-parts.jsonc` and take effect after leaving edit mode.
+### Local development install
 
-<p align="center">
-  <img src="docs/media/settings-pet-config.png" alt="Pet config entry and panel in DSH Settings" width="920" />
-</p>
-
-### Configuration
-
-Open **DSH Settings → “Pet config”**. Changes apply immediately — no restart.
-
-- **Show pet**: on / off
-- **Size**: 40–400px (default 160)
-- **Canvas padding**: horizontal/vertical (per side %, default 130/70) — keeps motion swings from being clipped
-- **Default position / recenter**: configure the display-area center distance from the right/bottom edge and recenter with one click
-- **Render FPS**: 30 / 60 / unlimited (default 30)
-- **Event bindings**: per-event motion groups + line pools (three stages for thinking/waiting), reset-to-default
-- **Touch parts**: edit parts / boxes / lines / touch motion mapping (see above)
-- **Developer options**: master toggle (off by default); when enabled, shows the debug panel (with native model animation list preview) and the touch-part overlay
+```sh
+git clone https://github.com/lof6yo/dsh-waifu.git
+cd dsh-waifu
+bun install          # dependency install (repository uses bun)
+bun run build        # generate lib/ (after editing sources, rebuild and commit lib/)
+dsh plugin --profile <profile> add /absolute/path/to/dsh-waifu
+```
 
 ### Uninstall
 
 ```sh
-dsh plugin --profile web remove dsh-waifu
+dsh plugin --profile <profile> remove dsh-waifu
 ```
+
+Plugin-private data stays in `$DSH_HOME/waifu/`; delete it manually if you no longer want it.
+
+## Usage
+
+Open DSH **Settings → “Waifu config”** (single-page sections):
+
+### Display
+
+- **Basics**: enable / size (40–400px) / render FPS (30 / 60 / unlimited)
+- **Canvas & position**: horizontal/vertical canvas padding (per-side % of size, default 130 / 70, prevents motion clipping); default position (display-area center distance from the window right/bottom, default 300 / 260) and a “Recenter” button
+- **Speech bubble**: horizontal/vertical offset (relative to the character bounding-box top center), background color, background opacity, text color
+
+### Event bindings (current model)
+
+- 6 event cards (idle / thinking / error / done / delivery / waiting-for-approval), collapsed by default
+- Each card: multi-select **motion groups** (from the current model `Motions`; none = no motion) + **line pools** as textareas (one line per row, picked randomly; thinking / waiting have 3 stages)
+- Edits mark only that card “● Unsaved”; “Save” stores it and shows “Saved HH:MM:SS” in place
+- “Reset to default” restores the built-in default motions/lines for that event
+
+### Touch parts (current model)
+
+1. Click “Preview boxes” — the character enters preview mode and shows all touchboxes live; clicking the character triggers the matching part's lines/motions
+2. “+ New part” → type a name
+3. “+ Add box” → enter **left / top / right / bottom** as percentages of the character bounding box (0–100); boxes render live; one part may have several boxes
+4. Each part has its own **lines** (one per row; empty = motion only, no bubble) and **touch motions** (multi-select, picked randomly per touch)
+5. Parts have **layers**: list order is top layer → bottom layer; on overlap the upper part wins. Reorder with ↑/↓; new parts go to the top
+6. Saves are prompted per part (card-level “Save”; structural changes prompt at the section top) and persisted to `$DSH_HOME/waifu/touch-parts.jsonc`
+
+### Developer options
+
+- Master switch; when enabled you can open the debug panel (state demo, native motion preview) and the “Show touch-part overlay” toggle
+
+### Config files
+
+| File | Content |
+|---|---|
+| `$DSH_HOME/waifu/settings.jsonc` | scalar display / render / canvas / bubble settings |
+| `$DSH_HOME/waifu/touch-parts.jsonc` | touch parts (layers / boxes / lines / motions) and event-binding overrides |
+| `$DSH_HOME/waifu/client.log` | browser-side diagnostics (boot milestones / error stacks) |
+| `$DSH_HOME/waifu.json` | persisted pet position (drag / recenter) |
+
+All are plugin-private JSONC (comments allowed) and can be edited directly; a broken file falls back to the last good result with an inline settings-page warning.
+
+## Repository layout
+
+```text
+dsh-waifu/
+├── assets/
+│   ├── icons/                 # settings nav icon
+│   ├── models/jian/           # built-in Jian model (moc3 / textures / physics3 / cdi3 / model3.json / motions)
+│   └── vendor/                # bundled runtime: pixi, Cubism Core, live2d-display
+├── src/
+│   ├── index.ts               # Host entry: plugin row, settings, routes
+│   ├── service.ts             # state machine + event-binding resolution + snapshot
+│   ├── routes.ts              # same-origin API / SSE / assets / diagnostics
+│   ├── models.ts              # shared types: event bindings, TouchPart/TouchBox, hit-test
+│   ├── models-host.ts         # built-in presets loading/resolution
+│   ├── settings-store.ts      # plugin-private settings.jsonc
+│   ├── touch-parts.ts         # plugin-private touch-parts.jsonc (parts + events)
+│   ├── persist.ts             # display-position persistence
+│   ├── client-log.ts          # browser diagnostics sink
+│   └── client/                # browser half (React): pet, settings page, event bridge
+├── scripts/gen-jian-motions.mjs  # Jian motion generator/validator (idempotent)
+├── docs/                      # intent / spec / ADRs
+├── lib/                       # build output (committed; git install uses it directly)
+├── cordis.patch.yml           # DSH bundle patch (inserts the dsh-waifu row)
+├── package.json
+└── tsdown.config.ts
+```
+
+## Development
+
+```sh
+bun install
+bun run build        # tsdown: lib/index.js (Host) + lib/client.js (browser)
+bun run typecheck    # tsc --noEmit
+bun run test         # vitest (--pool=threads)
+```
+
+- **Rebuild and commit `lib/` before pushing**: git/GitHub installs use the committed `lib/`.
+- After editing model motions, run `bun scripts/gen-jian-motions.mjs` (or run it with DSH's bundled node) — it regenerates `assets/models/jian/motions/` and validates meta / parameters / references.
+- If the machine has no global node/bun, use the runtime bundled with DSH Desktop (see [AGENTS.md](AGENTS.md)).
 
 ## Docs
 
 | Need | Doc |
-|------|------|
-| Chinese README | [`README.md`](README.md) |
+|------|-----|
 | Product intent | [`docs/intent/dsh-waifu.md`](docs/intent/dsh-waifu.md) (Chinese) |
 | Behavior spec | [`docs/spec/dsh-waifu-v01.md`](docs/spec/dsh-waifu-v01.md) (Chinese) |
-| Architecture decisions | [`docs/adr/`](docs/adr/) (rendering stack: ADR-003; bundled model & touchboxes: ADR-014) |
-| Research notes | [`docs/research/`](docs/research/) (settings panel: settings-tab.md) |
-
-## Stack
-
-- pixi-live2d-display 0.4.0 + PixiJS 6.5.10 + Cubism Core 4 ([ADR-003](docs/adr/003-spike-results-and-rendering-stack.md))
-- Client renders in DSH Web GUI `shell.overlay` (Popover top layer, [ADR-005](docs/adr/005-pet-visual-top-layer-popover.md)); settings section on `settings.section` ([ADR-002](docs/adr/002-pet-mount-and-state-source.md))
-- State push: Host subscribes to `agent/*` → same-origin SSE `/api/dsh-waifu/events` ([ADR-006](docs/adr/006-push-state-sse.md)); pause when tab hidden / blurred
-- Built-in model & authored motions: `assets/models/jian/` + `scripts/gen-jian-motions.mjs` (idempotent motion3.json generator, [ADR-014](docs/adr/014-bundled-jian-model-and-touchbox-parts.md)); touch parts at `~/.dsh/waifu/touch-parts.jsonc`
-- Settings: plugin-owned `$DSH_HOME/waifu/settings.jsonc` (DSH 0.2.x settings service adaptation, [ADR-013](docs/adr/013-dsh-0.2.x-settings-plugin-private-file.md)); transport via plugin API `/api/dsh-waifu/settings`
+| Architecture decisions | [`docs/adr/`](docs/adr/) (rendering stack ADR-003, bundled model & touchboxes ADR-014, event bindings ADR-015, rename & custom-model removal ADR-016) |
+| Dev conventions | [AGENTS.md](AGENTS.md) (Chinese) |
 
 ## License
 
-- **Plugin code**: MIT
-- **Built-in model “Jian”**: user-provided model (VTube Studio export), shipped inside the package; **confirm the model author's permission before public distribution** ([`src/presets/presets.jsonc`](src/presets/presets.jsonc))
-- **Model list**: each entry must record license type + link; NC models marked non-commercial only
-- **Live2D SDK**: follow [Live2D official terms](https://www.live2d.com/en/download/cubism-sdk/)
+- **Plugin code**: MIT, see [LICENSE](LICENSE); forked and rebuilt from [cyanfish-x/dsh-live2d-pets](https://github.com/cyanfish-x/dsh-live2d-pets).
+- **Built-in model “Jian”**: user-provided model (VTube Studio export), bundled with the plugin; **confirm the model author's permission before public distribution** (license annotation in [`src/presets/presets.jsonc`](src/presets/presets.jsonc)).
+- **Live2D SDK / Cubism Core**: under [Live2D's terms](https://www.live2d.com/eula/).
+
+## FAQ
+
+- **No pet after install**: confirm `dsh-waifu` is listed by `dsh plugin --profile <profile> list`; refresh the page; check `$DSH_HOME/waifu/client.log` for load errors (the pet falls back to a static avatar if the model fails to load).
+- **Touches do nothing**: make sure the “Touch parts” section has parts whose boxes cover the clicked area; use preview mode to try; clicks that miss every box are ignored.
+- **Can I use another model / import my own?**: not in this version — it focuses on the built-in “Jian” model.
+- **Sound / LLM-driven persona speech**: not included yet; planned later.

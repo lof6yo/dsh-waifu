@@ -6,8 +6,7 @@ node_modules/
 .bun-tmp/
 .bun-home/
 
-# Build output
-lib/
+# Build output：lib/ 是 GitHub 直接安装所需的产物，随仓库提交；其余忽略
 *.tgz
 
 # Build output

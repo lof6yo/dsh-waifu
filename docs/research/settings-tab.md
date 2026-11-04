@@ -1,3 +1,5 @@
+> **历史文档（v0.1 时期调研）**：其中 settings.yaml / settingsScope wire 方案已被 ADR-013（插件私有 settings.jsonc）取代；模型列表、自定义模型、人设等能力已按 ADR-015/016 移除。内容仅作调研留档，不代表当前实现。
+
 # Research: 将 dsh-waifu 配置接入 DSH 设置面板（开一个 tab）
 
 > 调研报告（Research），非决策记录。结论基于 DSH 官方包（已装版本 0.1.0-rc.6）的 README、类型契约与源码；官方仓库 docs 链接见文末。

@@ -1,17 +1,14 @@
 {
   "name": "dsh-waifu",
   "version": "0.3.0",
-  "description": "Live2D desktop waifu plugin for DeepSeek Harness: bundled 'Jian' model, user-defined touchboxes and event-based animations/lines",
+  "description": "Live2D desktop waifu for DeepSeek Harness: bundled 'Jian' model, user-defined touchboxes, event-based animations and lines",
   "type": "module",
   "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
     "./client": {
-      "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
     "./package.json": "./package.json"
@@ -71,5 +68,18 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm run build"
-  }
+  },
+  "homepage": "https://github.com/lof6yo/dsh-waifu#readme",
+  "bugs": {
+    "url": "https://github.com/lof6yo/dsh-waifu/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "live2d",
+    "waifu",
+    "desktop-pet",
+    "桌宠"
+  ]
 }
