@@ -42,3 +42,7 @@ coverage/
 
 # Docs drafts (docs-driven-dev)
 docs/_drafts/
+
+# 本机开发（app 自带 node/pnpm 的本地 store 与锁文件；仓库锁文件是 bun.lock）
+.pnpm-store/
+pnpm-lock.yaml

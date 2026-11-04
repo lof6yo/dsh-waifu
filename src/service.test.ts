@@ -4,11 +4,30 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { PetService } from './service.ts'
-import type { Config } from './index.ts'
+import type { PetSettings } from './settings-store.ts'
+import { CustomModelsStore } from './custom-models.ts'
+import { TouchPartsStore } from './touch-parts.ts'
 
-const BASE_CONFIG: Config = { enabled: true, size: 160, maxFps: 30, model: 'hiyori', developerMode: false, debug: false, showTapZones: false, customModels: [], persona: 'tsundere' }
+const BASE_SETTINGS: PetSettings = {
+  enabled: true,
+  size: 160,
+  maxFps: 30,
+  model: 'jian',
+  developerMode: false,
+  debug: false,
+  showTapZones: false,
+  canvasPadX: 130,
+  canvasPadY: 70,
+  homeRight: 24,
+  homeBottom: 20,
+  bubbleOffsetX: 0,
+  bubbleOffsetY: -10,
+  bubbleBgColor: '#ffffff',
+  bubbleBgOpacity: 92,
+  bubbleTextColor: '#222222',
+}
 
-function makeHarness(overrides: Partial<Config> = {}) {
+function makeHarness(overrides: Partial<PetSettings> = {}) {
   const handlers = new Map<string, Array<(payload?: unknown, next?: () => void) => unknown>>()
   const effects: Array<() => void> = []
   const ctx = {
@@ -28,9 +47,11 @@ function makeHarness(overrides: Partial<Config> = {}) {
   const emitArgs = (event: string, ...args: unknown[]) => {
     for (const fn of handlers.get(event) ?? []) (fn as (...a: unknown[]) => unknown)(...args)
   }
-  const config = { ...BASE_CONFIG, ...overrides }
-  const service = new PetService(ctx, () => config)
-  return { service, emit, emitArgs, dispose: () => { for (const fn of effects) fn() } }
+  const settings = { ...BASE_SETTINGS, ...overrides }
+  const customModelsStore = new CustomModelsStore()
+  const touchPartsStore = new TouchPartsStore()
+  const service = new PetService(ctx, () => settings, customModelsStore, touchPartsStore)
+  return { service, emit, emitArgs, customModelsStore, touchPartsStore, dispose: () => { for (const fn of effects) fn() } }
 }
 
 beforeEach(() => {
@@ -53,19 +74,75 @@ describe('PetService 状态机', () => {
     expect(view.agent).toBe('idle')
     expect(view.version).toBe(0)
     expect(view.config.maxFps).toBe(30)
-    expect(view.config.spatialTap).toEqual({
-      headMaxNy: 0.30,
-      legMinNy: 0.57,
-      armMinNy: 0.28,
-      headMinNx: 0.32,
-      headMaxNx: 0.68,
-      bodyMinNx: 0.36,
-      bodyMaxNx: 0.64,
-      armLeftMinNx: 0.18,
-      armRightMaxNx: 0.82,
+    expect(view.config.model).toBe('jian')
+    expect(view.config.events.idle.motions).toEqual(['Idle'])
+    expect(view.config.events.thinking.motions).toEqual(['Thinking'])
+    expect(view.config.events.done.motions).toEqual(['Done'])
+    // 默认台词池（无固定人设，中性口吻；长状态 3 阶段）
+    expect(view.config.events.idle.lines.length).toBe(1)
+    expect(view.config.events.thinking.lines.length).toBe(3)
+    expect(view.config.events.error.lines[0].length).toBeGreaterThan(0)
+  })
+
+  it('内置「简」默认触摸部位：脸/头/胸/臀，且 box 为 0–1 归一化', () => {
+    const { service } = makeHarness()
+    const parts = service.snapshot().config.touchParts
+    expect(parts.map((p) => p.name)).toEqual(['脸', '头', '胸', '臀'])
+    for (const part of parts) {
+      expect(part.boxes.length).toBeGreaterThan(0)
+      for (const box of part.boxes) {
+        expect(box.left).toBeGreaterThanOrEqual(0)
+        expect(box.right).toBeLessThanOrEqual(1)
+        expect(box.left).toBeLessThan(box.right)
+        expect(box.top).toBeLessThan(box.bottom)
+      }
+    }
+    expect(parts[0].motions).toEqual(['TapFace']) // 脸在最上层，头其次
+    expect(parts[1].motions).toEqual(['TapHead'])
+  })
+
+  it('用户保存触摸部位后覆盖内置默认', () => {
+    const { service } = makeHarness()
+    const saved = [{
+      id: 'custom-hand',
+      name: '手',
+      boxes: [{ left: 0.1, top: 0.2, right: 0.3, bottom: 0.4 }],
+      motions: ['TapHead'],
+    }]
+    service.saveTouchParts('jian', saved)
+    expect(service.snapshot().config.touchParts).toEqual(saved)
+    expect(service.snapshot().version).toBe(1)
+  })
+
+  it('保存事件绑定覆盖层后 snapshot.config.events 立即生效（整事件替换）', () => {
+    const { service } = makeHarness()
+    expect(service.snapshot().config.events.thinking.motions).toEqual(['Thinking'])
+    service.saveTouchParts('jian', [], {
+      thinking: { motions: ['TapHead', 'Idle'], lines: [['自己想的台词']] },
     })
-    expect(view.config.motionMap.idle).toEqual(['Idle'])
-    expect(view.config.motionMap.thinking).toEqual(['Thinking', 'Working', 'Idle'])
+    const events = service.snapshot().config.events
+    expect(events.thinking.motions).toEqual(['TapHead', 'Idle'])
+    expect(events.thinking.lines).toEqual([['自己想的台词']])
+    // 未覆盖的事件保持默认
+    expect(events.idle.motions).toEqual(['Idle'])
+    expect(service.effectiveEvents('jian').thinking.lines).toEqual([['自己想的台词']])
+  })
+
+  it('部位自定义台词原样保留', () => {
+    const { service } = makeHarness()
+    service.saveTouchParts('jian', [{
+      id: 'face',
+      name: '脸',
+      boxes: [{ left: 0.3, top: 0.4, right: 0.7, bottom: 0.7 }],
+      motions: ['TapFace'],
+      lines: ['别捏脸啦', '脸要变形了'],
+    }])
+    expect(service.snapshot().config.touchParts[0].lines).toEqual(['别捏脸啦', '脸要变形了'])
+  })
+
+  it('未知模型的触摸部位为空表', () => {
+    const { service } = makeHarness({ model: 'missing' })
+    expect(service.snapshot().config.touchParts).toEqual([])
   })
 
   it('agent running → thinking，idle → idle', () => {
@@ -156,8 +233,8 @@ describe('PetService 显示配置', () => {
     const { service } = makeHarness()
     const d = service.setDisplay({ size: 9999, right: -50, bottom: 1e6 })
     expect(d.size).toBe(400)
-    expect(d.right).toBe(0)
-    expect(d.bottom).toBe(4000)
+    expect(d.right).toBe(-50)
+    expect(d.bottom).toBe(8000)
   })
 
   it('setDisplay 只更新给定字段并递增 version', () => {
@@ -168,40 +245,28 @@ describe('PetService 显示配置', () => {
     expect(service.snapshot().version).toBe(v0 + 1)
   })
 
-  it('resetDisplay 回到默认', () => {
-    const { service } = makeHarness()
-    service.setDisplay({ size: 300 })
-    expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 160 })
+  it('resetDisplay 归位到配置的默认位置（尺寸保持不变）', () => {
+    const { service } = makeHarness({ homeRight: 40, homeBottom: 30 })
+    service.setDisplay({ size: 300, right: -120, bottom: 800 })
+    expect(service.resetDisplay()).toEqual({ right: 40, bottom: 30, size: 300 })
   })
 
-  it('snapshot 解析模型 URL：preset id / 自定义 id / 未命中 null', () => {
-    const { service } = makeHarness({
-      model: 'custom-a',
-      customModels: [{ id: 'custom-a', name: 'A', modelUrl: 'https://example.com/a.model3.json' }],
-    })
-    expect(service.snapshot().config.modelUrl).toBe('https://example.com/a.model3.json')
-    expect(makeHarness({ model: 'hiyori' }).service.snapshot().config.modelUrl).toMatch(/^https:\/\//)
-    expect(makeHarness({ model: 'missing' }).service.snapshot().config.modelUrl).toBeNull()
+  it('snapshot 解析模型 URL：内置同源路径 / 自定义 URL / 失效 id 回退内置', () => {
+    const { service, customModelsStore } = makeHarness()
+    expect(service.snapshot().config.modelUrl).toBe('/pet-assets/models/jian/简.model3.json')
+
+    customModelsStore.write([{ id: 'custom-a', name: 'A', modelUrl: 'https://example.com/a.model3.json' }])
+    const custom = makeHarness({ model: 'custom-a' })
+    custom.customModelsStore.write([{ id: 'custom-a', name: 'A', modelUrl: 'https://example.com/a.model3.json' }])
+    expect(custom.service.snapshot().config.modelUrl).toBe('https://example.com/a.model3.json')
+
+    // 旧配置的失效模型 id 回退默认内置模型，避免升级后空白
+    expect(makeHarness({ model: 'hiyori' }).service.snapshot().config.modelUrl).toBe('/pet-assets/models/jian/简.model3.json')
   })
 
-  it('snapshot.spatialTap：自定义覆盖合并，内置用默认', () => {
-    const { service } = makeHarness({
-      model: 'custom-a',
-      customModels: [{
-        id: 'custom-a',
-        name: 'A',
-        modelUrl: 'https://example.com/a.model3.json',
-        spatialTap: { headMaxNy: 0.45 },
-      }],
-    })
-    expect(service.snapshot().config.spatialTap.headMaxNy).toBe(0.45)
-    expect(service.snapshot().config.spatialTap.legMinNy).toBe(0.58)
-    expect(makeHarness({ model: 'hiyori' }).service.snapshot().config.spatialTap.headMaxNy).toBe(0.30)
-    expect(makeHarness({ model: 'mao' }).service.snapshot().config.spatialTap.headMinNx).toBe(0)
-  })
-
-  it('listCustomModels 返回配置中的自定义清单', () => {
-    const { service } = makeHarness({ customModels: [{ id: 'x', name: 'X', modelUrl: 'https://x/m3.json' }] })
+  it('listCustomModels 返回自定义清单', () => {
+    const { service, customModelsStore } = makeHarness()
+    customModelsStore.write([{ id: 'x', name: 'X', modelUrl: 'https://x/m3.json' }])
     expect(service.listCustomModels()).toEqual([{ id: 'x', name: 'X', modelUrl: 'https://x/m3.json' }])
   })
 })

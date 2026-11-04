@@ -1,8 +1,13 @@
 /**
- * dsh-live2d-pets host 半区：注册宠物服务、settings namespace 与同源 HTTP 路由。
- * 官方插件形态（docs/user/develop/basic/publish.md）：组合包 bundle，
- * 配置经 Schemastery Config schema 传入，并注册为 settings namespace
- * （base = cordis.yml 插件行 config，用户层覆盖，settings.yaml 持久化）。
+ * dsh-live2d-pets host 半区：注册宠物服务、同源 HTTP 路由与插件私有设置。
+ *
+ * DSH 0.2.x 适配（ADR-013）：
+ * - `ctx.settings` 已从「namespace 注册表」变成「Config schema → 设置页表单」投影，
+ *   不再提供 register/get；写入会经 Loader 重新应用插件条目（整插件重载）。
+ * - 因此热设置（开关/尺寸/帧率/模型/人设/开发者选项）改存插件私有
+ *   `$DSH_HOME/live2d-pet/settings.jsonc`（ADR-013），经 SSE 实时推送；
+ *   Config schema 只作为默认值 base 层，并用 `settings.configure({ auto: false })`
+ *   隐藏自动生成的设置页（插件自带「桌宠配置」页）。
  * @module dsh-live2d-pets
  */
 
@@ -13,9 +18,16 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { PetService } from './service.ts'
 import { makePetRoutes, petPackageRoot, type SettingsRoutesApi } from './routes.ts'
 import type { CustomModelEntry } from './models.ts'
-import { listBuiltinPresets, resolveModelUrl, resolveSpatialTap, resolveMotionMap } from './models-host.ts'
-import { PersonasStore } from './personas.ts'
+import {
+  defaultModelId,
+  listBuiltinPresets,
+  resolveDefaultTouchParts,
+  resolveModelUrl,
+  resolveMotionMap,
+} from './models-host.ts'
 import { CustomModelsStore } from './custom-models.ts'
+import { SettingsStore, type PetSettings } from './settings-store.ts'
+import { TouchPartsStore } from './touch-parts.ts'
 
 export { PetService } from './service.ts'
 export type { PetState, PetStateView } from './service.ts'
@@ -23,58 +35,41 @@ export { makePetRoutes, petPackageRoot, PET_API_PREFIX, PET_ASSET_PREFIX } from 
 export {
   listBuiltinPresets,
   resolveModelUrl,
-  resolveSpatialTap,
   resolveMotionMap,
+  resolveDefaultTouchParts,
+  defaultModelId,
 } from './models-host.ts'
 export {
-  mergeSpatialTap,
-  DEFAULT_SPATIAL_TAP,
   DEFAULT_MOTION_MAP,
   ANIMATION_SLOTS,
+  DEFAULT_TOUCH_PARTS,
+  MAX_BOXES_PER_PART,
+  hitTestTouchParts,
+  normalizeTouchParts,
+  normalizeTouchBox,
+  pointToBoundsRatio,
 } from './models.ts'
 export type {
   BuiltinPreset,
   CustomModelEntry,
-  SpatialTapConfig,
-  SpatialTapOverride,
   AnimationSlot,
   MotionMap,
+  TouchBox,
+  TouchPart,
 } from './models.ts'
 
 /** 稳定 cordis 插件名（对应 cordis.patch.yml insert id）。 */
 export const name = 'live2d-pet'
 
-/** settings namespace（settings.yaml 用户层 section 名）。 */
-export const SETTINGS_NAMESPACE = 'live2d-pet'
-
-/**
- * 品牌化 namespace（dsh-settings 类型约束）：0.1.5 起 settingsNamespace() 品牌
- * 函数已移除，namespace 直接传小写连字符字符串，合法性由泛型参数编译期校验。
- */
-const NS = SETTINGS_NAMESPACE
-
 /** 渲染帧率档（spec §2/§7）：30 / 60 / 0（不限制，对应 PIXI maxFPS=0）。 */
 export type MaxFpsOption = 30 | 60 | 0
 
-export interface Config {
-  /** 插件总开关。 */
-  enabled: boolean
-  /** 宠物尺寸（px，滑杆 40–400）。 */
-  size: number
-  /** 渲染帧率上限（30 / 60 / 0=不限制；默认 30）。 */
+/** 插件配置（cordis.patch.yml 的 config 是 base 层；用户改动落插件私有设置文件，ADR-013）。 */
+export interface Config extends Omit<PetSettings, 'maxFps'> {
+  /** 渲染帧率档（30 / 60 / 0=不限制；Schema 层用字面量联合校验）。 */
   maxFps: MaxFpsOption
-  /** 选中模型：内置 preset id 或自定义模型 id（也兼容直接 URL）。 */
-  model: string
-  /** 开发者选项总开关：开启后显示调试面板/点击分区等开发者入口。 */
-  developerMode: boolean
-  /** 调试面板：显示调试面板（开发用）。 */
-  debug: boolean
-  /** 显示点击分区叠加层（空间回退色块，开发用）。 */
-  showTapZones: boolean
-  /** @deprecated 自定义模型已迁移到 $DSH_HOME/live2d-pet/custom-models.jsonc，不再写 settings.yaml。 */
+  /** @deprecated 自定义模型已迁移到 $DSH_HOME/live2d-pet/custom-models.jsonc。 */
   customModels?: CustomModelEntry[]
-  /** 选中人设 id：内置（tsundere/genki/…）或自定义人设 id（spec §3）。 */
-  persona: string
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -85,48 +80,71 @@ export const Config: Schema<Config> = Schema.object({
     Schema.const(60),
     Schema.const(0),
   ]).default(30),
-  model: Schema.string().default('hiyori'),
+  model: Schema.string().default(defaultModelId()),
   developerMode: Schema.boolean().default(false),
   debug: Schema.boolean().default(false),
   showTapZones: Schema.boolean().default(false),
-  persona: Schema.string().default('tsundere'),
+  canvasPadX: Schema.number().min(0).max(300).default(130),
+  canvasPadY: Schema.number().min(0).max(300).default(70),
+  homeRight: Schema.number().min(0).max(4000).default(24),
+  homeBottom: Schema.number().min(0).max(4000).default(20),
+  bubbleOffsetX: Schema.number().min(-1000).max(1000).default(0),
+  bubbleOffsetY: Schema.number().min(-1000).max(1000).default(-10),
+  bubbleBgColor: Schema.string().default('#ffffff'),
+  bubbleBgOpacity: Schema.number().min(0).max(100).default(92),
+  bubbleTextColor: Schema.string().default('#222222'),
 })
 
-/** 依赖服务：webServer（同源路由）、settings（namespace 注册与解析）。 */
+/** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）。 */
 export const inject = ['webServer', 'settings']
 
-/** 注册宠物服务、settings namespace 及其 API + 素材路由。 */
+/** 注册宠物服务、设置 API 与素材路由。 */
 export function apply(ctx: Context, config: Config): void {
-  // 注册 settings namespace：base = 本条 cordis.yml 条目 config 子集，
-  // 用户层（settings.yaml）覆盖其上；注册随插件 fiber 自动清理。
-  ctx.settings.register(NS, Config, { base: config })
+  // 插件自带「桌宠配置」设置页；隐藏 0.2.x 自动生成的 Config 表单页，
+  // 避免两套入口并存且表单写入会触发整插件重载（ADR-013）。
+  ctx.effect(() => ctx.settings.configure({ auto: false }), 'live2d-pet: settings page policy')
 
-  // 解析值优先（三层：schema 默认 → base → 用户层），未注册时回落 entry config。
-  const resolveConfig = (): Config => {
-    const resolved = ctx.settings.get(NS) as Config | undefined
-    return resolved ?? config
+  // 热设置：插件私有 settings.jsonc（base = Config 解析值）
+  const baseSettings: PetSettings = {
+    enabled: config.enabled,
+    size: config.size,
+    maxFps: config.maxFps,
+    model: config.model,
+    developerMode: config.developerMode,
+    debug: config.debug,
+    showTapZones: config.showTapZones,
+    canvasPadX: config.canvasPadX,
+    canvasPadY: config.canvasPadY,
+    homeRight: config.homeRight,
+    homeBottom: config.homeBottom,
+    bubbleOffsetX: config.bubbleOffsetX,
+    bubbleOffsetY: config.bubbleOffsetY,
+    bubbleBgColor: config.bubbleBgColor,
+    bubbleBgOpacity: config.bubbleBgOpacity,
+    bubbleTextColor: config.bubbleTextColor,
   }
+  const settingsStore = new SettingsStore(baseSettings)
 
   const customModelsStore = new CustomModelsStore()
   // 旧数据迁移：settings.yaml 里若还有 customModels 且新文件为空，则一次性写入 custom-models.jsonc
-  const initialConfig = resolveConfig()
-  if (initialConfig.customModels?.length && customModelsStore.load().models.length === 0) {
-    customModelsStore.write(initialConfig.customModels)
+  if (config.customModels?.length && customModelsStore.load().models.length === 0) {
+    customModelsStore.write(config.customModels)
   }
-  const service = new PetService(ctx, resolveConfig, new PersonasStore(), customModelsStore)
+  const touchPartsStore = new TouchPartsStore()
+  const service = new PetService(ctx, () => settingsStore.get(), customModelsStore, touchPartsStore)
 
-  // 设置读写 API：Host 直连 ctx.settings（不走 wire 白名单——dsh-host-apiproxy
-  // 只暴露内置 allowlist，第三方 namespace 见 research/settings-tab.md）。
-  // 写完成后通知 PetService，经 SSE 端点推送新配置（ADR-006）。
+  // 设置读写 API：Host 直连插件设置文件；写完成后经 SSE 推送新配置（ADR-006）。
   const settingsApi: SettingsRoutesApi = {
-    view: () => ({ value: resolveConfig(), writable: ctx.settings.writable }),
-    write: (ops: readonly SettingsPathOp[]) => ctx.settings.mutate(NS, ops).then(() => {
+    view: () => settingsStore.view(),
+    write: async (ops: readonly SettingsPathOp[]) => {
+      const view = settingsStore.applyOps(ops)
       service.notifyConfigChanged()
-    }),
+      return view
+    },
   }
 
-  // 路由随插件生命周期注册/清理；配置变更（HMR / settings 热更新）经 resolveConfig 即时反映。
-  // 插件卸载时同时关闭全部活跃 SSE 流（onStream），避免旧流在路由注销后空转心跳。
+  // 路由随插件生命周期注册/清理。插件卸载时同时关闭全部活跃 SSE 流（onStream），
+  // 避免旧流在路由注销后空转心跳。
   ctx.effect(() => {
     const openStreams = new Set<() => void>()
     const routes = makePetRoutes({

@@ -26,9 +26,9 @@ describe('loadPetPersist', () => {
     expect(loadPetPersist()).toEqual({ right: 100, bottom: 50, size: 220 })
   })
 
-  it('越界值 clamp 到合法边界', () => {
+  it('越界值 clamp 到合法边界（位置允许负值，便于拖到窗口外一半）', () => {
     writeFileSync(join(dir, 'live2d-pet.json'), JSON.stringify({ right: -10, bottom: 99999, size: 1e9 }))
-    expect(loadPetPersist()).toEqual({ right: 0, bottom: 4000, size: 400 })
+    expect(loadPetPersist()).toEqual({ right: -10, bottom: 8000, size: 400 })
   })
 
   it('损坏 JSON 回退默认值', () => {

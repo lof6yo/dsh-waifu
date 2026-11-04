@@ -3,7 +3,8 @@
  * 状态源为 DSH 真实事件（Event.listEvents 实测）：
  *   agent/status（idle⇄running）、agent/error、agent/turn-stopping、approval/request、
  *   session/event 总线上的 deliverables/presented（交付庆祝，ADR-012）。
- * 配置经 getConfig() 读取 settings 解析值（schema 默认 → base → 用户层）。
+ * 配置经 getSettings() 读取插件设置文件快照（settings-store，ADR-013）；
+ * 事件绑定（动画组 + 台词池）与触摸部位存于 touch-parts.jsonc（ADR-015）。
  * @module dsh-live2d-pets/service
  */
 
@@ -12,9 +13,9 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-tool-present/types'
 import type {} from '@deepseek-ai/dsh-user-approval'
-import type { Config } from './index.ts'
-import type { CustomModelEntry, MotionMap, SpatialTapConfig } from './models.ts'
-import { resolveModelUrl, resolveMotionMap, resolveSpatialTap } from './models-host.ts'
+import type { CustomModelEntry, EventBindings, TouchPart } from './models.ts'
+import { DEFAULT_EVENT_BINDINGS, PET_EVENTS, mergeEventBindings } from './models.ts'
+import { resolveModelUrl, resolveMotionMap, resolveDefaultTouchParts } from './models-host.ts'
 import { CustomModelsStore, type CustomModelsFileView } from './custom-models.ts'
 import {
   loadPetPersist,
@@ -23,8 +24,8 @@ import {
   DEFAULT_DISPLAY,
   type PetDisplay,
 } from './persist.ts'
-import { PersonasStore, type PersonasFileView } from './personas.ts'
-import { DEFAULT_PERSONA_ID, type CustomPersonaDef } from './persona-shared.ts'
+import type { PetSettings } from './settings-store.ts'
+import { TouchPartsStore, type TouchPartsFileView } from './touch-parts.ts'
 
 export type PetState = 'idle' | 'thinking' | 'error' | 'done' | 'waiting' | 'delivered'
 
@@ -40,22 +41,24 @@ export interface PetStateView {
     /** 解析后的 .model3.json URL（模型 id → URL，spec §6）。 */
     modelUrl: string | null
     debug: boolean
-    /** 显示点击分区叠加层（空间回退色块）。 */
+    /** 显示触摸部位色块（开发者选项，spec §2）。 */
     showTapZones: boolean
-    /** 当前模型生效的空间回退完整阈值（自定义可覆盖；spec §4）。 */
-    spatialTap: SpatialTapConfig
-    /** 当前模型生效的状态/互动动画映射（自定义/内置可覆盖；缺省 DEFAULT_MOTION_MAP）。 */
-    motionMap: MotionMap
-    /** 选中人设 id（内置或自定义；spec §3）。 */
-    persona: string
+    /** 画布水平留白（每侧，size 百分比；spec §7）。 */
+    canvasPadX: number
+    /** 画布垂直留白（每侧，size 百分比）。 */
+    canvasPadY: number
+    /** 气泡位置/样式（相对模型顶部中心偏移 + 背景/文字样式；spec §2/§4）。 */
+    bubbleOffsetX: number
+    bubbleOffsetY: number
+    bubbleBgColor: string
+    bubbleBgOpacity: number
+    bubbleTextColor: string
+    /** 六个事件的绑定（动画组候选 + 台词池；内置/自定义默认 → 用户覆盖）。 */
+    events: EventBindings
+    /** 当前模型生效的触摸部位（用户自定义优先，其次内置默认；spec §4）。 */
+    touchParts: TouchPart[]
   }
   display: PetDisplay
-  /** 自定义人设原样定义（client 端与内置文案合并出完整台词池）。 */
-  customPersonas: CustomPersonaDef[]
-  /** 人设文件级/条目级问题（设置页内联提示；null 无异常）。 */
-  personasError: string | null
-  /** 人设文件绝对路径（「自定义人设 ↗」openPath / 复制路径用）。 */
-  personasFile: string
   version: number
 }
 
@@ -75,11 +78,16 @@ export class PetService {
 
   constructor(
     private readonly ctx: Context,
-    private readonly getConfig: () => Config,
-    private readonly personasStore?: PersonasStore,
+    private readonly getSettings: () => PetSettings,
     private readonly customModelsStore?: CustomModelsStore,
+    private readonly touchPartsStore?: TouchPartsStore,
   ) {
-    this.display = loadPetPersist()
+    const homeDefaults: PetDisplay = {
+      ...DEFAULT_DISPLAY,
+      right: this.getSettings().homeRight,
+      bottom: this.getSettings().homeBottom,
+    }
+    this.display = loadPetPersist(homeDefaults)
     // 卸载时清理"完成/交付"保持计时器
     ctx.effect(() => () => {
       if (this.holdTimerId) clearTimeout(this.holdTimerId)
@@ -141,50 +149,70 @@ export class PetService {
     this.setHeld('delivered')
   }
 
-  /** 浏览器轮询用的状态快照（配置实时读取 settings 解析值；人设文件每次现读，spec §2）。 */
+  /**
+   * 当前模型生效的触摸部位：用户保存过 → 用户文件；否则内置 preset 默认；
+   * 再否则空表（点击不触发互动，spec §4）。
+   */
+  touchPartsFor(model: string): TouchPart[] {
+    const saved = this.touchPartsStore?.partsFor(model)
+    if (saved) return saved
+    return resolveDefaultTouchParts(model)
+  }
+
+  /**
+   * 当前模型生效的事件绑定：内置默认台词 + 模型动作组（preset/自定义 animationMap），
+   * 再叠加用户在该模型上的覆盖（touch-parts.jsonc 的 events；整事件替换）。
+   */
+  effectiveEvents(model: string): EventBindings {
+    const resolvedMotions = resolveMotionMap(model, this.listCustomModels())
+    const base = {} as EventBindings
+    for (const event of PET_EVENTS) {
+      const fallback = DEFAULT_EVENT_BINDINGS[event]
+      base[event] = {
+        motions: resolvedMotions[event] ?? fallback.motions,
+        lines: fallback.lines,
+      }
+    }
+    const override = this.touchPartsStore?.load().models[model]?.events
+    return mergeEventBindings(base, override)
+  }
+
+  /** 浏览器轮询用的状态快照（配置实时读取设置文件快照，spec §2）。 */
   snapshot(): PetStateView {
-    const config = this.getConfig()
-    // 无缓存现读：改完文件刷新页面/点「重新读取」即拿到最新（spec §2）
-    const personas: PersonasFileView = this.personasStore?.load()
-      ?? { personas: [], error: null, path: '' }
+    const settings = this.getSettings()
     const customModels = this.listCustomModels()
     return {
       state: this.state,
       agent: this.agent,
       config: {
-        enabled: config.enabled,
-        size: config.size,
-        maxFps: config.maxFps,
-        model: config.model,
-        modelUrl: resolveModelUrl(config.model, customModels),
-        debug: config.debug,
-        showTapZones: !!config.showTapZones,
-        spatialTap: resolveSpatialTap(config.model, customModels),
-        motionMap: resolveMotionMap(config.model, customModels),
-        persona: config.persona || DEFAULT_PERSONA_ID,
+        enabled: settings.enabled,
+        size: settings.size,
+        maxFps: settings.maxFps,
+        model: settings.model,
+        modelUrl: resolveModelUrl(settings.model, customModels),
+        debug: settings.debug,
+        showTapZones: !!settings.showTapZones,
+        canvasPadX: settings.canvasPadX,
+        canvasPadY: settings.canvasPadY,
+        bubbleOffsetX: settings.bubbleOffsetX,
+        bubbleOffsetY: settings.bubbleOffsetY,
+        bubbleBgColor: settings.bubbleBgColor,
+        bubbleBgOpacity: settings.bubbleBgOpacity,
+        bubbleTextColor: settings.bubbleTextColor,
+        events: this.effectiveEvents(settings.model),
+        touchParts: this.touchPartsFor(settings.model),
       },
       display: { ...this.display },
-      customPersonas: personas.personas,
-      personasError: personas.error,
-      personasFile: personas.path,
       version: this.version,
     }
   }
 
-  /** 重新读取人设文件并推送（设置页「↻ 重新读取」按钮；version 递增触发客户端感知）。 */
-  reloadPersonas(): PersonasFileView {
-    const view = this.personasStore?.load() ?? { personas: [], error: null, path: '' }
-    this.version += 1
-    this.emitChange()
-    return view
-  }
-
   /** 用户自定义模型列表（设置面板模型列表的 custom 部分，Host 权威视图）。 */
   listCustomModels(): CustomModelEntry[] {
-    return this.customModelsStore?.load().models ?? this.getConfig().customModels ?? []
+    return this.customModelsStore?.load().models ?? []
   }
 
-  /** 自定义模型文件视图（路径/错误/列表），供设置面板与“打开配置文件”使用。 */
+  /** 自定义模型文件视图（路径/错误/列表），供设置面板模型列表使用。 */
   customModelsFile(): CustomModelsFileView {
     return this.customModelsStore?.load() ?? { models: [], error: null, path: '' }
   }
@@ -192,6 +220,23 @@ export class PetService {
   /** 写回自定义模型列表（设置面板保存后调用），并推送配置变化。 */
   saveCustomModels(models: CustomModelEntry[]): CustomModelsFileView {
     const view = this.customModelsStore?.write(models) ?? { models, error: null, path: '' }
+    this.version += 1
+    this.emitChange()
+    return view
+  }
+
+  /** 触摸部位文件视图（设置页读取用）。 */
+  touchPartsFile(): TouchPartsFileView {
+    return this.touchPartsStore?.load() ?? { models: {}, error: null, path: '' }
+  }
+
+  /** 写回某个模型的触摸部位（+ 可选事件绑定覆盖）并推送（设置页保存后调用；spec §4）。 */
+  saveTouchParts(
+    model: string,
+    parts: readonly TouchPart[],
+    events?: Partial<EventBindings>,
+  ): TouchPartsFileView {
+    const view = this.touchPartsStore?.save(model, parts, events) ?? { models: {}, error: null, path: '' }
     this.version += 1
     this.emitChange()
     return view
@@ -210,9 +255,14 @@ export class PetService {
     return { ...this.display }
   }
 
-  /** 重置为默认显示配置（调试用）。 */
+  /** 归位：位置回到设置页配置的默认停靠位置（尺寸保持不变；spec §2）。 */
   resetDisplay(): PetDisplay {
-    this.display = { ...DEFAULT_DISPLAY }
+    const settings = this.getSettings()
+    this.display = normalizeDisplay({
+      right: settings.homeRight,
+      bottom: settings.homeBottom,
+      size: this.display.size,
+    })
     savePetPersist(this.display)
     this.version += 1
     this.emitChange()
@@ -225,7 +275,7 @@ export class PetService {
     return () => { this.listeners.delete(listener) }
   }
 
-  /** 配置（settings 解析值）变化后由外部调用，触发一次推送（ADR-006）。 */
+  /** 设置/配置变化后由外部调用，触发一次推送（ADR-006）。 */
   notifyConfigChanged(): void {
     this.emitChange()
   }

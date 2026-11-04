@@ -16,11 +16,13 @@ A Live2D desk girl for **DeepSeek Harness (DSH)**: it tilts its head when you th
 
 ## Features
 
-- **Model loading**: 5 curated presets (Hiyori / Haru / Mao / Mark / Natori) plus custom entries; any `.model3.json` over **https / http**, or an **absolute local path** (e.g. `C:/models/foo/foo.model3.json`) served by the plugin Host through a same-origin route; custom models support **animation mapping** to bind native motion groups to pet states / touch interactions
+- **Built-in model “Jian”**: shipped with the package (Cubism 4 half-body: moc3 / textures / physics / cdi3) and ready out of the box; the plugin also authors 5 state motions (Idle / Thinking / Error / Done / Waiting) + 3 touch motions (TapHead / TapFace / TapBody), and enables eye-blink and lip-sync parameter groups
+- **Custom models**: any `.model3.json` over **https / http**, or an **absolute local path** (e.g. `/Users/me/models/foo/foo.model3.json`) served by the plugin Host through a same-origin route; custom models support **state animation mapping** to bind native motion groups to the six pet states
+- **User-defined touch parts (touchboxes)**: parts are no longer a fixed set (head / hand / leg / body). Settings → “Pet config” → “Touch parts” → “Edit touch parts”: the pet enters edit mode and shows the current boxes live; create a part, type a name, add boxes with left/top/right/bottom percentages (0–100) — one part may own several boxes; each part can map several motion groups. Hit-testing uses the boxes only (smallest overlapping box wins), no model HitAreas needed
 - **State mirroring**: the pet reflects agent thinking / idle / error / done / file-delivery celebration / waiting-for-approval (motion + bubbles, SSE push)
-- **Personas**: six built-in tones (tsundere / genki / airhead / kuudere / gentle / yandere); custom personas via a plugin-owned JSONC file with hot reload
-- **Companionship**: part-based tap reactions / mouse-follow (head, eyes and body look toward the pointer) / free drag docking / task-done celebration; when HitAreas are sparse, spatial fallback uses five AABB rectangles
-- **Settings panel**: DSH Settings → “Pet config” — enable, size, FPS, persona, models, developer options; scalar settings are persisted to `~/.dsh/settings.yaml`, while custom personas and custom models live in `~/.dsh/live2d-pet/` plugin-owned JSONC files; applies immediately
+- **Event bindings (animation + lines)**: idle / thinking / error / done / delivery / waiting each map to motion-group candidates and a line pool (three stages for long states), editable on the single settings page with a reset-to-default action; the fixed persona system is gone (LLM persona prompts planned)
+- **Companionship**: part-based tap reactions / mouse-follow (head, eyes and body look toward the pointer) / free drag docking / task-done celebration
+- **Settings panel**: DSH Settings → “Pet config” — single page: display → models → event bindings → touch parts → developer options; settings are persisted to the plugin-owned `$DSH_HOME/live2d-pet/settings.jsonc` (DSH 0.2.x adaptation, ADR-013); event bindings and touch parts live in `touch-parts.jsonc`, custom models in `custom-models.jsonc`; applies immediately
 - **Stay out of the way**: bottom-right by default, small size, draggable, hideable, pause rendering when the tab is hidden, FPS cap, static avatar fallback on low end
 
 ## Quick start
@@ -48,30 +50,45 @@ The plugin is enabled by default after install. Start DSH:
 dsh web
 ```
 
-Open the browser — a default pet (160px) appears at the bottom-right. Default model is Hiyori (Live2D sample); first load needs network.
+Open the browser — a default pet (160px) appears at the bottom-right. The default model is the built-in “Jian” (shipped with the package; no model download needed).
 
 ### Interaction
 
 - **Mouse follow** (enabled by default): as the pointer moves anywhere on the page, the pet’s head, eyes and body smoothly look toward it; when the pointer leaves the page it resets to face front. It pauses while dragging, hidden, or when the tab/window is not focused.
-- **Tap interactions**: touching the head / legs / arms / body triggers its own line and motion; when a model has sparse HitAreas, spatial fallback zones are used.
+- **Tap interactions**: taps follow the touch parts you define; taps outside every part trigger nothing.
 - **Drag**: hold and drag the pet anywhere, then release to dock it; the position is persisted.
 
-Custom models: Settings → “Pet config” → “My models”, add a name + `.model3.json` URL (CDN, self-hosted static, local HTTP, or an **absolute local path** such as `C:/models/foo/foo.model3.json`; local paths are served by the plugin Host via `/pet-local-models/...`). Expand **Spatial tap override** to tune the five rectangles (0–1; leave blank for defaults), or expand **Animation mapping** to parse the model’s native motion groups and bind them to states / touch interactions. Pair with developer option **Show tap zones**. Built-in Hiyori ships with a centered preset.
+Custom models: Settings → “Pet config” → “My models”, add a name + `.model3.json` URL (CDN, self-hosted static, local HTTP, or an **absolute local path** such as `/Users/me/models/foo/foo.model3.json`; local paths are served by the plugin Host via `/pet-local-models/...`). Expand **Animation mapping** to parse the model’s native motion groups and bind them to the six states.
 
-### Configuration
+### Touch parts (touchboxes)
 
-Open **DSH Settings → “Pet config”**. Changes apply immediately — no restart.
+Settings → “Pet config” → “Touch parts”:
+
+1. Click “Edit touch parts” — the pet enters edit mode and draws the current boxes live on the model;
+2. Click “New part” and type a name (e.g. “Head”, “Hand”, “Tail”);
+3. Click “Add box”, enter left / top / right / bottom as percentages of the model bounding box (0–100); boxes render live as you type;
+4. One part may have several boxes (compose irregular regions); each part can define its own **lines** (one per row; empty = motion only, no bubble) and map several motion groups to pick from on touch;
+5. Parts have **layers**: the list runs top layer → bottom layer; when boxes overlap the upper part wins. Reorder with “↑ / ↓” (a new part is inserted on top);
+6. The “Touch parts” group also offers **state animation mapping (current model)**: multi-select motion groups per state, overriding the built-in “Jian” defaults;
+7. Changes are auto-saved to `$DSH_HOME/live2d-pet/touch-parts.jsonc` and take effect after leaving edit mode.
 
 <p align="center">
   <img src="docs/media/settings-pet-config.png" alt="Pet config entry and panel in DSH Settings" width="920" />
 </p>
 
+### Configuration
+
+Open **DSH Settings → “Pet config”**. Changes apply immediately — no restart.
+
 - **Show pet**: on / off
 - **Size**: 40–400px (default 160)
+- **Canvas padding**: horizontal/vertical (per side %, default 130/70) — keeps motion swings from being clipped
+- **Default dock / recenter**: configure right/bottom offsets and recenter the pet with one click
 - **Render FPS**: 30 / 60 / unlimited (default 30)
-- **Personas**: switch built-in or custom tones; “Custom personas ↗” edits `$DSH_HOME/live2d-pet/personas.jsonc`, then hit “↻ Reload”
-- **Models**: pick a curated preset, or add name + `.model3.json` URL under “My models” (optional spatial-tap / animation mapping); custom models live in `$DSH_HOME/live2d-pet/custom-models.jsonc`
-- **Developer options**: master toggle (off by default); when enabled, shows the debug panel (with native model animation list preview) and the tap-zone overlay
+- **Models**: built-in “Jian” (read-only, with license info); “My models” lets you add name + `.model3.json` URL (optional state animation mapping); custom models live in `$DSH_HOME/live2d-pet/custom-models.jsonc`
+- **Event bindings**: per-event motion groups + line pools (three stages for thinking/waiting), reset-to-default
+- **Touch parts**: edit parts / boxes / lines / touch motion mapping (see above)
+- **Developer options**: master toggle (off by default); when enabled, shows the debug panel (with native model animation list preview) and the touch-part overlay
 
 ### Uninstall
 
@@ -86,7 +103,7 @@ dsh plugin --profile web remove dsh-live2d-pets
 | Chinese README | [`README.md`](README.md) |
 | Product intent | [`docs/intent/live2d-pet-plugin.md`](docs/intent/live2d-pet-plugin.md) (Chinese) |
 | Behavior spec | [`docs/spec/live2d-pet-v01.md`](docs/spec/live2d-pet-v01.md) (Chinese) |
-| Architecture decisions | [`docs/adr/`](docs/adr/) (rendering stack: ADR-003) |
+| Architecture decisions | [`docs/adr/`](docs/adr/) (rendering stack: ADR-003; bundled model & touchboxes: ADR-014) |
 | Research notes | [`docs/research/`](docs/research/) (settings panel: settings-tab.md) |
 
 ## Stack
@@ -94,11 +111,12 @@ dsh plugin --profile web remove dsh-live2d-pets
 - pixi-live2d-display 0.4.0 + PixiJS 6.5.10 + Cubism Core 4 ([ADR-003](docs/adr/003-spike-results-and-rendering-stack.md))
 - Client renders in DSH Web GUI `shell.overlay` (Popover top layer, [ADR-005](docs/adr/005-pet-visual-top-layer-popover.md)); settings section on `settings.section` ([ADR-002](docs/adr/002-pet-mount-and-state-source.md))
 - State push: Host subscribes to `agent/*` → same-origin SSE `/api/live2d-pet/events` ([ADR-006](docs/adr/006-push-state-sse.md)); pause when tab hidden / blurred
-- Settings: scalar settings via Host `ctx.settings` (`~/.dsh/settings.yaml` over base); custom personas at `~/.dsh/live2d-pet/personas.jsonc`, custom models at `~/.dsh/live2d-pet/custom-models.jsonc` are read/written by the plugin; transport via plugin API `/api/live2d-pet/settings` (settingsScope wire allowlist limits — [research 3.4/3.5](docs/research/settings-tab.md))
+- Built-in model & authored motions: `assets/models/jian/` + `scripts/gen-jian-motions.mjs` (idempotent motion3.json generator, [ADR-014](docs/adr/014-bundled-jian-model-and-touchbox-parts.md)); touch parts at `~/.dsh/live2d-pet/touch-parts.jsonc`
+- Settings: plugin-owned `$DSH_HOME/live2d-pet/settings.jsonc` (DSH 0.2.x settings service adaptation, [ADR-013](docs/adr/013-dsh-0.2.x-settings-plugin-private-file.md)); transport via plugin API `/api/live2d-pet/settings`
 
 ## License
 
 - **Plugin code**: MIT
-- **Model list**: URL-only, not shipped in the package; each entry must record license type + link; NC models marked non-commercial only ([`src/presets/presets.jsonc`](src/presets/presets.jsonc))
-- **Built-in Hiyori / Haru / Mao / Mark / Natori**: Live2D sample models under the [Sample Model Terms](https://www.live2d.com/eula/live2d-sample-model-terms_en.html) (free for commercial use with attribution)
+- **Built-in model “Jian”**: user-provided model (VTube Studio export), shipped inside the package; **confirm the model author's permission before public distribution** ([`src/presets/presets.jsonc`](src/presets/presets.jsonc))
+- **Model list**: each entry must record license type + link; NC models marked non-commercial only
 - **Live2D SDK**: follow [Live2D official terms](https://www.live2d.com/en/download/cubism-sdk/)

@@ -15,6 +15,6 @@
 
 | 文档 | 说明 |
 |------|------|
-| [`live2d-pet-v01.md`](live2d-pet-v01.md) | v0.1 行为规格：状态镜像 + 摸头/点击 + 完成庆祝 + 预设/URL 模型 + 设置与降级 |
+| [`live2d-pet-v01.md`](live2d-pet-v01.md) | 行为规格（v0.2）：状态镜像 + 用户自定义 touchbox 部位 + 完成/交付庆祝 + 内置「简」/自定义模型 + 设置与降级 |
 
 新篇可参考 Skill 内 `templates/spec-template.md`。

@@ -1,6 +1,6 @@
 /**
  * 自定义模型文件（$DSH_HOME/live2d-pet/custom-models.jsonc，JSONC）：
- * 用户自定义模型不再混入 DSH settings.yaml，而是像自定义人设一样放到插件私有目录。
+ * 与设置/事件绑定/触摸部位一样放在插件私有目录（不入 DSH settings.yaml）。
  * 首次启动落地模板；UI 保存时由插件写回（保留文件头注释）。
  * @module dsh-live2d-pets/custom-models
  */
@@ -8,9 +8,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import type { CustomModelEntry, MotionMap, SpatialTapOverride } from './models.ts'
+import type { CustomModelEntry, MotionMap } from './models.ts'
 import { isSupportedModelLocation } from './models.ts'
-import { stripJsonComments } from './personas.ts'
+import { stripJsonComments } from './jsonc.ts'
 
 /** 自定义模型文件名（$DSH_HOME/live2d-pet 下）。 */
 export const CUSTOM_MODELS_FILENAME = 'custom-models.jsonc'
@@ -22,7 +22,7 @@ export interface CustomModelsFileView {
   path: string
 }
 
-/** DSH home 目录（与 persist.ts / personas.ts 同一规则）。 */
+/** DSH home 目录（与 persist.ts / settings-store.ts 同一规则）。 */
 function petHomeDir(): string {
   return process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
@@ -31,7 +31,7 @@ function petHomeDir(): string {
 const CUSTOM_MODELS_HEADER = `// 自定义模型配置文件（插件私有，JSONC 支持注释）。
 // 路径：$DSH_HOME/live2d-pet/custom-models.jsonc
 // 建议通过设置面板「我的模型」增删改；直接编辑后刷新页面/重开设置即可生效。
-// 字段：id / name / modelUrl / spatialTap / animationMap`
+// 字段：id / name / modelUrl / animationMap`
 
 function serializeCustomModels(models: CustomModelEntry[]): string {
   return `${CUSTOM_MODELS_HEADER}\n${JSON.stringify({ models }, null, 2)}\n`
@@ -50,9 +50,6 @@ export function normalizeCustomModel(raw: unknown): CustomModelEntry | null {
   if (!name) return null
   if (!isSupportedModelLocation(modelUrl)) return null
   const entry: CustomModelEntry = { id, name, modelUrl }
-  if (record.spatialTap && typeof record.spatialTap === 'object') {
-    entry.spatialTap = record.spatialTap as SpatialTapOverride
-  }
   if (record.animationMap && typeof record.animationMap === 'object') {
     entry.animationMap = record.animationMap as MotionMap
   }

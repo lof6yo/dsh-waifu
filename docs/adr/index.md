@@ -18,3 +18,6 @@
 | [010](010-local-model-host-route.md) | 本地模型通过 Host 路由加载 | Accepted |
 | [011](011-dsh-0.1.5-rc.1-adaptation.md) | 适配 DSH 0.1.5-rc.1（client-runtime 移除、settings namespace 字符串化、依赖策略对齐官方） | Accepted |
 | [012](012-dsh-0.1.5-rc.3-session-plane.md) | 适配 DSH 0.1.5-rc.3 并接入会话面能力（直达打开恢复、交付庆祝） | Accepted |
+| [013](013-dsh-0.2.x-settings-plugin-private-file.md) | 适配 DSH 0.2.x settings 服务（插件私有设置文件） | Accepted |
+| [014](014-bundled-jian-model-and-touchbox-parts.md) | 内置「简」模型（随包分发 + 自建动作）与用户自定义 touchbox 部位 | Accepted |
+| [015](015-event-bindings-replace-personas.md) | 移除固定人设，改为事件绑定（动画 + 台词；后续 LLM 人设） | Accepted（supersede ADR-007） |

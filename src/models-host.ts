@@ -11,11 +11,10 @@ import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_MOTION_MAP,
   isRemoteModelUrl,
-  mergeSpatialTap,
   type BuiltinPreset,
   type CustomModelEntry,
   type MotionMap,
-  type SpatialTapConfig,
+  type TouchPart,
 } from './models.ts'
 import { localModelUrlPath } from './local-models.ts'
 
@@ -72,19 +71,13 @@ export function listBuiltinPresets(): BuiltinPreset[] {
   return presetsData.presets
 }
 
-/**
- * 按当前选中模型解析生效空间阈值：
- * 自定义条目覆盖优先；否则内置 preset 的 `spatialTap`；再否则全局默认。
- */
-export function resolveSpatialTap(model: string, customModels: CustomModelEntry[]): SpatialTapConfig {
-  const custom = customModels.find((c) => c.id === model)
-  if (custom?.spatialTap) return mergeSpatialTap(custom.spatialTap)
-  const preset = presetsData.presets.find((p) => p.id === model)
-  return mergeSpatialTap(preset?.spatialTap)
+/** 默认内置模型 id（presets.jsonc 第一条；配置里的旧模型 id 失配时也回退到它）。 */
+export function defaultModelId(): string {
+  return presetsData.presets[0]?.id ?? 'jian'
 }
 
 /**
- * 按当前选中模型解析生效动画映射：
+ * 按当前选中模型解析生效状态动画映射：
  * 自定义条目 animationMap 优先；否则内置 preset 的 animationMap；再否则默认映射。
  * 只做浅合并：配置过的槽位覆盖，未配置槽位沿用默认。
  */
@@ -97,11 +90,20 @@ export function resolveMotionMap(model: string, customModels: CustomModelEntry[]
 }
 
 /**
+ * 按当前选中模型解析「默认触摸部位」（内置 preset 随包提供的默认值）：
+ * 用户保存过自定义部位时由 TouchPartsStore 覆盖，这里只给回退值。
+ */
+export function resolveDefaultTouchParts(model: string): TouchPart[] {
+  const preset = presetsData.presets.find((p) => p.id === model)
+  return preset?.touchParts ? preset.touchParts.map((part) => ({ ...part })) : []
+}
+
+/**
  * 把 `config.model` 解析为可加载的 `.model3.json` URL：
  * - 已是 http(s) URL → 原样返回
  * - preset id → presets.jsonc 匹配
- * - 自定义模型 id → settings 用户层 customModels 匹配
- * 未命中返回 null（客户端降级静态头像）。
+ * - 自定义模型 id → 用户清单匹配
+ * - 旧配置里的失效模型 id → 回退默认内置模型（避免升级后宠物空白）
  */
 export function resolveModelUrl(model: string, customModels: CustomModelEntry[]): string | null {
   if (isRemoteModelUrl(model)) return model
@@ -113,5 +115,6 @@ export function resolveModelUrl(model: string, customModels: CustomModelEntry[])
     if (isRemoteModelUrl(custom.modelUrl)) return custom.modelUrl
     return localModelUrlPath(custom.id, custom.modelUrl)
   }
-  return null
+  const fallback = presetsData.presets[0]
+  return fallback ? fallback.modelUrl : null
 }

@@ -18,18 +18,29 @@ export const DEFAULT_DISPLAY: PetDisplay = { right: 24, bottom: 20, size: 160 }
 
 const DISPLAY_MIN = 40
 const DISPLAY_MAX = 400
-const INSET_MAX = 4000
+/**
+ * 位置偏移边界：允许负值（right/bottom 为相对视口右下角的距离），
+ * 这样角色可以拖到窗口边缘外一半（spec §4 自由拖动）。
+ */
+const INSET_MIN = -4000
+const INSET_MAX = 8000
 
 function clamp(value: number, min: number, max: number): number {
   if (Number.isFinite(value)) return Math.min(max, Math.max(min, value))
   return min
 }
 
+/** 位置偏移归一化：非法值回 0（而不是最小负边界）。 */
+function clampInset(value: number): number {
+  if (Number.isFinite(value)) return Math.min(INSET_MAX, Math.max(INSET_MIN, value))
+  return 0
+}
+
 /** 归一化显示配置到合法边界（持久化读取与 API 写入共用同一权威规则）。 */
 export function normalizeDisplay(display: PetDisplay): PetDisplay {
   return {
-    right: clamp(display.right, 0, INSET_MAX),
-    bottom: clamp(display.bottom, 0, INSET_MAX),
+    right: clampInset(display.right),
+    bottom: clampInset(display.bottom),
     size: clamp(display.size, DISPLAY_MIN, DISPLAY_MAX),
   }
 }
@@ -42,17 +53,20 @@ function petFile(): string {
   return join(petHomeDir(), 'live2d-pet.json')
 }
 
-/** 读取持久化显示配置；不存在或损坏时回退默认值。 */
-export function loadPetPersist(): PetDisplay {
+/**
+ * 读取持久化显示配置；不存在或损坏时回退默认值。
+ * @param defaults 首次运行/文件损坏时的回退值（默认位置可由设置页配置，spec §2）。
+ */
+export function loadPetPersist(defaults: PetDisplay = DEFAULT_DISPLAY): PetDisplay {
   try {
     const raw = JSON.parse(readFileSync(petFile(), 'utf8')) as Partial<PetDisplay>
     return normalizeDisplay({
-      right: raw.right ?? DEFAULT_DISPLAY.right,
-      bottom: raw.bottom ?? DEFAULT_DISPLAY.bottom,
-      size: raw.size ?? DEFAULT_DISPLAY.size,
+      right: raw.right ?? defaults.right,
+      bottom: raw.bottom ?? defaults.bottom,
+      size: raw.size ?? defaults.size,
     })
   } catch {
-    return { ...DEFAULT_DISPLAY }
+    return { ...normalizeDisplay(defaults) }
   }
 }
 

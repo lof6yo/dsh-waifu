@@ -1,123 +1,168 @@
 /**
  * 桌宠配置设置页（`settings.section` 注册体，spec §2）。
- * 六项设置：开关 / 尺寸滑杆 / 渲染帧率 / 人设 / 模型列表（内置只读 + 自定义增删改）/ 调试模式。
- * 读写经插件自己的同源 API `/api/live2d-pet/settings`（Host 直连 ctx.settings，
- * 持久化到 settings.yaml 用户层）——不走 client settingsScope wire，因为
- * dsh-host-apiproxy 只把内置 allowlist 的 namespace 暴露给浏览器
- * （见 docs/research/settings-tab.md「设置服务不可用」根因）。
+ * 单页信息架构（从上到下）：显示（开关 / 尺寸 / 帧率）/ 模型（内置只读 + 我的模型
+ * 名称+URL）/ 事件绑定（当前模型：6 事件的动作组 + 分阶段台词池）/ 触摸部位
+ * （box / 台词 / 触摸动画）/ 开发者选项。不再有固定人设、跳转链接或文件路径展示。
+ * 读写经插件自己的同源 API `/api/live2d-pet/settings` 与 `/api/live2d-pet/touch-parts`
+ * （Host 直连插件私有配置文件 settings.jsonc / touch-parts.jsonc，ADR-013）——不走
+ * client settingsScope wire，因为 dsh-host-apiproxy 只把内置 allowlist 的 namespace
+ * 暴露给浏览器（见 docs/research/settings-tab.md「设置服务不可用」根因）。
  * 不引入任何非平台模块值导入。
  * @module dsh-live2d-pets/client/settings
  */
 
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent, MouseEvent, ReactNode, ReactElement } from 'react'
-import type { CustomModelEntry, SpatialTapOverride } from '../index.ts'
-import type { BuiltinPreset } from '../models.ts'
-import {
-  ANIMATION_SLOTS,
-  DEFAULT_SPATIAL_TAP,
-  isSupportedModelLocation,
-  type AnimationSlot,
-  type MotionMap,
+import type {
+  BuiltinPreset,
+  CustomModelEntry,
+  EventBinding,
+  EventBindings,
+  PetEventKey,
+  TouchBox,
+  TouchPart,
 } from '../models.ts'
-import type { CustomPersonaDef } from '../persona-shared.ts'
-import { PERSONAS_TEMPLATE } from '../persona-shared.ts'
-import { builtinPersonaOptions } from './personas.ts'
+import {
+  DEFAULT_EVENT_BINDINGS,
+  EVENT_STAGE_DELAYS,
+  MAX_BOXES_PER_PART,
+  MAX_LINE_LENGTH,
+  MAX_LINES_PER_PART,
+  MAX_LINES_PER_POOL,
+  PET_EVENTS,
+  isSupportedModelLocation,
+  mergeEventBindings,
+  normalizeEventBindings,
+} from '../models.ts'
+import { clientLog } from './client-log.ts'
+import { emitTouchEdit } from './touch-edit.ts'
 
-/** settings namespace 的解析值（与 Host Config 对齐）。 */
+/** 设置解析值（与 Host PetSettings 对齐）。 */
 export interface PetSettingsValue {
   enabled: boolean
   size: number
   /** 渲染帧率：30 / 60 / 0（不限制）。 */
   maxFps: number
+  /** 画布水平留白（%，0–300；角色四周留白防动作甩尾被裁切）。 */
+  canvasPadX: number
+  /** 画布垂直留白（%，0–300）。 */
+  canvasPadY: number
+  /** 默认停靠位置：距右边（px，0–4000）。 */
+  homeRight: number
+  /** 默认停靠位置：距底部（px，0–4000）。 */
+  homeBottom: number
+  /** 气泡相对角色顶部中心的水平偏移（px，-1000–1000）。 */
+  bubbleOffsetX: number
+  /** 气泡相对角色顶部中心的垂直偏移（px，-1000–1000，负值向上）。 */
+  bubbleOffsetY: number
+  /** 气泡背景色（#rrggbb）。 */
+  bubbleBgColor: string
+  /** 气泡背景不透明度（0–100）。 */
+  bubbleBgOpacity: number
+  /** 气泡文字颜色（#rrggbb）。 */
+  bubbleTextColor: string
   model: string
-  /** 开发者选项总开关：开启后显示调试面板/点击分区等开发者入口。 */
+  /** 开发者选项总开关：开启后显示调试面板/触摸部位色块等开发者入口。 */
   developerMode: boolean
   /** 调试面板：显示调试面板（开发用）。 */
   debug: boolean
-  /** 显示点击分区叠加层（空间回退色块）。 */
+  /** 显示触摸部位色块（开发者选项，spec §2/§4）。 */
   showTapZones: boolean
-  persona: string
 }
 
+/** GET /api/live2d-pet/settings 视图（settings.jsonc 读取结果）。 */
 interface SettingsView {
   value?: PetSettingsValue
   writable?: boolean
+  /** 设置文件级问题（解析失败/读取失败；null 无异常）。 */
+  error?: string | null
+  /** 设置文件绝对路径（不展示，仅类型对齐）。 */
+  path?: string
 }
 
 interface SettingsState {
   status: 'loading' | 'ready' | 'unavailable'
   value?: PetSettingsValue
   writable: boolean
+  /** 设置文件级问题（顶部提示；null 无异常）。 */
+  error?: string | null
 }
 
 const DEFAULT_VALUE: PetSettingsValue = {
   enabled: true,
   size: 160,
   maxFps: 30,
+  canvasPadX: 130,
+  canvasPadY: 70,
+  homeRight: 24,
+  homeBottom: 20,
+  bubbleOffsetX: 0,
+  bubbleOffsetY: -10,
+  bubbleBgColor: '#ffffff',
+  bubbleBgOpacity: 92,
+  bubbleTextColor: '#222222',
   model: 'hiyori',
   developerMode: false,
   debug: false,
   showTapZones: false,
-  persona: 'tsundere',
 }
 
-/** 空间分区覆盖表单草稿（空字符串 = 该字段用全局默认）。 */
-type SpatialTapDraft = Record<keyof typeof DEFAULT_SPATIAL_TAP, string>
+/** 事件卡片展示顺序（空闲/思考中/出错/完成/交付/等审批）。 */
+const EVENT_ORDER: readonly PetEventKey[] = ['idle', 'thinking', 'error', 'done', 'delivered', 'waiting']
 
-const EMPTY_SPATIAL_DRAFT: SpatialTapDraft = {
-  headMaxNy: '',
-  legMinNy: '',
-  armMinNy: '',
-  headMinNx: '',
-  headMaxNx: '',
-  bodyMinNx: '',
-  bodyMaxNx: '',
-  armLeftMinNx: '',
-  armRightMaxNx: '',
-}
-
-const SPATIAL_FIELD_LABELS: { key: keyof SpatialTapDraft; label: string; hint: string }[] = [
-  { key: 'headMaxNy', label: '头下沿', hint: String(DEFAULT_SPATIAL_TAP.headMaxNy) },
-  { key: 'legMinNy', label: '腿上沿', hint: String(DEFAULT_SPATIAL_TAP.legMinNy) },
-  { key: 'armMinNy', label: '手臂顶', hint: String(DEFAULT_SPATIAL_TAP.armMinNy) },
-  { key: 'headMinNx', label: '头左', hint: String(DEFAULT_SPATIAL_TAP.headMinNx) },
-  { key: 'headMaxNx', label: '头右', hint: String(DEFAULT_SPATIAL_TAP.headMaxNx) },
-  { key: 'bodyMinNx', label: '身左', hint: String(DEFAULT_SPATIAL_TAP.bodyMinNx) },
-  { key: 'bodyMaxNx', label: '身右', hint: String(DEFAULT_SPATIAL_TAP.bodyMaxNx) },
-  { key: 'armLeftMinNx', label: '左臂左', hint: String(DEFAULT_SPATIAL_TAP.armLeftMinNx) },
-  { key: 'armRightMaxNx', label: '右臂右', hint: String(DEFAULT_SPATIAL_TAP.armRightMaxNx) },
-]
-
-/** 动画映射槽位中文名（设置页「动画映射」表单）。 */
-const ANIMATION_SLOT_LABELS: Record<AnimationSlot, string> = {
+/** 事件中文名（事件绑定卡片标题）。 */
+const EVENT_LABELS: Record<PetEventKey, string> = {
   idle: '空闲',
-  thinking: '思考',
+  thinking: '思考中',
   error: '出错',
   done: '完成',
-  waiting: '等待审批',
-  delivered: '交付庆祝',
-  head: '摸头',
-  leg: '摸腿',
-  arm: '摸手',
-  body: '摸身体',
+  delivered: '交付',
+  waiting: '等审批',
 }
 
-/** 动画映射草稿 → 存储对象；全空返回 undefined（不写字段）。 */
-function motionMapFromDraft(draft: MotionMap): MotionMap | undefined {
-  const out: MotionMap = {}
-  for (const slot of ANIMATION_SLOTS) {
-    const groups = (draft[slot] ?? []).filter(Boolean)
-    if (groups.length > 0) out[slot] = groups
+/** 事件台词池的阶段名（thinking/waiting 有 3 个阶段，其余 1 个）。 */
+function eventStageLabels(event: PetEventKey): string[] {
+  const delays = EVENT_STAGE_DELAYS[event] ?? [0]
+  return delays.map((delay, index) => (index === 0 ? '入态' : `${Math.round(delay / 1000)} 秒后`))
+}
+
+/** 深拷贝事件绑定（避免草稿与 API 对象 / 默认常量互相污染）。 */
+function cloneEventBindings(bindings: EventBindings): EventBindings {
+  const out = {} as EventBindings
+  for (const event of PET_EVENTS) {
+    const binding = bindings[event]
+    out[event] = {
+      motions: [...binding.motions],
+      lines: binding.lines.map((pool) => [...pool]),
+    }
   }
-  return Object.keys(out).length > 0 ? out : undefined
+  return out
 }
 
-/** 存储对象 → 表单草稿（未配置槽位为空数组）。 */
-function draftFromMotionMap(m?: MotionMap | null): MotionMap {
-  const draft: MotionMap = {}
-  for (const slot of ANIMATION_SLOTS) draft[slot] = [...(m?.[slot] ?? [])]
-  return draft
+/** 把某事件绑定补齐/裁剪到该事件的阶段数（普通事件 1 组、thinking/waiting 3 组）。 */
+function normalizeEventDraft(binding: EventBinding, event: PetEventKey): EventBinding {
+  const stageCount = eventStageLabels(event).length
+  const lines = Array.from({ length: stageCount }, (_, stage) => [...(binding.lines[stage] ?? [])])
+  return { motions: [...binding.motions], lines }
+}
+
+/** GET /state 的事件绑定（完整表）→ 可编辑草稿（补齐阶段数）。 */
+function eventBindingsFromApi(raw: unknown): EventBindings {
+  const merged = mergeEventBindings(DEFAULT_EVENT_BINDINGS, normalizeEventBindings(raw))
+  const out = {} as EventBindings
+  for (const event of PET_EVENTS) out[event] = normalizeEventDraft(merged[event], event)
+  return out
+}
+
+/** 解析事件台词池 textarea：一行一条 → trim/去空/截断 120 字/去重/最多 20 条。 */
+function parseEventLines(raw: string): string[] {
+  const cleaned = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.slice(0, MAX_LINE_LENGTH))
+    .slice(0, MAX_LINES_PER_POOL)
+  return [...new Set(cleaned)]
 }
 
 /** 从 .model3.json 解析动作组名列表（FileReferences.Motions 或顶层 Motions）。 */
@@ -132,185 +177,370 @@ async function fetchMotionGroups(url: string): Promise<string[]> {
   return Object.keys(motions)
 }
 
-function draftFromOverride(o?: SpatialTapOverride | null): SpatialTapDraft {
+/** 深拷贝部位草稿（避免设置页草稿与共享对象 / 事件 detail 互相污染）。 */
+function cloneTouchParts(parts: readonly TouchPart[]): TouchPart[] {
+  return parts.map((part) => ({
+    id: part.id,
+    name: part.name,
+    boxes: part.boxes.map((box) => ({ ...box })),
+    motions: [...part.motions],
+    ...(part.lines && part.lines.length > 0 ? { lines: [...part.lines] } : {}),
+  }))
+}
+
+/** 解析部位台词 textarea：一行一条 → trim/去空/截断 120 字/去重/最多 30 条。 */
+function parsePartLines(raw: string): string[] {
+  const cleaned = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.slice(0, MAX_LINE_LENGTH))
+    .slice(0, MAX_LINES_PER_PART)
+  return [...new Set(cleaned)]
+}
+
+/** 0–1 → 百分比整数（设置页输入框按 0–100 显示）。 */
+function toPercent(value: number): number {
+  return Math.round(value * 100)
+}
+
+/** 百分比输入 → 0–1（clamp 0–100；非有限数按 0）。 */
+function fromPercentInput(raw: string): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return 0
+  return Math.min(100, Math.max(0, n)) / 100
+}
+
+/** 归一化草稿 box（与 Host normalizeTouchBox 一致：交换左右/上下顺序）。 */
+function orderTouchBox(box: TouchBox): TouchBox {
   return {
-    headMaxNy: o?.headMaxNy != null ? String(o.headMaxNy) : '',
-    legMinNy: o?.legMinNy != null ? String(o.legMinNy) : '',
-    armMinNy: o?.armMinNy != null ? String(o.armMinNy) : '',
-    headMinNx: o?.headMinNx != null ? String(o.headMinNx) : '',
-    headMaxNx: o?.headMaxNx != null ? String(o.headMaxNx) : '',
-    bodyMinNx: o?.bodyMinNx != null ? String(o.bodyMinNx) : (o?.armLeftMaxNx != null ? String(o.armLeftMaxNx) : ''),
-    bodyMaxNx: o?.bodyMaxNx != null ? String(o.bodyMaxNx) : (o?.armRightMinNx != null ? String(o.armRightMinNx) : ''),
-    armLeftMinNx: o?.armLeftMinNx != null ? String(o.armLeftMinNx) : '',
-    armRightMaxNx: o?.armRightMaxNx != null ? String(o.armRightMaxNx) : '',
+    left: Math.min(box.left, box.right),
+    top: Math.min(box.top, box.bottom),
+    right: Math.max(box.left, box.right),
+    bottom: Math.max(box.top, box.bottom),
   }
 }
 
-/** 草稿 → 覆盖对象；全空则 undefined（不写字段）。 */
-function overrideFromDraft(d: SpatialTapDraft): SpatialTapOverride | undefined {
-  const out: SpatialTapOverride = {}
-  for (const { key } of SPATIAL_FIELD_LABELS) {
-    const raw = d[key].trim()
-    if (!raw) continue
-    const n = Number(raw)
-    if (!Number.isFinite(n)) continue
-    out[key] = Math.min(1, Math.max(0, n))
+/** 触摸部位每个 box 的四个边（设置页输入框顺序：左 / 上 / 右 / 下）。 */
+const TOUCH_BOX_FIELDS: { key: keyof TouchBox; label: string }[] = [
+  { key: 'left', label: '左' },
+  { key: 'top', label: '上' },
+  { key: 'right', label: '右' },
+  { key: 'bottom', label: '下' },
+]
+
+/** 新 box 的默认位置（相对包围盒 30%–70%）。 */
+const DEFAULT_TOUCH_BOX: TouchBox = { left: 0.3, top: 0.3, right: 0.7, bottom: 0.7 }
+
+/** 生成不重复的部位 id（part-1、part-2……）。 */
+function nextTouchPartId(parts: readonly TouchPart[]): string {
+  const used = new Set(parts.map((part) => part.id))
+  let index = parts.length + 1
+  let id = `part-${index}`
+  while (used.has(id)) {
+    index += 1
+    id = `part-${index}`
   }
-  return Object.keys(out).length > 0 ? out : undefined
+  return id
+}
+
+/** 触摸部位 + 事件绑定文件视图（GET /api/live2d-pet/touch-parts 响应）。 */
+interface TouchPartsView {
+  model: string
+  parts: TouchPart[]
+  saved: boolean
+  /** 当前模型生效的事件绑定（含用户覆盖；「事件绑定」分组初始化用）。 */
+  events?: EventBindings | null
+  error: string | null
+  path: string
+}
+
+/** 读取当前选中模型的部位 + 事件绑定（GET；Host 不可达返回 null）。 */
+async function loadTouchParts(): Promise<TouchPartsView | null> {
+  try {
+    const response = await fetch(TOUCH_PARTS_API)
+    if (!response.ok) return null
+    return await response.json() as TouchPartsView
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 保存当前模型的部位草稿 + 可选事件绑定覆盖层（POST；Host 不可达返回 null）。
+ * events 为 undefined 时**不写**该字段（保留已有覆盖）；传对象时整表写入。
+ */
+async function saveTouchPartsToHost(
+  model: string,
+  parts: TouchPart[],
+  events?: EventBindings,
+): Promise<{ ok: boolean; error: string | null } | null> {
+  try {
+    const response = await fetch(TOUCH_PARTS_API, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        parts,
+        ...(events !== undefined ? { events } : {}),
+      }),
+    })
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
+    const data = await response.json() as { ok?: boolean; error?: string | null }
+    return { ok: data?.ok !== false, error: data?.error ?? null }
+  } catch {
+    return null
+  }
+}
+
+/** GET /state 的当前生效事件绑定（GET 的 events 缺失时兜底）。 */
+async function loadStateEvents(): Promise<EventBindings> {
+  try {
+    const response = await fetch(STATE_API)
+    if (!response.ok) return cloneEventBindings(DEFAULT_EVENT_BINDINGS)
+    const view = await response.json() as { config?: { events?: unknown } }
+    return eventBindingsFromApi(view?.config?.events)
+  } catch {
+    return cloneEventBindings(DEFAULT_EVENT_BINDINGS)
+  }
+}
+
+/**
+ * 选中模型 → 可 fetch 的 .model3.json URL。
+ * 优先用 /state 的 config.modelUrl（Host 已把自定义模型本地路径改写成同源虚拟 URL）；
+ * /state 不可达或模型尚未同步时回退到模型清单。
+ */
+async function resolveSelectedModelUrl(
+  model: string,
+  builtin: readonly BuiltinPreset[],
+  custom: readonly CustomModelEntry[],
+): Promise<string | null> {
+  try {
+    const response = await fetch(STATE_API)
+    if (response.ok) {
+      const view = await response.json() as { config?: { model?: string; modelUrl?: string | null } }
+      const config = view?.config
+      if (config?.model === model && typeof config.modelUrl === 'string' && config.modelUrl) {
+        return config.modelUrl
+      }
+    }
+  } catch {
+    // 回退到模型清单
+  }
+  const preset = builtin.find((p) => p.id === model)
+  if (preset?.modelUrl) return preset.modelUrl
+  const entry = custom.find((c) => c.id === model)
+  if (entry && /^https?:\/\//i.test(entry.modelUrl)) return entry.modelUrl
+  return null
 }
 
 const SETTINGS_API = '/api/live2d-pet/settings'
 const MODELS_API = '/api/live2d-pet/models'
 const CUSTOM_MODELS_API = '/api/live2d-pet/custom-models'
 const STATE_API = '/api/live2d-pet/state'
-const RELOAD_PERSONAS_API = '/api/live2d-pet/reload-personas'
+const TOUCH_PARTS_API = '/api/live2d-pet/touch-parts'
+const RESET_DISPLAY_API = '/api/live2d-pet/reset-display'
 
-const rowStyle: CSSProperties = {
-  padding: '10px 12px',
-  marginBottom: 8,
-  borderRadius: 8,
-  background: 'rgba(128,128,128,.08)',
+/* ---- 设计 token（DSH Theme 变量；深/浅色自动适配） ---- */
+const C = {
+  bgBase: 'var(--dsw-alias-bg-base)',
+  bgLayer1: 'var(--dsw-alias-bg-layer-1)',
+  bgLayer2: 'var(--dsw-alias-bg-layer-2)',
+  bgOverlay: 'var(--dsw-alias-bg-overlay)',
+  borderL1: 'var(--dsw-alias-border-l1)',
+  borderL2: 'var(--dsw-alias-border-l2)',
+  textPrimary: 'var(--dsw-alias-label-primary)',
+  textSecondary: 'var(--dsw-alias-label-secondary)',
+  brand: 'var(--dsw-alias-brand-primary)',
+  error: 'var(--dsw-alias-state-error-primary)',
+  success: 'var(--dsw-alias-state-success-primary)',
+  warn: 'var(--dsw-alias-state-warn-primary)',
+  idle: 'var(--dsw-alias-state-idle-primary)',
+} as const
+
+/** 间距网格（4/8/12/16/24/32；分组之间 28）。 */
+const GAP = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, section: 28 } as const
+
+/** Section：标题 13/600 secondary + 说明 12 secondary + 内容上下间距。 */
+const sectionStyle: CSSProperties = { marginTop: GAP.section }
+const sectionHeadStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: GAP.sm,
+  margin: 0,
+  marginBottom: GAP.xs,
 }
+const sectionTitleStyle: CSSProperties = { margin: 0, fontSize: 13, fontWeight: 600, color: C.textSecondary }
+const sectionDescStyle: CSSProperties = {
+  margin: `0 0 ${GAP.sm}px`,
+  fontSize: 12,
+  color: C.textSecondary,
+  lineHeight: 1.6,
+}
+const subTitleStyle: CSSProperties = { margin: '12px 0 4px', fontSize: 12, fontWeight: 600, color: C.textSecondary }
 
+/** Card：bg-layer-1 + 1px border-l1 + radius 10 + padding 14/16。 */
+const cardStyle: CSSProperties = {
+  background: C.bgLayer1,
+  border: `1px solid ${C.borderL1}`,
+  borderRadius: 10,
+  padding: '14px 16px',
+  marginBottom: 10,
+  color: C.textPrimary,
+}
+const rowStyle: CSSProperties = { ...cardStyle }
 const labelStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 8,
+  gap: GAP.sm,
   cursor: 'pointer',
   flex: 1,
   minWidth: 0,
+  fontSize: 13,
+  color: C.textPrimary,
 }
+const hintStyle: CSSProperties = { fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }
 
-const linkStyle: CSSProperties = {
-  color: 'inherit',
-  fontSize: 12,
-  marginLeft: 8,
-}
-
-const buttonStyle: CSSProperties = {
-  marginLeft: 6,
-  padding: '2px 10px',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: 12,
-  background: 'rgba(128,128,128,.14)',
-  color: 'inherit',
+/** CardHeader：整行可点折叠、chevron 20×20、hover layer-2（CSS 见注入样式）。 */
+const cardHeaderStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.sm,
+  width: '100%',
+  margin: 0,
+  padding: 0,
   border: 'none',
-}
-
-/** 自定义模型“空间分区覆盖 / 动画映射”tab 样式。 */
-const panelTabStyle: CSSProperties = {
-  ...buttonStyle,
-  marginLeft: 0,
-  padding: '4px 12px',
-  borderRadius: 6,
-}
-const panelTabActiveStyle: CSSProperties = {
-  ...panelTabStyle,
-  background: 'rgba(120,170,255,.26)',
-  color: '#fff',
-}
-
-/** 分组标题右侧的链接型操作（蓝色、hover 下划线），与“打开内置模型配置文件”一致。 */
-function headerLink(text: string, onClick: () => void): ReactElement {
-  return createElement('a', {
-    href: '#',
-    style: {
-      color: '#4a9eff',
-      fontSize: 12,
-      textDecoration: 'none',
-      cursor: 'pointer',
-    },
-    onMouseEnter: (e: MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.textDecoration = 'underline' },
-    onMouseLeave: (e: MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.textDecoration = 'none' },
-    onClick: (e: MouseEvent<HTMLAnchorElement>) => {
-      e.preventDefault()
-      onClick()
-    },
-  }, text)
-}
-
-const inputStyle: CSSProperties = {
-  padding: '6px 8px',
-  borderRadius: 6,
-  border: '1px solid rgba(128,128,128,.35)',
   background: 'transparent',
   color: 'inherit',
+  fontFamily: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+  outline: 'none',
+}
+const cardTitleStyle: CSSProperties = { fontSize: 13, fontWeight: 600, color: C.textPrimary }
+const cardSummaryStyle: CSSProperties = {
+  fontSize: 12,
+  color: C.textSecondary,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+const cardBodyStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: GAP.sm, marginTop: GAP.md }
+const chevronStyle: CSSProperties = {
+  width: 20,
+  height: 20,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+  borderRadius: 6,
+  color: C.textSecondary,
+  fontSize: 11,
+  lineHeight: 1,
+  transition: 'transform .15s',
+}
+const chevronButtonStyle: CSSProperties = {
+  ...chevronStyle,
+  padding: 0,
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+}
+
+/** Buttons：统一 height 28 / padding 0 12 / radius 8 / font 12，明确边框与背景。 */
+const buttonBaseStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: 28,
+  padding: '0 12px',
+  borderRadius: 8,
+  fontSize: 12,
+  lineHeight: 1,
+  fontFamily: 'inherit',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+  cursor: 'pointer',
+  border: '1px solid transparent',
+  background: 'transparent',
+  color: C.textPrimary,
+}
+/** secondary：layer-2 背景 + 1px border-l2 + label-primary。 */
+const buttonSecondaryStyle: CSSProperties = { ...buttonBaseStyle, background: C.bgLayer2, borderColor: C.borderL2 }
+/** primary：brand 填充 + 白字。 */
+const buttonPrimaryStyle: CSSProperties = {
+  ...buttonBaseStyle,
+  background: C.brand,
+  borderColor: C.brand,
+  color: '#ffffff',
+}
+/** danger：error 边框 + error 文字 + 极浅 error 背景。 */
+const buttonDangerStyle: CSSProperties = {
+  ...buttonBaseStyle,
+  background: `color-mix(in srgb, ${C.error} 10%, transparent)`,
+  borderColor: C.error,
+  color: C.error,
+}
+
+/** Input / Textarea：height 28 / radius 8 / border-l1 / font 13；focus 边框 brand（注入 CSS）。 */
+const inputStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  height: 28,
+  padding: '0 8px',
+  borderRadius: 8,
+  border: `1px solid ${C.borderL1}`,
+  background: C.bgBase,
+  color: C.textPrimary,
   fontSize: 13,
+  fontFamily: 'inherit',
   minWidth: 0,
   flex: 1,
+  outline: 'none',
 }
-
-function spatialTapFields(
-  draft: SpatialTapDraft,
-  setDraft: (next: SpatialTapDraft) => void,
-  disabled: boolean,
-): ReactElement {
-  return createElement('div', {
-    style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(88px,1fr))', gap: 6, marginTop: 8 },
-  },
-    ...SPATIAL_FIELD_LABELS.map(({ key, label, hint }) => createElement('label', {
-      key,
-      style: { display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11, color: '#888' },
-    },
-      `${label} (默认 ${hint})`,
-      createElement('input', {
-        style: { ...inputStyle, width: '100%', boxSizing: 'border-box' as const },
-        inputMode: 'decimal',
-        placeholder: hint,
-        disabled,
-        value: draft[key],
-        onChange: (e: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, [key]: e.target.value }),
-      }),
-    )),
-  )
+const textareaStyle: CSSProperties = {
+  ...inputStyle,
+  height: 'auto',
+  minHeight: 64,
+  padding: '6px 8px',
+  lineHeight: 1.45,
+  resize: 'vertical',
 }
-
-/** 动画映射表单：10 个槽位各一个多选下拉；解析失败时显示重试。 */
-function motionMapFields(
-  draft: MotionMap,
-  setDraft: (next: MotionMap) => void,
-  groups: readonly string[],
-  status: 'idle' | 'loading' | 'ready' | 'error',
-  disabled: boolean,
-  onRetry?: () => void,
-): ReactElement {
-  const options = groups.map((g) => ({ id: g, name: g }))
-  const statusLine = status === 'loading'
-    ? '正在解析模型动画列表…'
-    : status === 'error'
-      ? '无法解析动画列表，可稍后重试（模型仍可保存）'
-      : status === 'ready'
-        ? `已解析到 ${groups.length} 个动作组；多选=触发时随机选一个`
-        : '打开后实时解析模型动画列表；未配置的槽位沿用默认映射。'
-  return createElement('div', { style: { marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px 10px' } },
-    createElement('div', { style: { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#888' } },
-      createElement('span', null, statusLine),
-      status === 'error' && onRetry
-        ? createElement('button', { type: 'button', style: buttonStyle, onClick: onRetry }, '重试')
-        : null,
-    ),
-    ...ANIMATION_SLOTS.map((slot) => createElement('label', {
-      key: slot,
-      style: { display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12, minWidth: 0 },
-    },
-      createElement('span', { style: { color: '#888' } }, ANIMATION_SLOT_LABELS[slot]),
-      createElement(ThemeMultiSelect, {
-        value: draft[slot] ?? [],
-        options,
-        disabled: disabled || status !== 'ready',
-        placeholder: '未配置（用默认）',
-        onChange: (next) => setDraft({ ...draft, [slot]: next }),
-      }),
-    )),
-  )
+const chipStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  height: 20,
+  padding: '0 8px',
+  borderRadius: 999,
+  background: C.bgLayer2,
+  color: C.textSecondary,
+  fontSize: 12,
+  lineHeight: 1,
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
 }
+const statusTextStyle: CSSProperties = { fontSize: 12, lineHeight: 1.5 }
+/** 状态提示：已保存 success / 未保存 warn / 失败 error / 中性 secondary。 */
+const noticeBaseStyle: CSSProperties = { margin: '0 0 8px', fontSize: 12, lineHeight: 1.6 }
+const noticeErrorStyle: CSSProperties = { ...noticeBaseStyle, color: C.error }
+const noticeMutedStyle: CSSProperties = { ...noticeBaseStyle, color: C.textSecondary }
 
-const sectionTitleStyle: CSSProperties = {
-  margin: '16px 0 8px',
-  fontSize: 13,
-  fontWeight: 600,
-  color: '#888',
+/** 组内 sticky 保存行（半透明 + 模糊，避免遮挡内容时突兀）。 */
+const stickyRowStyle: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 10,
+  padding: '8px 12px',
+  marginBottom: GAP.sm,
+  borderRadius: 8,
+  background: C.bgLayer2,
+  backdropFilter: 'blur(6px)',
+  WebkitBackdropFilter: 'blur(6px)',
+  border: `1px solid ${C.borderL1}`,
 }
 
 /** 下拉选项（与设置页其它控件同色板，避免原生 select 的白框/底线）。 */
@@ -331,11 +561,44 @@ function normalizeMaxFps(raw: unknown): number {
   return 30
 }
 
-interface ThemeSelectProps {
-  value: string
-  options: ThemeSelectOption[]
-  disabled?: boolean
-  onChange: (id: string) => void
+/** 画布留白（%）：clamp 到 0–300 的整数；非法值回落 fallback。 */
+function normalizeCanvasPad(raw: unknown, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(300, Math.max(0, Math.round(n)))
+}
+
+/** 默认停靠位置（px）：clamp 到 0–4000 的整数；非法值回落 fallback。 */
+function normalizeHomePosition(raw: unknown, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(4000, Math.max(0, Math.round(n)))
+}
+
+/** 气泡偏移（px）：clamp 到 -1000–1000 的整数；非法值回落 fallback。 */
+function normalizeBubbleOffset(raw: unknown, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(1000, Math.max(-1000, Math.round(n)))
+}
+
+/** 气泡背景不透明度（0–100 整数）；非法值回落 fallback。 */
+function normalizeBubbleOpacity(raw: unknown, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(100, Math.max(0, Math.round(n)))
+}
+
+/** 颜色值统一为小写 #rrggbb；非法值回落 fallback。 */
+function normalizeHexColor(raw: unknown, fallback: string): string {
+  if (typeof raw === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.trim())) return raw.trim().toLowerCase()
+  return fallback
+}
+
+/** 本地时间 HH:MM:SS（页面级保存状态栏显示「已保存 HH:MM:SS」）。 */
+function formatClock(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 interface ThemeRadioGroupProps {
@@ -347,8 +610,8 @@ interface ThemeRadioGroupProps {
 }
 
 /** 选中态强调色（与设置页其它高亮一致，贴近系统 radio 蓝点观感）。 */
-const RADIO_ACCENT = 'rgba(90,150,255,.95)'
-const RADIO_RING = 'rgba(160,160,170,.75)'
+const RADIO_ACCENT = C.brand
+const RADIO_RING = C.borderL2
 
 /** 自绘圆点：帧率档与模型列表共用，避免原生 radio 深色主题白框。 */
 function ThemeRadioDot(props: { selected: boolean }): ReactElement {
@@ -420,9 +683,7 @@ function ThemeRadioOption(props: ThemeRadioOptionProps): ReactElement {
   )
 }
 
-/**
- * 自绘圆形单选组：一行多档；圆点走 ThemeRadioDot。
- */
+/** 自绘圆形单选组：一行多档；圆点走 ThemeRadioDot。 */
 function ThemeRadioGroup(props: ThemeRadioGroupProps): ReactElement {
   const { value, options, disabled, name, onChange } = props
   return createElement('div', {
@@ -470,7 +731,7 @@ function ThemeSwitch(props: ThemeSwitchProps): ReactElement {
       border: 'none',
       borderRadius: 10,
       cursor: disabled ? 'not-allowed' : 'pointer',
-      background: checked ? RADIO_ACCENT : 'rgba(128,128,128,.35)',
+      background: checked ? RADIO_ACCENT : C.borderL2,
       opacity: disabled ? 0.55 : 1,
       transition: 'background .15s',
       outline: 'none',
@@ -484,118 +745,11 @@ function ThemeSwitch(props: ThemeSwitchProps): ReactElement {
         width: 16,
         height: 16,
         borderRadius: '50%',
-        background: '#fff',
+        background: C.textPrimary,
         boxShadow: '0 1px 3px rgba(0,0,0,.4)',
         transition: 'left .15s',
       },
     }),
-  )
-}
-
-/**
- * 自绘下拉：原生 select 在 Windows 深色主题下会出焦点白框与 options 底部白线，
- * UA 弹出层几乎不可主题化，故用同色板菜单替代。
- */
-function ThemeSelect(props: ThemeSelectProps): ReactElement {
-  const { value, options, disabled, onChange } = props
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const label = options.find((o) => o.id === value)?.name ?? value
-
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: Event) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('pointerdown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  return createElement('div', {
-    ref: rootRef,
-    style: { position: 'relative', flex: 1, minWidth: 0 },
-  },
-    createElement('button', {
-      type: 'button',
-      disabled: !!disabled,
-      'aria-haspopup': 'listbox',
-      'aria-expanded': open,
-      onClick: () => { if (!disabled) setOpen((v) => !v) },
-      style: {
-        ...inputStyle,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 8,
-        width: '100%',
-        textAlign: 'left',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        background: 'rgba(128,128,128,.14)',
-        outline: 'none',
-        boxShadow: 'none',
-        opacity: disabled ? 0.55 : 1,
-      },
-    },
-      createElement('span', {
-        style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-      }, label),
-      createElement('span', { style: { color: '#888', fontSize: 10, flexShrink: 0 } }, open ? '▴' : '▾'),
-    ),
-    open && createElement('div', {
-      role: 'listbox',
-      style: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 'calc(100% + 4px)',
-        zIndex: 20,
-        margin: 0,
-        padding: 4,
-        borderRadius: 8,
-        border: '1px solid rgba(128,128,128,.35)',
-        background: '#2a2a2e',
-        color: '#e8e8ec',
-        boxShadow: '0 8px 24px rgba(0,0,0,.45)',
-        maxHeight: 240,
-        overflowY: 'auto',
-      },
-    },
-      options.map((o) => {
-        const selected = o.id === value
-        return createElement('button', {
-          key: o.id,
-          type: 'button',
-          role: 'option',
-          'aria-selected': selected,
-          onClick: () => { onChange(o.id); setOpen(false) },
-          style: {
-            display: 'block',
-            width: '100%',
-            margin: 0,
-            padding: '6px 10px',
-            border: 'none',
-            borderRadius: 6,
-            textAlign: 'left',
-            cursor: 'pointer',
-            fontSize: 13,
-            color: '#e8e8ec',
-            background: selected ? 'rgba(120,170,255,.28)' : 'transparent',
-            outline: 'none',
-          },
-          onMouseEnter: (e: MouseEvent<HTMLButtonElement>) => {
-            if (!selected) e.currentTarget.style.background = 'rgba(128,128,128,.22)'
-          },
-          onMouseLeave: (e: MouseEvent<HTMLButtonElement>) => {
-            e.currentTarget.style.background = selected ? 'rgba(120,170,255,.28)' : 'transparent'
-          },
-        }, o.name)
-      }),
-    ),
   )
 }
 
@@ -646,10 +800,10 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
         justifyContent: 'space-between',
         gap: 8,
         width: '100%',
-        minHeight: 34,
+        minHeight: 28,
         textAlign: 'left',
         cursor: disabled ? 'not-allowed' : 'pointer',
-        background: 'rgba(128,128,128,.14)',
+        background: C.bgLayer2,
         outline: 'none',
         boxShadow: 'none',
         opacity: disabled ? 0.55 : 1,
@@ -659,20 +813,23 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
         style: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', flex: 1, minWidth: 0 },
       },
         value.length === 0
-          ? createElement('span', { style: { color: '#888' } }, placeholder ?? '选择动作组')
+          ? createElement('span', { style: { color: C.textSecondary } }, placeholder ?? '选择动作组')
           : value.map((id) => createElement('span', {
             key: id,
             style: {
-              padding: '1px 6px',
-              borderRadius: 4,
-              background: 'rgba(120,170,255,.22)',
-              color: '#dbe7ff',
-              fontSize: 11,
+              height: 20,
+              padding: '0 8px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              borderRadius: 999,
+              background: C.bgLayer2,
+              color: C.textPrimary,
+              fontSize: 12,
               whiteSpace: 'nowrap',
             },
           }, nameOf(id))),
       ),
-      createElement('span', { style: { color: '#888', fontSize: 10, flexShrink: 0 } }, open ? '▴' : '▾'),
+      createElement('span', { style: { color: C.textSecondary, fontSize: 10, flexShrink: 0 } }, open ? '▴' : '▾'),
     ),
     open && createElement('div', {
       role: 'listbox',
@@ -686,9 +843,9 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
         margin: 0,
         padding: 4,
         borderRadius: 8,
-        border: '1px solid rgba(128,128,128,.35)',
-        background: '#2a2a2e',
-        color: '#e8e8ec',
+        border: `1px solid ${C.borderL1}`,
+        background: C.bgOverlay,
+        color: C.textPrimary,
         boxShadow: '0 8px 24px rgba(0,0,0,.45)',
         maxHeight: 240,
         overflowY: 'auto',
@@ -717,15 +874,15 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
             textAlign: 'left',
             cursor: 'pointer',
             fontSize: 13,
-            color: '#e8e8ec',
-            background: selected ? 'rgba(120,170,255,.28)' : 'transparent',
+            color: C.textPrimary,
+            background: selected ? C.bgLayer2 : 'transparent',
             outline: 'none',
           },
           onMouseEnter: (e: MouseEvent<HTMLButtonElement>) => {
-            if (!selected) e.currentTarget.style.background = 'rgba(128,128,128,.22)'
+            if (!selected) e.currentTarget.style.background = C.bgLayer2
           },
           onMouseLeave: (e: MouseEvent<HTMLButtonElement>) => {
-            e.currentTarget.style.background = selected ? 'rgba(120,170,255,.28)' : 'transparent'
+            e.currentTarget.style.background = selected ? C.bgLayer2 : 'transparent'
           },
         },
           createElement('span', { style: { width: 14, flexShrink: 0, textAlign: 'center' } }, selected ? '☑' : '☐'),
@@ -807,7 +964,6 @@ function modelRow(
   meta: string,
   disabled: boolean,
   actions?: ReactNode,
-  licenseLink?: ReactNode,
 ): ReactElement {
   return createElement('div', { key, style: { ...rowStyle, display: 'flex', alignItems: 'center', gap: 8 } },
     createElement(ThemeRadioOption, {
@@ -819,45 +975,14 @@ function modelRow(
         style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' },
       }, meta),
     }),
-    licenseLink,
     actions,
   )
 }
 
-/** 「自定义人设 ↗」直达打开（由插件入口注入；返回是否成功，失败走弹层兜底）。 */
-export interface PetSettingsProps {
-  openPath?: (path: string) => Promise<boolean>
-}
+/** 设置页组件 props：保留空对象以便入口 `createElement(PetSettingsSection, {})`。 */
+export interface PetSettingsProps {}
 
-interface PersonaStateView {
-  persona: string
-  customPersonas: CustomPersonaDef[]
-  personasError: string | null
-  personasFile: string
-}
-
-/** 拉取宠物状态（人设区数据源）。 */
-async function loadPersonaState(): Promise<PersonaStateView | null> {
-  try {
-    const response = await fetch(STATE_API)
-    if (!response.ok) return null
-    return await response.json() as PersonaStateView
-  } catch {
-    return null
-  }
-}
-
-/** 写剪贴板（尽力而为）。 */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    return false
-  }
-}
-
-export function PetSettingsSection(props: PetSettingsProps): ReactNode {
+export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const [state, setState] = useState<SettingsState>({ status: 'loading', writable: false })
   // 最新视图 ref：写入 ops 在出队时按最新状态合成，避免快速操作读到过期闭包
   const stateRef = useRef(state)
@@ -872,18 +997,18 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
         setSettingsState((prev) => prev.status === 'ready' ? prev : { status: 'unavailable', writable: false })
         return
       }
-      setSettingsState({ status: 'ready', value: view.value, writable: view.writable !== false })
+      setSettingsState({ status: 'ready', value: view.value, writable: view.writable !== false, error: view.error ?? null })
     })
   }, [])
   useEffect(() => { reload() }, [reload])
 
   const value = state.value ?? DEFAULT_VALUE
   const writable = state.writable
+  /** 当前选中模型（设置未就绪时为空，事件绑定/触摸部位分组暂不加载）。 */
+  const selectedModel = state.status === 'ready' ? value.model : ''
 
   // 内置清单（Host API，只读）
   const [builtin, setBuiltin] = useState<BuiltinPreset[]>([])
-  const [presetsPath, setPresetsPath] = useState<string>('')
-  const [customModelsPath, setCustomModelsPath] = useState<string>('')
   useEffect(() => {
     let alive = true
     fetch(MODELS_API)
@@ -891,14 +1016,12 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       .then((data) => {
         if (!alive || !data) return
         if (Array.isArray(data.builtin)) setBuiltin(data.builtin)
-        if (typeof data.presetsPath === 'string') setPresetsPath(data.presetsPath)
-        if (typeof data.customModelsPath === 'string') setCustomModelsPath(data.customModelsPath)
       })
       .catch(() => {})
     return () => { alive = false }
   }, [])
 
-  // 自定义模型（独立 JSONC 文件，不再混入 settings.yaml）
+  // 自定义模型（保持插件私有 JSONC 文件，不在 UI 暴露路径）
   const [customModels, setCustomModels] = useState<CustomModelEntry[]>([])
   const [customModelsError, setCustomModelsError] = useState<string | null>(null)
   const reloadCustomModels = useCallback(() => {
@@ -906,48 +1029,11 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       if (view === null) return
       setCustomModels(view.models)
       setCustomModelsError(view.error)
-      if (view.path) setCustomModelsPath(view.path)
     })
   }, [])
   useEffect(() => { reloadCustomModels() }, [reloadCustomModels])
 
-  // 内置模型配置文件打开（开发者选项）：与「自定义人设 ↗」同款交互
-  const [builtinFileNotice, setBuiltinFileNotice] = useState<string | null>(null)
-  const [showBuiltinFilePopover, setShowBuiltinFilePopover] = useState(false)
-  const openBuiltinPresetsFile = () => {
-    if (!presetsPath) {
-      setBuiltinFileNotice('内置模型配置文件路径不可用')
-      return
-    }
-    const opened = props.openPath?.(presetsPath) ?? Promise.resolve(false)
-    opened.then((ok) => {
-      if (ok) {
-        setBuiltinFileNotice('已打开内置模型配置文件')
-      } else {
-        setShowBuiltinFilePopover(true)
-      }
-    })
-  }
-
-  // 自定义模型配置文件（custom-models.jsonc）打开：同款交互
-  const [customFileNotice, setCustomFileNotice] = useState<string | null>(null)
-  const [showCustomFilePopover, setShowCustomFilePopover] = useState(false)
-  const openCustomModelsFile = () => {
-    if (!customModelsPath) {
-      setCustomFileNotice('自定义模型配置文件路径不可用')
-      return
-    }
-    const opened = props.openPath?.(customModelsPath) ?? Promise.resolve(false)
-    opened.then((ok) => {
-      if (ok) {
-        setCustomFileNotice('已打开自定义模型配置文件')
-      } else {
-        setShowCustomFilePopover(true)
-      }
-    })
-  }
-
-  // 尺寸滑杆：拖动中本地草稿，松手/失焦提交（避免拖动写满 settings.yaml）
+  // 尺寸滑杆：拖动中本地草稿，松手/失焦提交（避免拖动写满 settings.jsonc）
   const [draftSize, setDraftSize] = useState<number | null>(null)
   useEffect(() => { setDraftSize(null) }, [value.size])
   const size = draftSize ?? value.size
@@ -958,78 +1044,54 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     setDraftSize(null)
   }
 
-  // 自定义模型表单（添加 + 编辑）
+  // 归位按钮结果提示（成功约 2 秒 / 失败约 4 秒后消失）
+  const [resetNotice, setResetNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  const resetNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 归位：POST /api/live2d-pet/reset-display（位置回到默认停靠位置，尺寸不变）。 */
+  const resetDisplayPosition = (): void => {
+    setResetNotice(null)
+    fetch(RESET_DISPLAY_API, { method: 'POST' })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json() as Promise<{ ok?: boolean; error?: string | null } | null>
+      })
+      .then((data) => {
+        if (data?.error) throw new Error(data.error)
+        clientLog('info', 'display reset to home position')
+        setResetNotice({ kind: 'ok', text: '已归位' })
+        if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
+        resetNoticeTimer.current = setTimeout(() => setResetNotice(null), 2000)
+      })
+      .catch((error) => {
+        clientLog('error', 'reset display failed', error)
+        setResetNotice({ kind: 'error', text: `归位失败：${error instanceof Error ? error.message : String(error)}` })
+        if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
+        resetNoticeTimer.current = setTimeout(() => setResetNotice(null), 4000)
+      })
+  }
+
+  // 自定义模型表单（添加 + 编辑）：仅名称 + URL
   const [newName, setNewName] = useState('')
   const [newUrl, setNewUrl] = useState('')
-  const [newSpatial, setNewSpatial] = useState<SpatialTapDraft>(EMPTY_SPATIAL_DRAFT)
-  const [activeNewPanel, setActiveNewPanel] = useState<'spatial' | 'motion' | null>(null)
-  const [newMotionMap, setNewMotionMap] = useState<MotionMap>({})
-  const [newMotionGroups, setNewMotionGroups] = useState<string[]>([])
-  const [newMotionStatus, setNewMotionStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [editId, setEditId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editUrl, setEditUrl] = useState('')
-  const [editSpatial, setEditSpatial] = useState<SpatialTapDraft>(EMPTY_SPATIAL_DRAFT)
-  const [activeEditPanel, setActiveEditPanel] = useState<'spatial' | 'motion' | null>(null)
-  const [editMotionMap, setEditMotionMap] = useState<MotionMap>({})
-  const [editMotionGroups, setEditMotionGroups] = useState<string[]>([])
-  const [editMotionStatus, setEditMotionStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
   const custom = customModels
   const customRef = useRef(custom)
   customRef.current = custom
 
-  // 新增模型：打开「动画映射」或 URL 变化时实时解析动作组
-  useEffect(() => {
-    if (activeNewPanel !== 'motion' || !isSupportedModelLocation(newUrl)) return
-    let alive = true
-    setNewMotionStatus('loading')
-    fetchMotionGroups(newUrl)
-      .then((groups) => {
-        if (!alive) return
-        setNewMotionGroups(groups)
-        setNewMotionStatus('ready')
-      })
-      .catch(() => {
-        if (!alive) return
-        setNewMotionGroups([])
-        setNewMotionStatus('error')
-      })
-    return () => { alive = false }
-  }, [activeNewPanel, newUrl])
-
-  // 编辑模型：同上
-  useEffect(() => {
-    if (activeEditPanel !== 'motion' || !isSupportedModelLocation(editUrl)) return
-    let alive = true
-    setEditMotionStatus('loading')
-    fetchMotionGroups(editUrl)
-      .then((groups) => {
-        if (!alive) return
-        setEditMotionGroups(groups)
-        setEditMotionStatus('ready')
-      })
-      .catch(() => {
-        if (!alive) return
-        setEditMotionGroups([])
-        setEditMotionStatus('error')
-      })
-    return () => { alive = false }
-  }, [activeEditPanel, editUrl])
-
-  // 写入串行化：ops 在出队时基于最新视图合成。若直接用渲染闭包里的
-  // custom/value 组合完整数组替换，快速连续操作（如连删两个模型）会
-  // 读到过期状态，后到的写覆盖先到的，导致已删条目被"复活"。
+  // 写入串行化：ops 在出队时基于最新视图合成，避免快速操作读到过期状态。
   const writeQueue = useRef<Promise<void>>(Promise.resolve())
   const enqueueWrite = (compose: (current: PetSettingsValue) => SettingsOp[]): void => {
     writeQueue.current = writeQueue.current.then(async () => {
       const current = stateRef.current.value ?? DEFAULT_VALUE
       const view = await writeSettings(compose(current))
-      if (view !== null) setSettingsState({ status: 'ready', value: view.value, writable: view.writable !== false })
+      if (view !== null) setSettingsState({ status: 'ready', value: view.value, writable: view.writable !== false, error: view.error ?? null })
     })
   }
 
-  // 自定义模型文件写入串行化（独立于 settings.yaml 写入队列）
+  // 自定义模型文件写入串行化（独立于 settings 写入队列）
   const customWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const enqueueCustomWrite = (compose: (current: CustomModelEntry[]) => CustomModelEntry[]): void => {
     customWriteQueue.current = customWriteQueue.current.then(async () => {
@@ -1037,7 +1099,6 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       if (view !== null) {
         setCustomModels(view.models)
         setCustomModelsError(view.error)
-        if (view.path) setCustomModelsPath(view.path)
       }
     })
   }
@@ -1046,49 +1107,31 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     const name = newName.trim()
     const url = newUrl.trim()
     if (!name || !isSupportedModelLocation(url)) return
-    const spatialTap = overrideFromDraft(newSpatial)
-    const animationMap = motionMapFromDraft(newMotionMap)
     const entry: CustomModelEntry = { id: `m${Date.now()}`, name, modelUrl: url }
-    if (spatialTap) entry.spatialTap = spatialTap
-    if (animationMap) entry.animationMap = animationMap
     enqueueCustomWrite((current) => [...current, entry])
     setNewName('')
     setNewUrl('')
-    setNewSpatial(EMPTY_SPATIAL_DRAFT)
-    setActiveNewPanel(null)
-    setNewMotionMap({})
-    setNewMotionGroups([])
-    setNewMotionStatus('idle')
   }
 
   const saveEdit = (id: string) => {
     const name = editName.trim()
     const url = editUrl.trim()
     if (!name || !isSupportedModelLocation(url)) return
-    const spatialTap = overrideFromDraft(editSpatial)
-    const animationMap = motionMapFromDraft(editMotionMap)
     enqueueCustomWrite((current) => current.map((c) => {
       if (c.id !== id) return c
-      const next: CustomModelEntry = { id: c.id, name, modelUrl: url }
-      if (spatialTap) next.spatialTap = spatialTap
-      if (animationMap) next.animationMap = animationMap
+      // 保留条目上可能存在的 animationMap（事件绑定统一由「事件绑定」覆盖层管理）
+      const next: CustomModelEntry = c.animationMap
+        ? { id: c.id, name, modelUrl: url, animationMap: c.animationMap }
+        : { id: c.id, name, modelUrl: url }
       return next
     }))
     setEditId(null)
-    setActiveEditPanel(null)
   }
 
   const beginEdit = (c: CustomModelEntry) => {
     setEditId(c.id)
     setEditName(c.name)
     setEditUrl(c.modelUrl)
-    setEditSpatial(draftFromOverride(c.spatialTap))
-    const hasSpatial = !!c.spatialTap && Object.keys(c.spatialTap).length > 0
-    const hasMotion = !!c.animationMap && Object.keys(c.animationMap).length > 0
-    setActiveEditPanel(hasSpatial ? 'spatial' : hasMotion ? 'motion' : null)
-    setEditMotionMap(draftFromMotionMap(c.animationMap))
-    setEditMotionGroups([])
-    setEditMotionStatus('idle')
   }
 
   const removeModel = (id: string) => {
@@ -1100,41 +1143,810 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     }
   }
 
-  // ---- 人设区（spec §2/§3）：下拉选择 + 重新读取 + 自定义人设入口 ----
-  const [personaState, setPersonaState] = useState<PersonaStateView | null>(null)
-  const [personaNotice, setPersonaNotice] = useState<string | null>(null)
-  const [showPersonaPopover, setShowPersonaPopover] = useState(false)
-  const reloadPersonaState = useCallback(() => {
-    loadPersonaState().then((view) => { if (view) setPersonaState(view) })
-  }, [])
-  useEffect(() => { reloadPersonaState() }, [reloadPersonaState])
+  // ---- 事件绑定 + 触摸部位（同一模型、同一份草稿、同一保存队列） ----
+  const [modelDraft, setModelDraft] = useState('')
+  const modelDraftRef = useRef('')
+  const [touchDraft, setTouchDraft] = useState<TouchPart[]>([])
+  const touchDraftRef = useRef<TouchPart[]>([])
+  const [eventBindings, setEventBindings] = useState<EventBindings>(() => cloneEventBindings(DEFAULT_EVENT_BINDINGS))
+  const eventBindingsRef = useRef<EventBindings>(eventBindings)
+  const [partStatus, setPartStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [touchEditing, setTouchEditing] = useState(false)
+  const touchEditingRef = useRef(false)
+  const [expandedPartId, setExpandedPartId] = useState<string | null>(null)
+  const expandedPartRef = useRef<string | null>(null)
+  /** 部位粒度 dirty（partId 集合）+ 结构变更（新建/删除/上下移没有卡片可挂提示）。 */
+  const [dirtyPartIds, setDirtyPartIds] = useState<Set<string>>(() => new Set())
+  const dirtyPartIdsRef = useRef<Set<string>>(new Set())
+  const [structureDirty, setStructureDirty] = useState(false)
+  const structureDirtyRef = useRef(false)
+  /** 事件粒度 dirty（event key 集合）。 */
+  const [dirtyEventKeys, setDirtyEventKeys] = useState<Set<PetEventKey>>(() => new Set())
+  const dirtyEventKeysRef = useRef<Set<PetEventKey>>(new Set())
+  const eventsDirty = dirtyEventKeys.size > 0
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
+  /** 触摸部位分组级「已保存」提示（结构变更保存时，约 3 秒）。 */
+  const [touchSavedFlash, setTouchSavedFlash] = useState<string | null>(null)
+  /** 部位卡片就地「已保存 HH:MM:SS」提示（仅触发保存的那张卡片，约 3 秒）。 */
+  const [savedPartFlash, setSavedPartFlash] = useState<{ partId: string; time: string } | null>(null)
+  const savedPartTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 事件卡片就地「已保存 HH:MM:SS」提示（仅触发保存的那张卡片，约 3 秒）。 */
+  const [savedEventFlash, setSavedEventFlash] = useState<{ event: PetEventKey; time: string } | null>(null)
+  const savedEventTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 本次保存的来源（部位卡 / 结构行 / 事件卡），用于决定「已保存」提示落在哪里。 */
+  const saveSourceRef = useRef<
+    { type: 'part'; id: string }
+    | { type: 'structure' }
+    | { type: 'event-card'; event: PetEventKey }
+    | null
+  >(null)
+  const flashTimers = useRef<{ touch?: ReturnType<typeof setTimeout> }>({})
+  /** 事件卡片展开状态（默认全部折叠；切换模型时重置）。 */
+  const [expandedEventKeys, setExpandedEventKeys] = useState<Set<PetEventKey>>(() => new Set())
+  const partsDirty = dirtyPartIds.size > 0 || structureDirty
+  const [motionGroups, setMotionGroups] = useState<string[]>([])
+  const [motionGroupsStatus, setMotionGroupsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  /** 写入串行化：避免并发 POST 在 Host 端出现读改写丢失。 */
+  const saveQueue = useRef<Promise<void>>(Promise.resolve())
+  /** 草稿编辑版本号：保存响应回来时据此判断是否还有更新改动未保存。 */
+  const editVersionRef = useRef(0)
+  const saveSeq = useRef(0)
+  const loadSeq = useRef(0)
+  const [reloadKey, setReloadKey] = useState(0)
+  /** 动作组解析重试。 */
+  const [motionReloadKey, setMotionReloadKey] = useState(0)
+  /** 部位台词 textarea 原始输入缓冲（按部位 id）：保留换行/空行，落盘前再清洗。 */
+  const [partLineDrafts, setPartLineDrafts] = useState<Record<string, string>>({})
+  /** 事件台词 textarea 原始输入缓冲（按 `${event}:${stage}`）：同上。 */
+  const [eventLineDrafts, setEventLineDrafts] = useState<Record<string, string>>({})
 
-  const builtinPersonaList = builtinPersonaOptions()
-  const customPersonaList = personaState?.customPersonas ?? []
-  const activePersona = personaState?.persona ?? value.persona
+  /** 服务端当前模型与设置页选中模型不一致（极少见）：临时只读，避免写错模型。 */
+  const modelMismatch = !!modelDraft && !!selectedModel && modelDraft !== selectedModel
+  const readOnly = !writable || partStatus !== 'ready' || modelMismatch
 
-  const reloadPersonas = () => {
-    setPersonaNotice('读取中…')
-    fetch(RELOAD_PERSONAS_API, { method: 'POST' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { error?: string | null } | null) => {
-        reloadPersonaState()
-        setPersonaNotice(data?.error ? `已重读：${data.error}` : '已重新读取人设文件')
-      })
-      .catch(() => setPersonaNotice('重新读取失败（Host 不可达）'))
+  const setExpandedPart = (id: string | null): void => {
+    expandedPartRef.current = id
+    setExpandedPartId(id)
   }
 
-  const openPersonasFile = () => {
-    const file = personaState?.personasFile
-    if (!file) return
-    const opened = props.openPath?.(file) ?? Promise.resolve(false)
-    opened.then((ok) => {
-      if (ok) {
-        setPersonaNotice('已用系统默认程序打开人设文件')
-      } else {
-        setShowPersonaPopover(true)
+  /** 广播当前编辑态草稿（宠物悬浮层实时重绘 box；只影响预览，不影响编辑权限）。 */
+  const emitTouchDraft = (active: boolean, parts: readonly TouchPart[], highlight: string | null): void => {
+    const model = modelDraftRef.current
+    if (!model) return
+    emitTouchEdit({ active, model, parts: cloneTouchParts(parts), highlightPartId: highlight })
+  }
+
+  /** 触摸部位分组级「已保存 HH:MM:SS」（结构变更保存时，约 3 秒）。 */
+  const showTouchSavedFlash = (time: string): void => {
+    setTouchSavedFlash(time)
+    const existing = flashTimers.current.touch
+    if (existing !== undefined) clearTimeout(existing)
+    flashTimers.current.touch = setTimeout(() => setTouchSavedFlash(null), 3000)
+  }
+
+  /** 事件卡片就地「已保存 HH:MM:SS」（约 3 秒）。 */
+  const flashSavedEvent = (event: PetEventKey, time: string): void => {
+    setSavedEventFlash({ event, time })
+    if (savedEventTimer.current !== null) clearTimeout(savedEventTimer.current)
+    savedEventTimer.current = setTimeout(() => setSavedEventFlash(null), 3000)
+  }
+
+  /** 部位卡片就地「已保存 HH:MM:SS」（约 3 秒，与脏提示同位置替换）。 */
+  const flashSavedPart = (partId: string, time: string): void => {
+    setSavedPartFlash({ partId, time })
+    // 部位级提示优先：清掉可能还在显示的分组级提示
+    setTouchSavedFlash(null)
+    if (savedPartTimer.current !== null) clearTimeout(savedPartTimer.current)
+    savedPartTimer.current = setTimeout(() => setSavedPartFlash(null), 3000)
+  }
+
+  /** 某部位字段变化：只把该部位标记为 dirty。 */
+  const markPartDirty = (id: string): void => {
+    if (dirtyPartIdsRef.current.has(id)) return
+    const next = new Set(dirtyPartIdsRef.current)
+    next.add(id)
+    dirtyPartIdsRef.current = next
+    setDirtyPartIds(next)
+  }
+
+  /** 结构变化（新建/删除/上移/下移）：没有卡片可挂提示，置结构 dirty。 */
+  const markStructureDirty = (): void => {
+    structureDirtyRef.current = true
+    setStructureDirty(true)
+  }
+
+  /** 事件卡片字段变化：只把该事件标记为 dirty。 */
+  const markEventDirty = (event: PetEventKey): void => {
+    if (dirtyEventKeysRef.current.has(event)) return
+    const next = new Set(dirtyEventKeysRef.current)
+    next.add(event)
+    dirtyEventKeysRef.current = next
+    setDirtyEventKeys(next)
+  }
+
+  /** 保存成功：清空全部部位/结构/事件 dirty。 */
+  const clearAllDirty = (): void => {
+    dirtyPartIdsRef.current = new Set()
+    structureDirtyRef.current = false
+    dirtyEventKeysRef.current = new Set()
+    setDirtyPartIds(new Set())
+    setStructureDirty(false)
+    setDirtyEventKeys(new Set())
+  }
+
+  /** 是否存在未保存的部位字段/结构改动。 */
+  const hasPendingParts = (): boolean => dirtyPartIdsRef.current.size > 0 || structureDirtyRef.current
+
+  /** 保存 payload 中的事件绑定：仅用户实际改过时携带（否则 undefined = 不写覆盖层）。 */
+  const eventsForSave = (): EventBindings | undefined => (
+    dirtyEventKeysRef.current.size > 0 ? cloneEventBindings(eventBindingsRef.current) : undefined
+  )
+
+  /**
+   * 串行写回草稿（{model, parts, events?}）；响应只更新保存状态，不 refetch 覆盖草稿。
+   * quiet=true 用于切模型/卸载的防丢补存：只发请求 + clientLog，不改页面状态栏。
+   */
+  const persistDraft = (
+    model: string,
+    parts: TouchPart[],
+    events: EventBindings | undefined,
+    editVersion: number,
+    quiet = false,
+  ): void => {
+    const summary = `model=${model} parts=${parts.length} events=${events !== undefined ? 'yes' : 'no'}`
+    saveQueue.current = saveQueue.current.then(async () => {
+      const seq = ++saveSeq.current
+      if (!quiet) {
+        setSaveState('saving')
+        setSaveError(null)
       }
+      const result = await saveTouchPartsToHost(model, parts, events)
+      // 过期响应（已有更新请求/已切模型）只记录日志，不把旧模型状态显示到新模型上
+      const isCurrent = seq === saveSeq.current && model === modelDraftRef.current
+      if (result === null) {
+        clientLog('error', `touch-parts save failed: ${summary} error=host unreachable`)
+        if (!quiet && isCurrent) {
+          saveSourceRef.current = null
+          setSaveState('error')
+          setSaveError('保存失败（Host 不可达）')
+        }
+        return
+      }
+      if (!result.ok || result.error) {
+        clientLog('error', `touch-parts save failed: ${summary} error=${result.error ?? 'unknown'}`)
+        if (!quiet && isCurrent) {
+          saveSourceRef.current = null
+          setSaveState('error')
+          setSaveError(`保存失败：${result.error ?? '未知错误'}`)
+        }
+        return
+      }
+      clientLog('info', `touch-parts saved: ${summary}`)
+      if (quiet || !isCurrent) return
+      // 保存成功后若之后又有新改动，保持 dirty（等用户再次点击保存）
+      if (editVersion === editVersionRef.current) clearAllDirty()
+      const savedTime = formatClock(new Date())
+      const source = saveSourceRef.current
+      saveSourceRef.current = null
+      if (source?.type === 'part') {
+        // 部位卡片触发的保存：就地显示在该卡片头部，不放分组级提示
+        flashSavedPart(source.id, savedTime)
+      } else if (source?.type === 'structure') {
+        // 结构变更保存：分组顶部短暂提示
+        showTouchSavedFlash(savedTime)
+      } else if (source?.type === 'event-card') {
+        // 事件卡片触发的保存：就地显示在该卡片头部
+        flashSavedEvent(source.event, savedTime)
+      }
+      setSaveState('idle')
+      setSaveError(null)
     })
+  }
+
+  /** 保存动作（部位卡片「保存」/结构行/事件保存行共用）：显式写回当前完整草稿。 */
+  const saveNow = (): void => {
+    if (readOnly || (!hasPendingParts() && dirtyEventKeysRef.current.size === 0)) {
+      saveSourceRef.current = null
+      return
+    }
+    const model = modelDraftRef.current
+    if (!model) return
+    persistDraft(model, cloneTouchParts(touchDraftRef.current), eventsForSave(), editVersionRef.current)
+  }
+
+  /** 部位卡片头部「保存」：成功后「已保存 HH:MM:SS」就地显示在该卡片。 */
+  const savePartNow = (partId: string): void => {
+    saveSourceRef.current = { type: 'part', id: partId }
+    saveNow()
+  }
+
+  /** 结构变更行「保存」：成功后允许分组级短暂「已保存」提示。 */
+  const saveStructureNow = (): void => {
+    saveSourceRef.current = { type: 'structure' }
+    saveNow()
+  }
+
+  /** 事件卡片头部「保存」：成功后「已保存 HH:MM:SS」就地显示在该卡片。 */
+  const saveEventCardNow = (event: PetEventKey): void => {
+    saveSourceRef.current = { type: 'event-card', event }
+    saveNow()
+  }
+
+  /** 触摸部位草稿变更：更新 state/ref；仅对应部位置 dirty（不自动保存、不自动开预览）。 */
+  const commitTouchDraft = (next: TouchPart[], highlight?: string | null, dirtyPartId?: string): void => {
+    touchDraftRef.current = next
+    setTouchDraft(next)
+    if (dirtyPartId) markPartDirty(dirtyPartId)
+    editVersionRef.current += 1
+    setSaveState('idle')
+    setSaveError(null)
+    const highlightId = highlight === undefined ? expandedPartRef.current : highlight
+    if (highlight !== undefined) setExpandedPart(highlight)
+    // 预览开关只控制宠物上的 box 叠加/强制可见，编辑本身不自动开启预览
+    emitTouchDraft(touchEditingRef.current, next, highlightId)
+  }
+
+  /** 事件绑定草稿变更：更新 ref/state，只把对应事件标脏（不自动保存）。 */
+  const commitEventBindings = (next: EventBindings, dirtyEvent?: PetEventKey): void => {
+    eventBindingsRef.current = next
+    setEventBindings(next)
+    if (dirtyEvent) markEventDirty(dirtyEvent)
+    editVersionRef.current += 1
+    setSaveState('idle')
+    setSaveError(null)
+  }
+
+  // 切换选中模型：若有未保存改动先补存（防丢），退出预览，再重新 GET 新模型部位 + 事件绑定
+  useEffect(() => {
+    if (state.status !== 'ready' || !selectedModel) return
+    const previousModel = modelDraftRef.current
+    const hadUnsaved = hasPendingParts() || dirtyEventKeysRef.current.size > 0
+    if (previousModel && previousModel !== selectedModel && hadUnsaved) {
+      // 防丢：自动补存旧模型草稿（静默，不覆盖新模型的状态栏；clientLog 在 persistDraft 内记录）
+      persistDraft(previousModel, cloneTouchParts(touchDraftRef.current), eventsForSave(), editVersionRef.current, true)
+    }
+    if (touchEditingRef.current) {
+      touchEditingRef.current = false
+      setTouchEditing(false)
+      emitTouchDraft(false, touchDraftRef.current, expandedPartRef.current)
+    }
+    const seq = ++loadSeq.current
+    setPartStatus('loading')
+    setLoadError(null)
+    setExpandedPart(null)
+    setSaveState('idle')
+    setSaveError(null)
+    clearAllDirty()
+    setTouchSavedFlash(null)
+    setSavedPartFlash(null)
+    setSavedEventFlash(null)
+    saveSourceRef.current = null
+    setExpandedEventKeys(new Set())
+    if (flashTimers.current.touch !== undefined) {
+      clearTimeout(flashTimers.current.touch)
+      flashTimers.current.touch = undefined
+    }
+    if (savedPartTimer.current !== null) {
+      clearTimeout(savedPartTimer.current)
+      savedPartTimer.current = null
+    }
+    if (savedEventTimer.current !== null) {
+      clearTimeout(savedEventTimer.current)
+      savedEventTimer.current = null
+    }
+    // 先清空旧模型草稿，避免读取失败时把上一个模型的配置显示成当前模型
+    touchDraftRef.current = []
+    setTouchDraft([])
+    eventBindingsRef.current = cloneEventBindings(DEFAULT_EVENT_BINDINGS)
+    setEventBindings(eventBindingsRef.current)
+    setPartLineDrafts({})
+    setEventLineDrafts({})
+    let alive = true
+    loadTouchParts().then((view) => {
+      if (!alive || seq !== loadSeq.current) return
+      if (view === null) {
+        setPartStatus('error')
+        setLoadError('读取当前模型的配置失败（Host 不可达）')
+        return
+      }
+      modelDraftRef.current = view.model
+      setModelDraft(view.model)
+      const parts = cloneTouchParts(Array.isArray(view.parts) ? view.parts : [])
+      touchDraftRef.current = parts
+      setTouchDraft(parts)
+      // 事件绑定：GET 已返回当前生效值；缺失时回退 /state 的 config.events
+      if (view.events) {
+        const draft = eventBindingsFromApi(view.events)
+        eventBindingsRef.current = draft
+        setEventBindings(draft)
+      } else {
+        void loadStateEvents().then((draft) => {
+          if (!alive || seq !== loadSeq.current) return
+          eventBindingsRef.current = draft
+          setEventBindings(draft)
+        })
+      }
+      setPartStatus('ready')
+      setLoadError(view.error ?? (view.model !== selectedModel
+        ? `服务端当前模型（${view.model || '无'}）与选中模型不同步，请稍后重新进入`
+        : null))
+    })
+    return () => { alive = false }
+  }, [selectedModel, state.status, reloadKey])
+
+  // 解析当前模型的 .model3.json 动作组名（事件绑定 / 触摸动画共用）
+  useEffect(() => {
+    if (state.status !== 'ready' || !selectedModel) return
+    let alive = true
+    setMotionGroupsStatus('loading')
+    void resolveSelectedModelUrl(selectedModel, builtin, customModels).then((url) => {
+      if (!alive) return
+      if (!url) {
+        setMotionGroups([])
+        setMotionGroupsStatus('error')
+        return
+      }
+      return fetchMotionGroups(url).then((groups) => {
+        if (!alive) return
+        setMotionGroups(groups)
+        setMotionGroupsStatus('ready')
+      }).catch(() => {
+        if (!alive) return
+        setMotionGroups([])
+        setMotionGroupsStatus('error')
+      })
+    })
+    return () => { alive = false }
+  }, [selectedModel, state.status, builtin, customModels, motionReloadKey])
+
+  // 卸载：若有未保存改动则自动补存（防丢），并通知宠物退出 box 预览
+  useEffect(() => () => {
+    const model = modelDraftRef.current
+    if (!model) return
+    if (hasPendingParts() || dirtyEventKeysRef.current.size > 0) {
+      // 防丢：关闭设置页时自动补存（静默；clientLog 在 persistDraft 内记录）
+      persistDraft(model, cloneTouchParts(touchDraftRef.current), eventsForSave(), editVersionRef.current, true)
+    }
+    if (flashTimers.current.touch !== undefined) clearTimeout(flashTimers.current.touch)
+    if (savedPartTimer.current !== null) clearTimeout(savedPartTimer.current)
+    if (savedEventTimer.current !== null) clearTimeout(savedEventTimer.current)
+    if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
+    emitTouchEdit({ active: false, model, parts: cloneTouchParts(touchDraftRef.current) })
+  }, [])
+
+  // ---- 事件绑定操作 ----
+  const setEventBinding = (event: PetEventKey, binding: EventBinding): void => {
+    commitEventBindings({ ...eventBindingsRef.current, [event]: binding }, event)
+  }
+
+  const toggleEventMotion = (event: PetEventKey, group: string, checked: boolean): void => {
+    const current = eventBindingsRef.current[event]
+    const motions = checked
+      ? (current.motions.includes(group) ? current.motions : [...current.motions, group])
+      : current.motions.filter((motion) => motion !== group)
+    setEventBinding(event, { ...current, motions })
+  }
+
+  const setEventLinePool = (event: PetEventKey, stage: number, raw: string): void => {
+    const current = eventBindingsRef.current[event]
+    const pool = parseEventLines(raw)
+    const lines = current.lines.map((existing, index) => (index === stage ? pool : existing))
+    setEventBinding(event, { ...current, lines })
+  }
+
+  /** 恢复某个事件为 DEFAULT_EVENT_BINDINGS 的动作组 + 台词池。 */
+  const resetEventBinding = (event: PetEventKey): void => {
+    if (readOnly) return
+    const draft = normalizeEventDraft(DEFAULT_EVENT_BINDINGS[event], event)
+    commitEventBindings({ ...eventBindingsRef.current, [event]: draft }, event)
+    setEventLineDrafts((prev) => {
+      const next = { ...prev }
+      for (const key of Object.keys(next)) {
+        if (key.startsWith(`${event}:`)) delete next[key]
+      }
+      return next
+    })
+  }
+
+  // ---- 触摸部位操作 ----
+  const toggleTouchEditing = (): void => {
+    const next = !touchEditingRef.current
+    touchEditingRef.current = next
+    setTouchEditing(next)
+    if (next && !expandedPartRef.current && touchDraftRef.current.length > 0) {
+      setExpandedPart(touchDraftRef.current[0].id)
+    }
+    emitTouchDraft(next, touchDraftRef.current, expandedPartRef.current)
+  }
+
+  const updateTouchPart = (id: string, mutate: (part: TouchPart) => TouchPart, highlight?: string | null): void => {
+    const next = touchDraftRef.current.map((part) => (part.id === id ? mutate(part) : part))
+    commitTouchDraft(next, highlight === undefined ? id : highlight, id)
+  }
+
+  const addTouchPart = (): void => {
+    const part: TouchPart = { id: nextTouchPartId(touchDraftRef.current), name: '新部位', boxes: [], motions: [] }
+    // 新部位插到数组最前面 = 最上层（parts 数组顺序即图层顺序，第 0 项最上层）
+    markStructureDirty()
+    commitTouchDraft([part, ...touchDraftRef.current], part.id)
+  }
+
+  const removeTouchPart = (id: string): void => {
+    const next = touchDraftRef.current.filter((part) => part.id !== id)
+    setPartLineDrafts((prev) => {
+      if (!(id in prev)) return prev
+      const cleared = { ...prev }
+      delete cleared[id]
+      return cleared
+    })
+    markStructureDirty()
+    commitTouchDraft(next, expandedPartRef.current === id ? null : expandedPartRef.current)
+  }
+
+  /** 调整图层顺序：direction=-1 上移（更靠顶层，数组索引更小），1 下移。 */
+  const moveTouchPart = (id: string, direction: -1 | 1): void => {
+    const parts = touchDraftRef.current
+    const index = parts.findIndex((part) => part.id === id)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= parts.length) return
+    const next = [...parts]
+    const [moved] = next.splice(index, 1)
+    next.splice(target, 0, moved)
+    markStructureDirty()
+    commitTouchDraft(next)
+  }
+
+  const renameTouchPart = (id: string, name: string): void => {
+    updateTouchPart(id, (part) => ({ ...part, name: name.slice(0, 24) }))
+  }
+
+  const setBoxField = (partId: string, boxIndex: number, key: keyof TouchBox, raw: string): void => {
+    updateTouchPart(partId, (part) => ({
+      ...part,
+      boxes: part.boxes.map((box, index) => (index === boxIndex
+        ? orderTouchBox({ ...box, [key]: fromPercentInput(raw) })
+        : box)),
+    }))
+  }
+
+  const addBox = (partId: string): void => {
+    updateTouchPart(partId, (part) => (part.boxes.length >= MAX_BOXES_PER_PART
+      ? part
+      : { ...part, boxes: [...part.boxes, { ...DEFAULT_TOUCH_BOX }] }))
+  }
+
+  const removeBox = (partId: string, boxIndex: number): void => {
+    updateTouchPart(partId, (part) => ({ ...part, boxes: part.boxes.filter((_box, index) => index !== boxIndex) }))
+  }
+
+  const togglePartMotion = (partId: string, group: string, checked: boolean): void => {
+    updateTouchPart(partId, (part) => ({
+      ...part,
+      motions: checked
+        ? (part.motions.includes(group) ? part.motions : [...part.motions, group])
+        : part.motions.filter((motion) => motion !== group),
+    }))
+  }
+
+  /** 部位台词变更：一行一条；全空时删除 lines 字段（回退全局默认台词）。 */
+  const setPartLines = (partId: string, raw: string): void => {
+    const lines = parsePartLines(raw)
+    updateTouchPart(partId, (part) => {
+      const next = { ...part }
+      if (lines.length > 0) next.lines = lines
+      else delete next.lines
+      return next
+    })
+  }
+
+  const reloadAll = (): void => { setReloadKey((key) => key + 1) }
+  const retryMotionGroups = (): void => { setMotionReloadKey((key) => key + 1) }
+
+  /** 事件绑定卡片（默认折叠：头部显示事件名 + 摘要；展开后才显示编辑控件与恢复默认）。 */
+  const renderEventCard = (event: PetEventKey): ReactElement => {
+    const binding = eventBindings[event]
+    const stages = eventStageLabels(event)
+    const expanded = expandedEventKeys.has(event)
+    const summary = `${binding.motions.length} 个动作组 · ${stages.length} 阶段台词`
+    const options: ThemeSelectOption[] = [
+      ...motionGroups,
+      ...binding.motions.filter((motion) => !motionGroups.includes(motion)),
+    ].map((id) => ({ id, name: id }))
+    const toggleExpanded = (): void => {
+      setExpandedEventKeys((prev) => {
+        const next = new Set(prev)
+        if (next.has(event)) next.delete(event)
+        else next.add(event)
+        return next
+      })
+    }
+    return createElement('div', { key: event, style: rowStyle },
+      createElement('button', {
+        type: 'button',
+        'aria-expanded': expanded,
+        onClick: toggleExpanded,
+        className: 'dsh-card-header',
+        style: cardHeaderStyle,
+      },
+        createElement('span', { style: { ...chevronStyle, transform: expanded ? 'rotate(90deg)' : 'none' } }, '▸'),
+        createElement('span', { style: cardTitleStyle }, EVENT_LABELS[event]),
+        createElement('span', { style: { ...cardSummaryStyle, flex: 1, minWidth: 0 } }, summary),
+      ),
+      dirtyEventKeys.has(event)
+        ? createElement('div', {
+          key: 'event-dirty',
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: GAP.sm,
+            marginTop: GAP.sm,
+            fontSize: 12,
+            color: C.warn,
+          },
+        },
+          createElement('span', null, '● 未保存改动'),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-btn dsh-btn-primary',
+            style: buttonPrimaryStyle,
+            disabled: saveState === 'saving' || readOnly,
+            onClick: () => saveEventCardNow(event),
+          }, '保存'),
+        )
+        : savedEventFlash?.event === event
+          ? createElement('div', {
+            key: 'event-saved',
+            style: { marginTop: GAP.sm, fontSize: 12, color: C.success },
+          }, `已保存 ${savedEventFlash.time}`)
+          : null,
+      expanded && createElement('div', { style: cardBodyStyle },
+        createElement('div', { style: { display: 'flex', justifyContent: 'flex-end' } },
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-btn dsh-btn-secondary',
+            style: buttonSecondaryStyle,
+            disabled: readOnly,
+            onClick: () => resetEventBinding(event),
+          }, '恢复默认'),
+        ),
+        createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary, flexShrink: 0, width: 48 } }, '动作组'),
+          createElement(ThemeMultiSelect, {
+            value: binding.motions,
+            options,
+            disabled: readOnly || motionGroupsStatus !== 'ready',
+            placeholder: '不选 = 不播动作',
+            onChange: (next) => {
+              const current = eventBindingsRef.current[event]
+              setEventBinding(event, { ...current, motions: [...next] })
+            },
+          }),
+        ),
+        ...stages.map((stageLabel, stage) => {
+          const draftKey = `${event}:${stage}`
+          const pool = binding.lines[stage] ?? []
+          return createElement('div', { key: `stage-${stage}`, style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
+            createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, `台词池 · ${stageLabel}`),
+            createElement('textarea', {
+              style: textareaStyle,
+              value: eventLineDrafts[draftKey] ?? pool.join('\n'),
+              placeholder: '一行一条；留空 = 该阶段不显示气泡',
+              disabled: readOnly,
+              onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
+                const raw = e.target.value
+                // 保留原始输入（否则空行/末尾换行被清洗掉，无法继续输入下一行）
+                setEventLineDrafts((prev) => ({ ...prev, [draftKey]: raw }))
+                setEventLinePool(event, stage, raw)
+              },
+              onBlur: () => setEventLineDrafts((prev) => {
+                if (!(draftKey in prev)) return prev
+                const next = { ...prev }
+                delete next[draftKey]
+                return next
+              }),
+            }),
+          )
+        }),
+      ),
+    )
+  }
+
+  /** 单个触摸部位卡片（统一 CardHeader：chevron + 层号 chip + 名称/排序/删除）。 */
+  const renderTouchPartCard = (part: TouchPart, index: number): ReactElement => {
+    const expanded = expandedPartId === part.id
+    // 图层顺序 = 草稿数组顺序：index 0 为最上层
+    const isTopLayer = index === 0
+    const isBottomLayer = index === touchDraft.length - 1
+    const layerLabel = `#${index + 1}${isTopLayer ? ' 顶层' : ''}${isBottomLayer && !isTopLayer ? ' 底层' : ''}`
+    // 已保存但当前解析失败/模型动作组变更时，也把部位里已有的动作组显示出来
+    const groups = [...motionGroups, ...part.motions.filter((motion) => !motionGroups.includes(motion))]
+    const toggleExpanded = (): void => {
+      const next = expanded ? null : part.id
+      setExpandedPart(next)
+      emitTouchDraft(touchEditingRef.current, touchDraftRef.current, next)
+    }
+    return createElement('div', { key: part.id, style: rowStyle },
+      createElement('div', {
+        className: 'dsh-card-header',
+        style: { ...cardHeaderStyle, cursor: 'default' },
+        onClick: (e: MouseEvent<HTMLDivElement>) => {
+          // 整行空位点击也可折叠；输入框/按钮自身的事件不触发折叠
+          if (e.target === e.currentTarget) toggleExpanded()
+        },
+      },
+        createElement('button', {
+          type: 'button',
+          title: expanded ? '收起' : '展开',
+          'aria-expanded': expanded,
+          className: 'dsh-chevron-button',
+          style: { ...chevronButtonStyle, transform: expanded ? 'rotate(90deg)' : 'none' },
+          onClick: toggleExpanded,
+        }, '▸'),
+        createElement('span', {
+          title: isTopLayer ? '最上层（box 重叠时优先）' : (isBottomLayer ? '最底层' : '图层'),
+          style: { ...chipStyle, color: isTopLayer ? C.brand : C.textSecondary },
+        }, layerLabel),
+        createElement('button', {
+          type: 'button',
+          title: '上移（更靠顶层）',
+          className: 'dsh-btn dsh-btn-secondary',
+          style: buttonSecondaryStyle,
+          disabled: readOnly || isTopLayer,
+          onClick: () => moveTouchPart(part.id, -1),
+        }, '↑ 上移'),
+        createElement('button', {
+          type: 'button',
+          title: '下移（更靠底层）',
+          className: 'dsh-btn dsh-btn-secondary',
+          style: buttonSecondaryStyle,
+          disabled: readOnly || isBottomLayer,
+          onClick: () => moveTouchPart(part.id, 1),
+        }, '↓ 下移'),
+        createElement('input', {
+          style: { ...inputStyle, flex: 1, minWidth: 80 },
+          value: part.name,
+          maxLength: 24,
+          placeholder: `部位 ${index + 1} 名称（如：头）`,
+          disabled: readOnly,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => renameTouchPart(part.id, e.target.value),
+          onFocus: () => { if (!expanded) { setExpandedPart(part.id); emitTouchDraft(touchEditingRef.current, touchDraftRef.current, part.id) } },
+        }),
+        createElement('button', {
+          type: 'button',
+          className: 'dsh-btn dsh-btn-danger',
+          style: buttonDangerStyle,
+          disabled: readOnly,
+          onClick: () => removeTouchPart(part.id),
+        }, '删除部位'),
+      ),
+      dirtyPartIds.has(part.id)
+        ? createElement('div', {
+          key: 'part-dirty',
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: GAP.sm,
+            marginTop: GAP.sm,
+            fontSize: 12,
+            color: C.warn,
+          },
+        },
+          createElement('span', null, '● 未保存改动'),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-btn dsh-btn-primary',
+            style: buttonPrimaryStyle,
+            disabled: saveState === 'saving' || readOnly,
+            onClick: () => savePartNow(part.id),
+          }, '保存'),
+        )
+        : savedPartFlash?.partId === part.id
+          ? createElement('div', {
+            key: 'part-saved',
+            style: { marginTop: GAP.sm, fontSize: 12, color: C.success },
+          }, `已保存 ${savedPartFlash.time}`)
+          : null,
+      expanded && createElement('div', { style: cardBodyStyle },
+        createElement('div', { style: hintStyle },
+          'box 用相对角色包围盒的百分比（0–100）表示；一个部位可有多个 box，命中任一即算该部位。'),
+        part.boxes.length === 0
+          ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '还没有 box，点「+ 添加 box」画出点击区域。')
+          : createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
+            ...part.boxes.map((box, boxIndex) => createElement('div', {
+              key: `box-${boxIndex}`,
+              style: { display: 'flex', alignItems: 'flex-end', gap: GAP.xs },
+            },
+              createElement('span', {
+                style: { fontSize: 12, color: C.textSecondary, width: 32, flexShrink: 0, paddingBottom: 6 },
+              }, `#${boxIndex + 1}`),
+              ...TOUCH_BOX_FIELDS.map(({ key, label }) => createElement('label', {
+                key,
+                style: { display: 'flex', flexDirection: 'column', gap: GAP.xs, fontSize: 12, color: C.textSecondary, flex: 1, minWidth: 0 },
+              },
+                label,
+                createElement('input', {
+                  type: 'number',
+                  min: 0,
+                  max: 100,
+                  step: 1,
+                  value: toPercent(box[key]),
+                  disabled: readOnly,
+                  style: { ...inputStyle, width: '100%', padding: '0 6px' },
+                  onChange: (e: ChangeEvent<HTMLInputElement>) => setBoxField(part.id, boxIndex, key, e.target.value),
+                }),
+              )),
+              createElement('button', {
+                type: 'button',
+                className: 'dsh-btn dsh-btn-danger',
+                style: buttonDangerStyle,
+                disabled: readOnly,
+                onClick: () => removeBox(part.id, boxIndex),
+              }, '删除'),
+            )),
+          ),
+        createElement('button', {
+          type: 'button',
+          className: 'dsh-btn dsh-btn-secondary',
+          style: { ...buttonSecondaryStyle, alignSelf: 'flex-start' },
+          disabled: readOnly || part.boxes.length >= MAX_BOXES_PER_PART,
+          onClick: () => addBox(part.id),
+        }, part.boxes.length >= MAX_BOXES_PER_PART ? `box 已达上限（${MAX_BOXES_PER_PART}）` : '+ 添加 box'),
+        createElement('div', { key: 'part-lines', style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
+          createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
+            '台词（一行一条；留空 = 使用全局默认台词池）'),
+          createElement('textarea', {
+            style: textareaStyle,
+            value: partLineDrafts[part.id] ?? (part.lines ?? []).join('\n'),
+            placeholder: '留空 = 使用全局默认台词池；一行一条',
+            disabled: readOnly,
+            onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
+              const raw = e.target.value
+              // 原始输入保留在缓冲里（否则空行/末尾换行被清洗掉，没法继续输入下一行）
+              setPartLineDrafts((prev) => ({ ...prev, [part.id]: raw }))
+              setPartLines(part.id, raw)
+            },
+            onBlur: () => setPartLineDrafts((prev) => {
+              if (!(part.id in prev)) return prev
+              const next = { ...prev }
+              delete next[part.id]
+              return next
+            }),
+          }),
+          createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
+            part.lines && part.lines.length > 0
+              ? `${part.lines.length} 条（随机选一条）`
+              : `最多 ${MAX_LINES_PER_PART} 条 × ${MAX_LINE_LENGTH} 字`),
+        ),
+        createElement('div', { key: 'part-motions', style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
+          createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
+            '触摸动画：触摸该部位时随机播一个；不选 = 只出气泡。'),
+          motionGroupsStatus === 'loading'
+            ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '正在解析动作列表…')
+            : motionGroupsStatus === 'error'
+              ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（触摸动画可留空，部位仍会保存）')
+              : groups.length === 0
+                ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '该模型没有定义动作组')
+                : createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px' } },
+                  ...groups.map((group) => createElement('label', {
+                    key: group,
+                    style: { display: 'flex', alignItems: 'center', gap: GAP.xs, fontSize: 12, cursor: readOnly ? 'not-allowed' : 'pointer' },
+                  },
+                    createElement('input', {
+                      type: 'checkbox',
+                      checked: part.motions.includes(group),
+                      disabled: readOnly,
+                      onChange: (e: ChangeEvent<HTMLInputElement>) => togglePartMotion(part.id, group, e.target.checked),
+                    }),
+                    group,
+                  )),
+                ),
+        ),
+      ),
+    )
   }
 
   // ---- 组装页面 ----
@@ -1142,25 +1954,14 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     `builtin-${p.id}`,
     value.model === p.id,
     () => enqueueWrite(() => [{ op: 'set', path: ['model'], value: p.id }]),
-    `${p.name}（${p.author}）`,
+    `${p.name}（${p.author}）· ${p.license?.type ?? '许可'}`,
     !writable,
-    undefined,
-    createElement('a', {
-      key: 'license',
-      href: p.license?.url,
-      target: '_blank',
-      rel: 'noreferrer',
-      style: linkStyle,
-      onClick: (e: MouseEvent<HTMLAnchorElement>) => e.stopPropagation(),
-    }, p.license?.type ?? '许可'),
   ))
 
   const customRows = custom.map((c) => {
-    const hasOverride = !!c.spatialTap && Object.keys(c.spatialTap).length > 0
-    const hasMotionMap = !!c.animationMap && Object.keys(c.animationMap).length > 0
     if (editId === c.id) {
-      return createElement('div', { key: c.id, style: { ...rowStyle, display: 'flex', flexDirection: 'column', gap: 6 } },
-        createElement('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+      return createElement('div', { key: c.id, style: { ...rowStyle, display: 'flex', flexDirection: 'column', gap: GAP.sm } },
+        createElement('div', { style: { display: 'flex', gap: GAP.sm, alignItems: 'center', flexWrap: 'wrap' } },
           createElement('input', {
             style: inputStyle,
             value: editName,
@@ -1173,33 +1974,8 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
             placeholder: 'https://…/model3.json 或 C:/models/...',
             onChange: (e: ChangeEvent<HTMLInputElement>) => setEditUrl(e.target.value),
           }),
-          createElement('button', { style: buttonStyle, onClick: () => saveEdit(c.id) }, '保存'),
-          createElement('button', { style: buttonStyle, onClick: () => { setEditId(null); setActiveEditPanel(null) } }, '取消'),
-        ),
-        createElement('div', { key: 'edit-panel-tabs', style: { display: 'flex', gap: 4, marginTop: 4 } },
-          createElement('button', {
-            type: 'button',
-            style: activeEditPanel === 'spatial' ? panelTabActiveStyle : panelTabStyle,
-            onClick: () => setActiveEditPanel((v) => v === 'spatial' ? null : 'spatial'),
-          }, '空间分区覆盖'),
-          createElement('button', {
-            type: 'button',
-            style: activeEditPanel === 'motion' ? panelTabActiveStyle : panelTabStyle,
-            onClick: () => setActiveEditPanel((v) => v === 'motion' ? null : 'motion'),
-          }, '动画映射'),
-        ),
-        activeEditPanel === 'spatial' && createElement('div', { key: 'edit-spatial' },
-          createElement('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } },
-            '相对包围盒 0–1；留空=该字段用全局默认。改完请开「显示点击分区」对照色块。'),
-          spatialTapFields(editSpatial, setEditSpatial, !writable),
-        ),
-        activeEditPanel === 'motion' && createElement('div', { key: 'edit-motion' },
-          createElement('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } },
-            '按状态/互动部位配置模型动作组；未配置项沿用默认。'),
-          motionMapFields(editMotionMap, setEditMotionMap, editMotionGroups, editMotionStatus, !writable, () => {
-            setActiveEditPanel(null)
-            requestAnimationFrame(() => setActiveEditPanel('motion'))
-          }),
+          createElement('button', { className: 'dsh-btn dsh-btn-primary', style: buttonPrimaryStyle, onClick: () => saveEdit(c.id) }, '保存'),
+          createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: buttonSecondaryStyle, onClick: () => setEditId(null) }, '取消'),
         ),
       )
     }
@@ -1207,31 +1983,67 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       `custom-${c.id}`,
       value.model === c.id,
       () => enqueueWrite(() => [{ op: 'set', path: ['model'], value: c.id }]),
-      [hasOverride ? '分区已覆盖' : null, hasMotionMap ? '动画已映射' : null].filter(Boolean).length > 0
-        ? `${c.name} · ${[hasOverride ? '分区已覆盖' : null, hasMotionMap ? '动画已映射' : null].filter(Boolean).join(' · ')}`
-        : c.name,
+      c.name,
       !writable,
       createElement('span', { key: 'actions' },
-        createElement('button', { style: buttonStyle, onClick: () => beginEdit(c) }, '修改'),
-        createElement('button', { style: buttonStyle, onClick: () => removeModel(c.id) }, '删除'),
+        createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: buttonSecondaryStyle, onClick: () => beginEdit(c) }, '修改'),
+        createElement('button', { className: 'dsh-btn dsh-btn-danger', style: buttonDangerStyle, onClick: () => removeModel(c.id) }, '删除'),
       ),
-      undefined,
     )
   })
 
+  const hasChanges = partsDirty || eventsDirty
+  const motionGroupsHint = motionGroupsStatus === 'loading'
+    ? '正在解析模型动画列表…'
+    : motionGroupsStatus === 'error'
+      ? '无法解析动画列表（动作组可留空，配置仍会保存）'
+      : motionGroupsStatus === 'ready'
+        ? `已解析到 ${motionGroups.length} 个动作组`
+        : null
+
+  /** 组内 sticky 保存行：左侧状态文本（warn/error/success 语义色）+ 右侧 primary 保存按钮。 */
+  const saveRow = (
+    key: string,
+    text: string,
+    tone: 'warn' | 'success' | 'error',
+    onSave: () => void,
+  ): ReactElement => createElement('div', {
+    key,
+    style: stickyRowStyle,
+  },
+    createElement('span', {
+      style: {
+        ...statusTextStyle,
+        color: tone === 'success' ? C.success : tone === 'error' ? C.error : C.warn,
+      },
+    }, text),
+    createElement('button', {
+      type: 'button',
+      className: 'dsh-btn dsh-btn-primary',
+      style: buttonPrimaryStyle,
+      disabled: saveState === 'saving' || readOnly || !hasChanges,
+      onClick: onSave,
+    }, '保存'),
+  )
+
   const children: ReactNode[] = [
-    createElement('h3', { key: 'title', style: { margin: '0 0 4px' } }, '桌宠配置'),
-    createElement('p', { key: 'sub', style: { margin: '0 0 12px', color: '#888', fontSize: 12 } },
-      '设置经 $DSH_HOME/settings.yaml 持久化，立即生效。'),
+    createElement('h3', { key: 'title', style: { margin: '0 0 4px', fontSize: 16, fontWeight: 600, color: C.textPrimary } }, '桌宠配置'),
+    createElement('p', { key: 'sub', style: { ...sectionDescStyle, margin: '0 0 16px' } },
+      '设置立即生效；动画与台词按「事件」绑定，触摸部位可单独覆盖触摸时的表现。修改后点击分组内「保存」写入。'),
   ]
 
   if (state.status !== 'ready') {
-    children.push(createElement('div', { key: 'notice', style: { ...rowStyle, color: '#b45309' } },
+    children.push(createElement('div', { key: 'notice', style: noticeMutedStyle },
       state.status === 'unavailable' ? '设置服务不可用（Host 插件未加载）。' : '设置加载中…',
     ))
   }
+  if (state.error) {
+    children.push(createElement('div', { key: 'settings-error', style: { ...noticeErrorStyle, wordBreak: 'break-all' } },
+      `设置文件：${state.error}`,
+    ))
+  }
 
-  // 1. 开关
+  // 1. 显示：开关
   children.push(createElement('div', { key: 'enabled', style: rowStyle },
     createElement('label', { style: labelStyle },
       createElement('input', {
@@ -1249,9 +2061,9 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     ),
   ))
 
-  // 2. 尺寸滑杆
+  // 2. 显示：尺寸滑杆
   children.push(createElement('div', { key: 'size', style: rowStyle },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.md } },
       createElement('span', { style: { whiteSpace: 'nowrap' } }, '尺寸'),
       createElement('input', {
         type: 'range',
@@ -1266,13 +2078,212 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
         onKeyUp: commitSize,
         onBlur: commitSize,
       }),
-      createElement('span', { style: { width: 56, textAlign: 'right', color: '#888', fontSize: 12 } }, `${size}px`),
+      createElement('span', { style: { width: 56, textAlign: 'right', color: C.textSecondary, fontSize: 12 } }, `${size}px`),
     ),
   ))
 
-  // 3. 渲染帧率（spec §2/§7）：尺寸下方 group，自绘圆形单选立刻生效
+  // 2.5 显示：画布留白（百分比；防动作甩尾被裁切）
+  const canvasPadX = normalizeCanvasPad(state.value?.canvasPadX, 130)
+  const canvasPadY = normalizeCanvasPad(state.value?.canvasPadY, 70)
+  const padInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88 }
+  children.push(createElement('div', { key: 'canvas-pad', style: rowStyle },
+    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' } },
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '水平留白（%）'),
+        createElement('input', {
+          type: 'number',
+          min: 0,
+          max: 300,
+          step: 5,
+          value: canvasPadX,
+          disabled: !writable,
+          style: padInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeCanvasPad(e.target.value, 0)
+            enqueueWrite(() => [{ op: 'set', path: ['canvasPadX'], value: next }])
+          },
+        }),
+      ),
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '垂直留白（%）'),
+        createElement('input', {
+          type: 'number',
+          min: 0,
+          max: 300,
+          step: 5,
+          value: canvasPadY,
+          disabled: !writable,
+          style: padInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeCanvasPad(e.target.value, 0)
+            enqueueWrite(() => [{ op: 'set', path: ['canvasPadY'], value: next }])
+          },
+        }),
+      ),
+    ),
+    createElement('div', { style: { ...sectionDescStyle, margin: '8px 0 0' } },
+      '角色四周的画布留白，防止动作甩尾被裁切。'),
+  ))
+
+  // 2.6 显示：默认停靠位置 + 归位
+  const homeRight = normalizeHomePosition(state.value?.homeRight, 24)
+  const homeBottom = normalizeHomePosition(state.value?.homeBottom, 20)
+  children.push(createElement('div', { key: 'home-position', style: rowStyle },
+    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' } },
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '距右边（px）'),
+        createElement('input', {
+          type: 'number',
+          min: 0,
+          max: 4000,
+          step: 10,
+          value: homeRight,
+          disabled: !writable,
+          style: padInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeHomePosition(e.target.value, 0)
+            enqueueWrite(() => [{ op: 'set', path: ['homeRight'], value: next }])
+          },
+        }),
+      ),
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '距底部（px）'),
+        createElement('input', {
+          type: 'number',
+          min: 0,
+          max: 4000,
+          step: 10,
+          value: homeBottom,
+          disabled: !writable,
+          style: padInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeHomePosition(e.target.value, 0)
+            enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
+          },
+        }),
+      ),
+      createElement('button', {
+        type: 'button',
+        className: 'dsh-btn dsh-btn-secondary',
+        style: buttonSecondaryStyle,
+        disabled: !writable,
+        onClick: resetDisplayPosition,
+      }, '归位'),
+      resetNotice
+        ? createElement('span', {
+          key: 'reset-notice',
+          style: {
+            ...statusTextStyle,
+            color: resetNotice.kind === 'ok' ? C.success : C.error,
+          },
+        }, resetNotice.text)
+        : null,
+    ),
+    createElement('div', { style: { ...sectionDescStyle, margin: '8px 0 0' } },
+      '首次启动 / 点归位时宠物停靠的位置。'),
+  ))
+
+  // 2.7 显示：对白气泡（位置 + 背景/文字样式）
+  const bubbleOffsetX = normalizeBubbleOffset(state.value?.bubbleOffsetX, 0)
+  const bubbleOffsetY = normalizeBubbleOffset(state.value?.bubbleOffsetY, -10)
+  const bubbleBgColor = normalizeHexColor(state.value?.bubbleBgColor, '#ffffff')
+  const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
+  const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
+  const colorInputStyle: CSSProperties = {
+    ...inputStyle,
+    flex: '0 0 48px',
+    width: 48,
+    padding: 2,
+    cursor: writable ? 'pointer' : 'not-allowed',
+  }
+  children.push(createElement('div', { key: 'bubble-style', style: rowStyle },
+    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' } },
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '水平偏移（px）'),
+        createElement('input', {
+          type: 'number',
+          min: -1000,
+          max: 1000,
+          step: 5,
+          value: bubbleOffsetX,
+          disabled: !writable,
+          style: padInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeBubbleOffset(e.target.value, 0)
+            enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetX'], value: next }])
+          },
+        }),
+      ),
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '垂直偏移（px）'),
+        createElement('input', {
+          type: 'number',
+          min: -1000,
+          max: 1000,
+          step: 5,
+          value: bubbleOffsetY,
+          disabled: !writable,
+          style: padInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeBubbleOffset(e.target.value, 0)
+            enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetY'], value: next }])
+          },
+        }),
+      ),
+    ),
+    createElement('div', { style: { ...sectionDescStyle, margin: '6px 0 0' } },
+      '相对角色顶部中心，负值向上。'),
+    createElement('div', {
+      style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap', marginTop: GAP.sm },
+    },
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '背景色'),
+        createElement('input', {
+          type: 'color',
+          value: bubbleBgColor,
+          disabled: !writable,
+          style: colorInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeHexColor(e.target.value, '#ffffff')
+            enqueueWrite(() => [{ op: 'set', path: ['bubbleBgColor'], value: next }])
+          },
+        }),
+      ),
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '背景不透明度（%）'),
+        createElement('input', {
+          type: 'number',
+          min: 0,
+          max: 100,
+          step: 1,
+          value: bubbleBgOpacity,
+          disabled: !writable,
+          style: padInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeBubbleOpacity(e.target.value, 0)
+            enqueueWrite(() => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
+          },
+        }),
+      ),
+      createElement('label', { style: { ...labelStyle, flex: 0 } },
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '文字颜色'),
+        createElement('input', {
+          type: 'color',
+          value: bubbleTextColor,
+          disabled: !writable,
+          style: colorInputStyle,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = normalizeHexColor(e.target.value, '#222222')
+            enqueueWrite(() => [{ op: 'set', path: ['bubbleTextColor'], value: next }])
+          },
+        }),
+      ),
+    ),
+  ))
+
+  // 3. 显示：渲染帧率
   const maxFps = normalizeMaxFps(value.maxFps)
-  children.push(createElement('div', { key: 'maxFps' },
+  children.push(createElement('div', { key: 'maxFps', style: sectionStyle },
     createElement('div', { style: sectionTitleStyle }, '渲染帧率'),
     createElement('div', { style: rowStyle },
       createElement(ThemeRadioGroup, {
@@ -1287,145 +2298,116 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     ),
   ))
 
-  // 4. 人设（spec §2/§3）：独立分组标题 + 下拉/工具行
-  const personaOptions = [
-    ...builtinPersonaList,
-    ...customPersonaList.map((p) => ({ id: p.id, name: p.name ?? p.id })),
-  ]
-  children.push(createElement('div', { key: 'persona' },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '16px 0 8px' } },
-      createElement('div', { style: { fontSize: 13, fontWeight: 600, color: '#888' } }, '人设台词'),
-      headerLink('自定义人设 ↗', openPersonasFile),
-    ),
-    createElement('div', { style: rowStyle },
-      createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: personaNotice || personaState?.personasError ? 6 : 0 } },
-        createElement(ThemeSelect, {
-          value: activePersona,
-          options: personaOptions,
-          disabled: !writable,
-          onChange: (id: string) => {
-            enqueueWrite(() => [{ op: 'set', path: ['persona'], value: id }])
-          },
-        }),
-        createElement('button', { style: buttonStyle, onClick: reloadPersonas }, '↻ 重新读取'),
-      ),
-      (personaState?.personasError || personaNotice) && createElement('div', {
-        key: 'persona-notice',
-        style: { color: personaState?.personasError ? '#b45309' : '#888', fontSize: 12 },
-      },
-        (personaState?.personasError ? `人设文件：${personaState.personasError}` : null) ?? personaNotice,
-      ),
-      showPersonaPopover && createElement('div', {
-        key: 'persona-popover',
-        style: { marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'rgba(128,128,128,.12)', fontSize: 12, wordBreak: 'break-all' },
-      },
-        createElement('div', null, '无法直接打开，请手动编辑人设文件：'),
-        createElement('div', { style: { margin: '4px 0', color: '#666' } }, personaState?.personasFile ?? ''),
-        createElement('div', { style: { display: 'flex', gap: 6 } },
-          createElement('button', {
-            style: buttonStyle,
-            onClick: () => { void copyText(personaState?.personasFile ?? '').then((ok) => setPersonaNotice(ok ? '已复制文件路径' : '复制失败')) },
-          }, '复制路径'),
-          createElement('button', {
-            style: buttonStyle,
-            onClick: () => { void copyText(PERSONAS_TEMPLATE).then((ok) => setPersonaNotice(ok ? '已复制人设模板（女仆示例）' : '复制失败')) },
-          }, '复制模板'),
-          createElement('button', { style: buttonStyle, onClick: () => setShowPersonaPopover(false) }, '收起'),
-        ),
-      ),
-    ),
-  ))
-
-  // 5. 模型列表（自绘 radio，与帧率档共用 ThemeRadioDot）
-  children.push(createElement('div', { key: 'models' },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '16px 0 8px' } },
-      createElement('div', { style: { fontSize: 13, fontWeight: 600, color: '#888' } }, '内置模型（只读）'),
-      !!value.developerMode && headerLink('打开配置文件 ↗', openBuiltinPresetsFile),
-    ),
-    (builtinFileNotice || showBuiltinFilePopover) && createElement('div', {
-      key: 'builtin-file-notice',
-      style: { marginBottom: 6, color: '#b45309', fontSize: 12 },
-    },
-      builtinFileNotice,
-      showBuiltinFilePopover && createElement('div', { style: { marginTop: 4, wordBreak: 'break-all' } },
-        '无法直接打开，文件路径：',
-        createElement('div', { style: { color: '#666' } }, presetsPath),
-        createElement('button', { style: { ...buttonStyle, marginLeft: 0, marginTop: 4 }, onClick: () => setShowBuiltinFilePopover(false) }, '收起'),
-      ),
-    ),
+  // 4. 模型：内置只读 + 我的模型（名称 + URL）
+  children.push(createElement('div', { key: 'models', style: sectionStyle },
+    createElement('div', { style: sectionTitleStyle }, '模型'),
     createElement('div', { role: 'radiogroup', 'aria-label': '内置模型' },
-      builtinRows.length > 0 ? builtinRows : createElement('div', { style: { color: '#888', fontSize: 12 } }, '清单加载中…'),
+      builtinRows.length > 0 ? builtinRows : createElement('div', { style: { ...noticeMutedStyle, marginBottom: 0 } }, '清单加载中…'),
     ),
-    createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '16px 0 8px' } },
-      createElement('div', { style: { fontSize: 13, fontWeight: 600, color: '#888' } }, '我的模型'),
-      headerLink('打开配置文件 ↗', openCustomModelsFile),
-    ),
-    (customFileNotice || showCustomFilePopover) && createElement('div', {
-      key: 'custom-file-notice',
-      style: { marginBottom: 6, color: '#b45309', fontSize: 12 },
-    },
-      customFileNotice,
-      showCustomFilePopover && createElement('div', { style: { marginTop: 4, wordBreak: 'break-all' } },
-        '无法直接打开，文件路径：',
-        createElement('div', { style: { color: '#666' } }, customModelsPath),
-        createElement('button', { style: { ...buttonStyle, marginLeft: 0, marginTop: 4 }, onClick: () => setShowCustomFilePopover(false) }, '收起'),
-      ),
-    ),
+    createElement('div', { style: subTitleStyle }, '我的模型'),
+    customModelsError
+      ? createElement('div', { key: 'custom-models-error', style: noticeErrorStyle },
+        `自定义模型文件：${customModelsError}`)
+      : null,
     createElement('div', { role: 'radiogroup', 'aria-label': '我的模型' },
-      customRows.length > 0 ? customRows : createElement('div', { style: { color: '#888', fontSize: 12, marginBottom: 8 } }, '尚未添加自定义模型'),
+      customRows.length > 0 ? customRows : createElement('div', { style: { ...noticeMutedStyle, marginBottom: 8 } }, '尚未添加自定义模型'),
     ),
-    createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      createElement('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
-        createElement('input', {
-          style: inputStyle,
-          value: newName,
-          placeholder: '名称',
-          disabled: !writable,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => setNewName(e.target.value),
-        }),
-        createElement('input', {
-          style: { ...inputStyle, flex: 1, minWidth: 140 },
-          value: newUrl,
-          placeholder: 'https://…/xxx.model3.json 或 C:/models/...',
-          disabled: !writable,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value),
-        }),
-        createElement('button', { style: buttonStyle, onClick: addModel, disabled: !writable }, '添加'),
-      ),
-      createElement('div', { key: 'new-panel-tabs', style: { display: 'flex', gap: 4 } },
-        createElement('button', {
-          type: 'button',
-          style: activeNewPanel === 'spatial' ? panelTabActiveStyle : panelTabStyle,
-          disabled: !writable,
-          onClick: () => setActiveNewPanel((v) => v === 'spatial' ? null : 'spatial'),
-        }, '空间分区覆盖'),
-        createElement('button', {
-          type: 'button',
-          style: activeNewPanel === 'motion' ? panelTabActiveStyle : panelTabStyle,
-          disabled: !writable,
-          onClick: () => setActiveNewPanel((v) => v === 'motion' ? null : 'motion'),
-        }, '动画映射'),
-      ),
-      activeNewPanel === 'spatial' && createElement('div', { key: 'new-spatial' },
-        createElement('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } },
-          '相对包围盒 0–1；留空=该字段用全局默认。适合大帽子/全身比例与默认差较多的模型。'),
-        spatialTapFields(newSpatial, setNewSpatial, !writable),
-      ),
-      activeNewPanel === 'motion' && createElement('div', { key: 'new-motion' },
-        createElement('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } },
-          '按状态/互动部位配置模型动作组；未配置项沿用默认。'),
-        motionMapFields(newMotionMap, setNewMotionMap, newMotionGroups, newMotionStatus, !writable, () => {
-          setActiveNewPanel(null)
-          requestAnimationFrame(() => setActiveNewPanel('motion'))
-        }),
-      ),
+    createElement('div', { style: { ...sectionDescStyle, marginTop: 8 } },
+      '仅名称与 URL；动画映射与台词在下方「事件绑定」按事件统一配置。'),
+    createElement('div', { style: { display: 'flex', gap: GAP.sm, alignItems: 'center', flexWrap: 'wrap' } },
+      createElement('input', {
+        style: inputStyle,
+        value: newName,
+        placeholder: '名称',
+        disabled: !writable,
+        onChange: (e: ChangeEvent<HTMLInputElement>) => setNewName(e.target.value),
+      }),
+      createElement('input', {
+        style: { ...inputStyle, flex: 1, minWidth: 140 },
+        value: newUrl,
+        placeholder: 'https://…/xxx.model3.json 或 C:/models/...',
+        disabled: !writable,
+        onChange: (e: ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value),
+      }),
+      createElement('button', { className: 'dsh-btn dsh-btn-primary', style: buttonPrimaryStyle, onClick: addModel, disabled: !writable }, '添加'),
     ),
   ))
 
-  // 6. 开发者选项：组标题 + 右侧 switch；开启后显示调试面板 / 点击分区
-  children.push(createElement('div', { key: 'devtools' },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '16px 0 8px' } },
-      createElement('div', { style: { fontSize: 13, fontWeight: 600, color: '#888' } }, '开发者选项'),
+  // 5. 事件绑定（当前模型）：6 事件的动作组 + 分阶段台词池
+  children.push(createElement('div', { key: 'event-bindings', style: sectionStyle },
+    createElement('div', { style: sectionHeadStyle },
+      createElement('div', { style: sectionTitleStyle }, '事件绑定（当前模型）'),
+      motionGroupsHint
+        ? createElement('span', { style: statusTextStyle, color: C.textSecondary }, motionGroupsHint)
+        : null,
+    ),
+    createElement('div', { style: sectionDescStyle },
+      '每个事件可配置动作组与台词池：动作组来自当前模型 Motions（不选 = 不播动作）；',
+      createElement('br'),
+      '台词一行一条，留空 = 该阶段不显示气泡；修改后点击对应事件卡里的「保存」写入。',
+      motionGroupsStatus === 'error'
+        ? createElement('div', { style: { ...noticeErrorStyle, marginTop: 8, marginBottom: 0 } },
+          '无法解析当前模型的动作组，动作多选暂不可用（可稍后重试）。',
+          createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: { ...buttonSecondaryStyle, marginLeft: 8 }, onClick: retryMotionGroups }, '重试'),
+        )
+        : null,
+    ),
+    ...EVENT_ORDER.map((event) => renderEventCard(event)),
+  ))
+
+  // 6. 触摸部位（当前模型）：所有输入始终可编辑；预览开关只控制宠物上的 box 叠加
+  children.push(createElement('div', { key: 'touch-parts', style: sectionStyle },
+    createElement('div', { style: sectionHeadStyle },
+      createElement('div', { style: sectionTitleStyle }, '触摸部位（当前模型）'),
+      createElement('button', {
+        type: 'button',
+        className: 'dsh-btn dsh-btn-secondary',
+        style: buttonSecondaryStyle,
+        disabled: readOnly,
+        onClick: toggleTouchEditing,
+      }, touchEditing ? '退出预览' : '预览 box（在角色上显示）'),
+    ),
+    structureDirty
+      ? saveRow('touch-structure-save-row', '部位顺序/新增/删除未保存', 'warn', saveStructureNow)
+      : null,
+    touchSavedFlash && !structureDirty
+      ? createElement('div', { key: 'touch-saved-flash', style: stickyRowStyle },
+        createElement('span', { style: { ...statusTextStyle, color: C.success } }, `已保存 ${touchSavedFlash}`))
+      : null,
+    createElement('div', { style: sectionDescStyle },
+      '预览只控制角色上的 box 叠加/强制可见，不影响编辑与保存。'),
+    partStatus === 'loading'
+      ? createElement('div', { key: 'touch-loading', style: noticeMutedStyle }, '正在读取当前模型的配置…')
+      : partStatus === 'error'
+        ? createElement('div', { key: 'touch-error', style: noticeErrorStyle },
+          loadError ?? '读取失败',
+          createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: { ...buttonSecondaryStyle, marginLeft: 8 }, onClick: reloadAll }, '重新读取'),
+        )
+        : null,
+    partStatus === 'ready' && loadError
+      ? createElement('div', { key: 'touch-warn', style: noticeErrorStyle },
+        loadError,
+        createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: { ...buttonSecondaryStyle, marginLeft: 8 }, onClick: reloadAll }, '重新读取'),
+      )
+      : null,
+    partStatus === 'ready' && touchDraft.length === 0
+      ? createElement('div', { key: 'touch-empty', style: noticeMutedStyle },
+        '这个模型还没有触摸部位：新建部位后画 box、勾选动作，角色被摸到相应区域时就会有反应。')
+      : null,
+    ...touchDraft.map((part, index) => renderTouchPartCard(part, index)),
+    createElement('button', {
+      key: 'add-part',
+      className: 'dsh-btn dsh-btn-primary',
+      style: { ...buttonPrimaryStyle, marginTop: 2, alignSelf: 'flex-start' },
+      disabled: readOnly,
+      onClick: addTouchPart,
+    }, '+ 新建部位'),
+  ))
+
+  // 7. 开发者选项
+  children.push(createElement('div', { key: 'devtools', style: sectionStyle },
+    createElement('div', { style: sectionHeadStyle },
+      createElement('div', { style: sectionTitleStyle }, '开发者选项'),
       createElement(ThemeSwitch, {
         checked: !!value.developerMode,
         disabled: !writable,
@@ -1447,7 +2429,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
         }),
         createElement('span', null, '调试面板'),
       ),
-      createElement('label', { style: { ...labelStyle, marginTop: 8 } },
+      createElement('label', { style: { ...labelStyle, marginTop: 12 } },
         createElement('input', {
           type: 'checkbox',
           checked: !!value.showTapZones,
@@ -1457,10 +2439,33 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
             enqueueWrite(() => [{ op: 'set', path: ['showTapZones'], value: next }])
           },
         }),
-        createElement('span', null, '显示点击分区（空间回退色块）'),
+        createElement('span', null, '显示触摸部位色块'),
       ),
     ),
   ))
 
-  return createElement('div', { style: { padding: '16px 20px', maxWidth: 560 } }, children)
+  return createElement('div', {
+    className: 'dsh-live2d-settings',
+    style: { padding: '16px 20px', maxWidth: 560, color: C.textPrimary, fontSize: 13 },
+  },
+    // 统一 focus / hover 态（内联样式无法表达伪类，注入一次局部 CSS）
+    createElement('style', { key: 'dsh-live2d-settings-css' },
+      '.dsh-live2d-settings input:focus, .dsh-live2d-settings textarea:focus { border-color: var(--dsw-alias-brand-primary) !important; outline: none; }' +
+      '.dsh-live2d-settings input[type="checkbox"], .dsh-live2d-settings input[type="range"] { accent-color: var(--dsw-alias-brand-primary); }' +
+      '.dsh-live2d-settings button:focus-visible { outline: 1px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }' +
+      '.dsh-live2d-settings .dsh-card-header { border-radius: 6px; transition: background .15s; }' +
+      '.dsh-live2d-settings .dsh-card-header:hover { background: var(--dsw-alias-bg-layer-2); }' +
+      '.dsh-live2d-settings .dsh-chevron-button:hover { background: var(--dsw-alias-bg-layer-2); border-radius: 6px; }' +
+      '.dsh-live2d-settings .dsh-btn { transition: background .12s, border-color .12s; }' +
+      '.dsh-live2d-settings .dsh-btn:disabled { opacity: .55; cursor: not-allowed; }' +
+      '.dsh-live2d-settings .dsh-btn-secondary:enabled:hover { background: var(--dsw-alias-bg-overlay); border-color: var(--dsw-alias-border-l2); }' +
+      '.dsh-live2d-settings .dsh-btn-secondary:enabled:active { background: var(--dsw-alias-bg-base); }' +
+      '.dsh-live2d-settings .dsh-btn-primary:enabled:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, var(--dsw-alias-label-primary)); }' +
+      '.dsh-live2d-settings .dsh-btn-primary:enabled:active { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 78%, var(--dsw-alias-label-primary)); }' +
+      '.dsh-live2d-settings .dsh-btn-danger:enabled:hover { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent); }' +
+      '.dsh-live2d-settings .dsh-btn-danger:enabled:active { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 26%, transparent); }' +
+      '.dsh-live2d-settings ::placeholder { color: var(--dsw-alias-label-secondary); opacity: .85; }',
+    ),
+    ...children,
+  )
 }

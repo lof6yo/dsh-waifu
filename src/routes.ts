@@ -1,43 +1,37 @@
 /**
  * 宠物 HTTP 路由：浏览器半区通过同源 JSON 端点（/api/live2d-pet/*）、
  * SSE 状态推送端点（/api/live2d-pet/events，ADR-006）与素材静态路由
- * （/pet-assets/*）通信——官方模式（dsh-pet routes.ts 同款，见 docs/adr/004）。
+ * （/pet-assets/*，含内置模型 assets/models/），以及本地模型虚拟路由通信。
  * @module dsh-live2d-pets/routes
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { PetService } from './service.ts'
 import { listBuiltinPresets } from './models-host.ts'
-import type { CustomModelEntry } from './models.ts'
+import type { CustomModelEntry, EventBindings, TouchPart } from './models.ts'
 import { isLocalModelPath } from './models.ts'
 import { resolveLocalModelFile } from './local-models.ts'
+import { appendClientLog, clientLogPath } from './client-log.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 
-/** 设置读写 API（Host 直连 ctx.settings；不走 wire 白名单，见 research/settings-tab.md）。 */
+/** 设置读写 API（Host 直连插件设置文件；见 settings-store.ts / ADR-013）。 */
 export interface SettingsRoutesApi {
-  view(): { value: unknown; writable: boolean }
-  write(ops: readonly SettingsPathOp[]): Promise<void>
+  view(): { value: unknown; writable?: boolean; error?: string | null; path?: string }
+  write(ops: readonly SettingsPathOp[]): Promise<unknown> | unknown
 }
 
 /** 浏览器侧宠物 API 基路径。 */
 export const PET_API_PREFIX = '/api/live2d-pet'
 
-/** 浏览器侧素材静态路由基路径（vendor 运行时脚本 + 预设模型）。 */
+/** 浏览器侧素材静态路由基路径（vendor 运行时脚本 + 内置模型 assets）。 */
 export const PET_ASSET_PREFIX = '/pet-assets'
 
 /** 本地模型静态路由基路径（Host 按自定义模型 id 映射到用户本地路径）。 */
 export const PET_LOCAL_MODELS_PREFIX = '/pet-local-models'
-
-/** 随包暴露的素材清单（路径相对于 package 根）。 */
-const ASSET_FILES = [
-  { name: 'vendor/pixi.min.js', mime: 'text/javascript' },
-  { name: 'vendor/live2dcubismcore.min.js', mime: 'text/javascript' },
-  { name: 'vendor/live2d-display.cubism4.min.js', mime: 'text/javascript' },
-] as const
 
 /** 包根目录（从本模块自身位置解析）。 */
 export function petPackageRoot(importMetaUrl: string): string {
@@ -121,22 +115,22 @@ function postRoute(path: string, run: (body: Record<string, unknown>) => Promise
  */
 function getPostRoute(
   path: string,
-  get: () => Promise<unknown>,
-  post: (body: Record<string, unknown>) => Promise<unknown>,
+  get: () => Promise<unknown> | unknown,
+  post: (body: Record<string, unknown>) => Promise<unknown> | unknown,
 ): WebRoute {
   return {
     kind: 'exact',
     path,
     handler: (req: IncomingMessage, res: ServerResponse): void | Promise<void> => {
       if (req.method === 'GET') {
-        return get().then((value) => json(res, 200, value), (error) => {
+        return Promise.resolve().then(get).then((value) => json(res, 200, value), (error) => {
           json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         })
       }
       if (req.method === 'POST') {
         return readJsonBody(req).then((body) => {
           const record = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {}
-          return post(record).then(
+          return Promise.resolve().then(() => post(record)).then(
             (value) => json(res, 200, value),
             (error) => json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }),
           )
@@ -199,18 +193,41 @@ function sseStateRoute(
   }
 }
 
-/** 简单 MIME 推断（本地模型资源路由用）。 */
+/** 简单 MIME 推断（素材/本地模型路由用）。 */
 function mimeForFile(file: string): string {
   const lower = file.toLowerCase()
   if (lower.endsWith('.json')) return 'application/json'
+  if (lower.endsWith('.moc3') || lower.endsWith('.bin')) return 'application/octet-stream'
   if (lower.endsWith('.png')) return 'image/png'
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
   if (lower.endsWith('.webp')) return 'image/webp'
-  if (lower.endsWith('.bin') || lower.endsWith('.moc3')) return 'application/octet-stream'
+  if (lower.endsWith('.svg')) return 'image/svg+xml'
+  if (lower.endsWith('.js')) return 'text/javascript'
+  if (lower.endsWith('.css')) return 'text/css'
+  if (lower.endsWith('.map')) return 'application/json'
   return 'application/octet-stream'
 }
 
-/** 构建完整路由族（API + SSE + 素材）供 ctx.webServer.register。 */
+/** 通用静态文件响应（含 HEAD；文件不存在 404）。 */
+function serveFile(req: IncomingMessage, res: ServerResponse, file: string): Promise<void> {
+  return readFile(file).then((body) => {
+    res.writeHead(200, {
+      'content-type': mimeForFile(file),
+      'content-length': String(body.byteLength),
+      'cache-control': 'no-cache',
+    })
+    if (req.method === 'HEAD') {
+      res.end()
+      return
+    }
+    res.end(body)
+  }, () => {
+    res.writeHead(404)
+    res.end()
+  })
+}
+
+/** 构建完整路由族（API + SSE + 素材 + 本地模型）供 ctx.webServer.register。 */
 export function makePetRoutes(deps: {
   service: PetService
   packageRoot: string
@@ -227,6 +244,7 @@ export function makePetRoutes(deps: {
       custom: service.listCustomModels(),
       presetsPath: join(packageRoot, 'src', 'presets', 'presets.jsonc'),
       customModelsPath: service.customModelsFile().path,
+      touchPartsPath: service.touchPartsFile().path,
     })),
     getPostRoute(
       `${PET_API_PREFIX}/custom-models`,
@@ -236,12 +254,48 @@ export function makePetRoutes(deps: {
         return Promise.resolve(service.saveCustomModels(models))
       },
     ),
+    // 触摸部位（spec §4）：GET 读当前模型 + 文件视图；POST 保存某模型的部位列表
+    getPostRoute(
+      `${PET_API_PREFIX}/touch-parts`,
+      () => {
+        const view = service.touchPartsFile()
+        const model = service.snapshot().config.model
+        return {
+          model,
+          parts: service.touchPartsFor(model),
+          saved: view.models[model] !== undefined,
+          // 当前模型生效的事件绑定（动画组 + 台词池，含用户覆盖）；设置页「事件绑定」据此初始化
+          events: service.effectiveEvents(model),
+          error: view.error,
+          path: view.path,
+        }
+      },
+      (body) => {
+        const model = typeof body.model === 'string' ? body.model.trim() : ''
+        if (!model) throw new Error('model 不能为空')
+        const parts = Array.isArray(body.parts) ? body.parts as TouchPart[] : []
+        const events = body.events === undefined
+          ? undefined
+          : (typeof body.events === 'object' && body.events !== null
+            ? body.events as Partial<EventBindings>
+            : {})
+        const view = service.saveTouchParts(model, parts, events)
+        return {
+          ok: true,
+          model,
+          touchParts: service.touchPartsFor(model),
+          events: service.effectiveEvents(model),
+          error: view.error,
+          path: view.path,
+        }
+      },
+    ),
     getPostRoute(
       `${PET_API_PREFIX}/settings`,
-      async () => settings.view(),
+      () => settings.view(),
       (body) => {
         const ops = Array.isArray(body.ops) ? body.ops as SettingsPathOp[] : []
-        return settings.write(ops).then(() => settings.view())
+        return Promise.resolve(settings.write(ops)).then(() => settings.view())
       },
     ),
     postRoute(`${PET_API_PREFIX}/set-display`, (body) => {
@@ -252,11 +306,19 @@ export function makePetRoutes(deps: {
       return Promise.resolve({ ok: true, display: service.setDisplay(patch) })
     }),
     postRoute(`${PET_API_PREFIX}/reset-display`, () => Promise.resolve({ ok: true, display: service.resetDisplay() })),
-    // 人设文件重读（spec §2「↻ 重新读取」）：现读 JSONC 文件 + SSE 推送，宠物与下拉当场更新
-    postRoute(`${PET_API_PREFIX}/reload-personas`, () => {
-      const view = service.reloadPersonas()
-      return Promise.resolve({ ok: true, personas: view.personas, error: view.error, file: view.path })
-    }),
+    // 浏览器侧诊断日志（spec §9）：客户端启动里程碑/错误上报，Host 落盘便于无控制台环境排查
+    getPostRoute(
+      `${PET_API_PREFIX}/client-log`,
+      () => ({ ok: true, path: clientLogPath() }),
+      (body) => {
+        appendClientLog(
+          typeof body.level === 'string' ? body.level : 'info',
+          typeof body.message === 'string' ? body.message : '',
+          typeof body.detail === 'string' ? body.detail : undefined,
+        )
+        return { ok: true }
+      },
+    ),
   ]
 
   const localModelRoute: WebRoute = {
@@ -290,50 +352,43 @@ export function makePetRoutes(deps: {
         res.end()
         return Promise.resolve()
       }
-      return readFile(file).then((body) => {
-        res.writeHead(200, {
-          'content-type': mimeForFile(file),
-          'content-length': String(body.byteLength),
-          'cache-control': 'no-cache',
-        })
-        if (req.method === 'HEAD') {
-          res.end()
-          return
-        }
-        res.end(body)
-      }, () => {
-        res.writeHead(404)
-        res.end()
-      })
+      return serveFile(req, res, file)
     },
   }
 
-  const assetRoutes: WebRoute[] = ASSET_FILES.map((file): WebRoute => ({
-    kind: 'exact',
-    path: `${PET_ASSET_PREFIX}/${file.name}`,
-    handler: (req: IncomingMessage, res: ServerResponse): Promise<void> | void => {
+  // 素材静态路由：vendor 运行时脚本 + 内置模型（assets/models/<id>/……，含 moc3/png/json）
+  const assetsRoot = join(packageRoot, 'assets')
+  const assetRoute: WebRoute = {
+    kind: 'prefix',
+    path: PET_ASSET_PREFIX,
+    handler: (req: IncomingMessage, res: ServerResponse): Promise<void> => {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         res.writeHead(405)
         res.end()
-        return
+        return Promise.resolve()
       }
-      return readFile(join(packageRoot, 'assets', file.name)).then((body) => {
-        res.writeHead(200, {
-          'content-type': file.mime,
-          'content-length': String(body.byteLength),
-          'cache-control': 'no-cache',
-        })
-        if (req.method === 'HEAD') {
-          res.end()
-          return
-        }
-        res.end(body)
-      }, () => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const relativePath = url.pathname
+        .slice(PET_ASSET_PREFIX.length)
+        .split('/')
+        .filter(Boolean)
+        .map((segment) => decodeURIComponent(segment))
+        .join('/')
+      if (!relativePath || relativePath.includes('\0')) {
         res.writeHead(404)
         res.end()
-      })
+        return Promise.resolve()
+      }
+      const file = join(assetsRoot, relativePath)
+      // 目录穿越防护：解析后的路径必须仍在 assets 根内
+      if (!file.startsWith(`${assetsRoot}${sep}`)) {
+        res.writeHead(404)
+        res.end()
+        return Promise.resolve()
+      }
+      return serveFile(req, res, file)
     },
-  }))
+  }
 
-  return [...apiRoutes, ...assetRoutes, localModelRoute]
+  return [...apiRoutes, assetRoute, localModelRoute]
 }
