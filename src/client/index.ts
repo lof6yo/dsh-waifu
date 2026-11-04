@@ -39,6 +39,7 @@ import {
   type TouchPart,
 } from '../models.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
+import { onRecenter } from './pet-commands.ts'
 
 /** 注入所需服务。 */
 export const inject = ['slots']
@@ -71,6 +72,10 @@ const DEFAULT_BUBBLE_OFFSET_Y = -10
 const DEFAULT_BUBBLE_BG_COLOR = '#ffffff'
 const DEFAULT_BUBBLE_BG_OPACITY = 92
 const DEFAULT_BUBBLE_TEXT_COLOR = '#222222'
+
+/** 默认位置（显示区中心点距右/距下 px；Host 默认 300/260，spec §2）。 */
+const DEFAULT_HOME_RIGHT = 300
+const DEFAULT_HOME_BOTTOM = 260
 
 /** #rgb/#rrggbb + 0–100 不透明度 → CSS rgba()（非法颜色回退白色，spec §3）。 */
 function colorWithOpacity(color: string, opacityPct: number): string {
@@ -293,6 +298,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   // 设置页「编辑触摸部位」事件（spec §4）：编辑态强制显示宠物并实时绘制草稿 box。
   // 退订随挂载清理，避免 StrictMode/HMR 重挂载残留监听。
   pushCleanup(onTouchEdit(handleTouchEdit))
+  // 设置页「归位」命令（spec §2）：按配置「显示中心距右/距下」重算位置并持久化。
+  // 退订随挂载清理，避免 StrictMode/HMR 重挂载重复响应。
+  pushCleanup(onRecenter(() => {
+    homePositionFromConfig()
+    applyPosToBox()
+    persistDisplay()
+  }))
 
   let box: HTMLDivElement | null = null
   let bubble: HTMLDivElement | null = null
@@ -387,6 +399,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let bubbleBgColor = DEFAULT_BUBBLE_BG_COLOR
   let bubbleBgOpacity = DEFAULT_BUBBLE_BG_OPACITY
   let bubbleTextColor = DEFAULT_BUBBLE_TEXT_COLOR
+  /** 首次启动是否已套用配置默认中心位置（displaySaved=false 时只套用并回写一次，spec §2）。 */
+  let homeApplied = false
   // 帧率档（settings maxFps → ticker.maxFPS；0 = 不限制）
   let maxFps = DEFAULT_MAX_FPS
   // 渲染开关：插件 enabled（配置）与页面可见性（spec §7）共同决定 ticker 是否运行
@@ -766,6 +780,27 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!box) return
     box.style.right = `${Math.round(pos.right)}px`
     box.style.bottom = `${Math.round(pos.bottom)}px`
+  }
+
+  /** 持久化当前位置（right/bottom，px）；失败静默，下次拖动/归位会再写。 */
+  function persistDisplay(): void {
+    api.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {})
+  }
+
+  /**
+   * 按配置的默认位置计算 pos（spec §2）：「显示区中心点距右/距下」——
+   * 显示区即整块逻辑画布 W×H，画布中心距右 = right + W/2、距下 = bottom + H/2，
+   * 因此 right = homeRight - W/2、bottom = homeBottom - H/2，最后按视口规则 clamp。
+   */
+  function homePositionFromConfig(): void {
+    const { width: w, height: h } = logicalCanvasSize()
+    const cfg = view?.config
+    if (!cfg || !(w > 0 && h > 0)) return
+    const homeRight = Number.isFinite(cfg.homeRight) ? cfg.homeRight : DEFAULT_HOME_RIGHT
+    const homeBottom = Number.isFinite(cfg.homeBottom) ? cfg.homeBottom : DEFAULT_HOME_BOTTOM
+    pos.right = homeRight - w / 2
+    pos.bottom = homeBottom - h / 2
+    clampPosToViewport()
   }
 
   /** 立即应用画布尺寸（size 视为模型可见宽度，高度按模型比例 + 四周留白自适应）。 */
@@ -1399,6 +1434,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (nextUrl !== currentModelUrl) {
       currentModelUrl = nextUrl
       queueModelLoad(nextUrl)
+    }
+    // 首次启动（尚无持久化位置）：按配置「显示中心距右/距下」套用一次并回写（spec §2）
+    if (!next.displaySaved && !homeApplied) {
+      homeApplied = true
+      homePositionFromConfig()
+      applyPosToBox()
+      persistDisplay()
     }
     // 位置：快照/配置变化后保证画布中心点不离开视口（初始加载/归位 SSE 同样生效；不写盘）
     clampPosToViewport()

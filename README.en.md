@@ -83,7 +83,7 @@ Open **DSH Settings → “Pet config”**. Changes apply immediately — no res
 - **Show pet**: on / off
 - **Size**: 40–400px (default 160)
 - **Canvas padding**: horizontal/vertical (per side %, default 130/70) — keeps motion swings from being clipped
-- **Default dock / recenter**: configure right/bottom offsets and recenter the pet with one click
+- **Default position / recenter**: configure the display-area center distance from the right/bottom edge and recenter with one click
 - **Render FPS**: 30 / 60 / unlimited (default 30)
 - **Models**: built-in “Jian” (read-only, with license info); “My models” lets you add name + `.model3.json` URL (optional state animation mapping); custom models live in `$DSH_HOME/live2d-pet/custom-models.jsonc`
 - **Event bindings**: per-event motion groups + line pools (three stages for thinking/waiting), reset-to-default

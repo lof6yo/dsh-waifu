@@ -58,15 +58,23 @@ function petFile(): string {
  * @param defaults 首次运行/文件损坏时的回退值（默认位置可由设置页配置，spec §2）。
  */
 export function loadPetPersist(defaults: PetDisplay = DEFAULT_DISPLAY): PetDisplay {
+  return loadPetPersistDetailed(defaults).display
+}
+
+/** 读取显示配置并返回「是否已有持久化文件」（客户端首次启动据此套用「默认位置」）。 */
+export function loadPetPersistDetailed(defaults: PetDisplay = DEFAULT_DISPLAY): { display: PetDisplay; saved: boolean } {
   try {
     const raw = JSON.parse(readFileSync(petFile(), 'utf8')) as Partial<PetDisplay>
-    return normalizeDisplay({
-      right: raw.right ?? defaults.right,
-      bottom: raw.bottom ?? defaults.bottom,
-      size: raw.size ?? defaults.size,
-    })
+    return {
+      display: normalizeDisplay({
+        right: raw.right ?? defaults.right,
+        bottom: raw.bottom ?? defaults.bottom,
+        size: raw.size ?? defaults.size,
+      }),
+      saved: true,
+    }
   } catch {
-    return { ...normalizeDisplay(defaults) }
+    return { display: { ...normalizeDisplay(defaults) }, saved: false }
   }
 }
 

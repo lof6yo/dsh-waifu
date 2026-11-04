@@ -18,7 +18,7 @@ import { DEFAULT_EVENT_BINDINGS, PET_EVENTS, mergeEventBindings } from './models
 import { resolveModelUrl, resolveMotionMap, resolveDefaultTouchParts } from './models-host.ts'
 import { CustomModelsStore, type CustomModelsFileView } from './custom-models.ts'
 import {
-  loadPetPersist,
+  loadPetPersistDetailed,
   savePetPersist,
   normalizeDisplay,
   DEFAULT_DISPLAY,
@@ -43,6 +43,10 @@ export interface PetStateView {
     debug: boolean
     /** 显示触摸部位色块（开发者选项，spec §2）。 */
     showTapZones: boolean
+    /** 默认位置：显示区中心距视口右侧（px；spec §2）。 */
+    homeRight: number
+    /** 默认位置：显示区中心距视口底部（px）。 */
+    homeBottom: number
     /** 画布水平留白（每侧，size 百分比；spec §7）。 */
     canvasPadX: number
     /** 画布垂直留白（每侧，size 百分比）。 */
@@ -59,6 +63,8 @@ export interface PetStateView {
     touchParts: TouchPart[]
   }
   display: PetDisplay
+  /** 是否已有持久化位置（false = 首次启动，客户端按「默认中心位置」套用一次并回写）。 */
+  displaySaved: boolean
   version: number
 }
 
@@ -73,6 +79,7 @@ export class PetService {
   private agent = 'idle'
   private version = 0
   private display: PetDisplay
+  private displaySaved = false
   private holdTimerId: ReturnType<typeof setTimeout> | undefined
   private listeners = new Set<ChangeListener>()
 
@@ -82,12 +89,9 @@ export class PetService {
     private readonly customModelsStore?: CustomModelsStore,
     private readonly touchPartsStore?: TouchPartsStore,
   ) {
-    const homeDefaults: PetDisplay = {
-      ...DEFAULT_DISPLAY,
-      right: this.getSettings().homeRight,
-      bottom: this.getSettings().homeBottom,
-    }
-    this.display = loadPetPersist(homeDefaults)
+    const loaded = loadPetPersistDetailed(DEFAULT_DISPLAY)
+    this.display = loaded.display
+    this.displaySaved = loaded.saved
     // 卸载时清理"完成/交付"保持计时器
     ctx.effect(() => () => {
       if (this.holdTimerId) clearTimeout(this.holdTimerId)
@@ -192,6 +196,8 @@ export class PetService {
         modelUrl: resolveModelUrl(settings.model, customModels),
         debug: settings.debug,
         showTapZones: !!settings.showTapZones,
+        homeRight: settings.homeRight,
+        homeBottom: settings.homeBottom,
         canvasPadX: settings.canvasPadX,
         canvasPadY: settings.canvasPadY,
         bubbleOffsetX: settings.bubbleOffsetX,
@@ -203,6 +209,7 @@ export class PetService {
         touchParts: this.touchPartsFor(settings.model),
       },
       display: { ...this.display },
+      displaySaved: this.displaySaved,
       version: this.version,
     }
   }
@@ -255,14 +262,14 @@ export class PetService {
     return { ...this.display }
   }
 
-  /** 归位：位置回到设置页配置的默认停靠位置（尺寸保持不变；spec §2）。 */
+  /**
+   * 重置为内置默认显示配置（调试/API 用）。
+   * 注意：设置页「归位」由 Client 按「显示区中心距右/距下」计算后再 setDisplay（需要视口与画布尺寸），
+   * 不走本方法（spec §2）。
+   */
   resetDisplay(): PetDisplay {
-    const settings = this.getSettings()
-    this.display = normalizeDisplay({
-      right: settings.homeRight,
-      bottom: settings.homeBottom,
-      size: this.display.size,
-    })
+    this.display = { ...DEFAULT_DISPLAY }
+    this.displaySaved = true
     savePetPersist(this.display)
     this.version += 1
     this.emitChange()

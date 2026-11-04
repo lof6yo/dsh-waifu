@@ -39,9 +39,9 @@ export interface PetSettings {
   canvasPadX: number
   /** 画布垂直留白（每侧，size 的百分比 0–300）。 */
   canvasPadY: number
-  /** 默认停靠位置：距视口右侧（px，用于「归位」与首次启动）。 */
+  /** 默认位置：显示区**中心点**距视口右侧（px，用于「归位」与首次启动）。 */
   homeRight: number
-  /** 默认停靠位置：距视口底部（px）。 */
+  /** 默认位置：显示区**中心点**距视口底部（px）。 */
   homeBottom: number
   /** 气泡相对模型顶部中心的水平偏移（px，正值向右）。 */
   bubbleOffsetX: number
@@ -74,28 +74,12 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor`
 
-function serializeSettings(value: PetSettings): string {
-  return `${SETTINGS_HEADER}\n${JSON.stringify(value, null, 2)}\n`
-}
+/** 设置文件结构版本：2 起 homeRight/homeBottom 语义 = 显示区中心点距右/距下。 */
+const SETTINGS_SCHEMA_VERSION = 2
 
-const SETTINGS_TEMPLATE = serializeSettings({
-  enabled: true,
-  size: 160,
-  maxFps: 30,
-  model: 'jian',
-  developerMode: false,
-  debug: false,
-  showTapZones: false,
-  canvasPadX: 130,
-  canvasPadY: 70,
-  homeRight: 24,
-  homeBottom: 20,
-  bubbleOffsetX: 0,
-  bubbleOffsetY: -10,
-  bubbleBgColor: '#ffffff',
-  bubbleBgOpacity: 92,
-  bubbleTextColor: '#222222',
-})
+function serializeSettings(value: PetSettings): string {
+  return `${SETTINGS_HEADER}\n${JSON.stringify({ ...value, version: SETTINGS_SCHEMA_VERSION }, null, 2)}\n`
+}
 
 const MAX_FPS_OPTIONS = [30, 60, 0] as const
 
@@ -145,6 +129,9 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     if (!Number.isFinite(n)) return fallback
     return Math.round(Math.min(100, Math.max(0, n)))
   }
+  // 旧版（无 version 字段）的 home 语义是「画布右下角距右/距下」，迁移为新语义（中心点距右/距下）：
+  // 直接回退到 base 默认值，避免旧的小数值把角色推到屏幕外。
+  const legacyHome = record.version !== SETTINGS_SCHEMA_VERSION
   return {
     enabled: bool('enabled'),
     size: clampSize(record.size) ?? base.size,
@@ -155,8 +142,8 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     showTapZones: bool('showTapZones'),
     canvasPadX: clampPad(record.canvasPadX, base.canvasPadX),
     canvasPadY: clampPad(record.canvasPadY, base.canvasPadY),
-    homeRight: clampHome(record.homeRight, base.homeRight),
-    homeBottom: clampHome(record.homeBottom, base.homeBottom),
+    homeRight: legacyHome ? base.homeRight : clampHome(record.homeRight, base.homeRight),
+    homeBottom: legacyHome ? base.homeBottom : clampHome(record.homeBottom, base.homeBottom),
     bubbleOffsetX: clampOffset(record.bubbleOffsetX, base.bubbleOffsetX),
     bubbleOffsetY: clampOffset(record.bubbleOffsetY, base.bubbleOffsetY),
     bubbleBgColor: color(record.bubbleBgColor, base.bubbleBgColor),
@@ -185,7 +172,8 @@ export class SettingsStore {
       // 目录创建失败：后续读写会报错，按 base 处理
     }
     try {
-      if (!existsSync(this.path)) writeFileSync(this.path, SETTINGS_TEMPLATE, 'utf8')
+      // 首次落地：用当前 base（cordis.patch.yml config / schema 默认）作为初始值
+      if (!existsSync(this.path)) writeFileSync(this.path, serializeSettings(this.base), 'utf8')
     } catch {
       // 落地失败：按 base 处理
     }
@@ -224,7 +212,8 @@ export class SettingsStore {
    */
   applyOps(ops: readonly SettingsPathOp[]): PetSettingsView {
     const current = this.get()
-    let next: Record<string, unknown> = { ...current }
+    // 带上 schema 版本，避免写入路径被「旧版 home 语义迁移」误判
+    let next: Record<string, unknown> = { ...current, version: SETTINGS_SCHEMA_VERSION }
     for (const op of ops) {
       if (!Array.isArray(op.path) || op.path.length !== 1) continue
       const key = op.path[0]

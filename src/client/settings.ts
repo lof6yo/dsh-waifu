@@ -35,6 +35,7 @@ import {
   normalizeEventBindings,
 } from '../models.ts'
 import { clientLog } from './client-log.ts'
+import { emitRecenter } from './pet-commands.ts'
 import { emitTouchEdit } from './touch-edit.ts'
 
 /** 设置解析值（与 Host PetSettings 对齐）。 */
@@ -47,9 +48,9 @@ export interface PetSettingsValue {
   canvasPadX: number
   /** 画布垂直留白（%，0–300）。 */
   canvasPadY: number
-  /** 默认停靠位置：距右边（px，0–4000）。 */
+  /** 默认位置：显示区中心点距右边（px，0–4000）。 */
   homeRight: number
-  /** 默认停靠位置：距底部（px，0–4000）。 */
+  /** 默认位置：显示区中心点距下边（px，0–4000）。 */
   homeBottom: number
   /** 气泡相对角色顶部中心的水平偏移（px，-1000–1000）。 */
   bubbleOffsetX: number
@@ -94,8 +95,8 @@ const DEFAULT_VALUE: PetSettingsValue = {
   maxFps: 30,
   canvasPadX: 130,
   canvasPadY: 70,
-  homeRight: 24,
-  homeBottom: 20,
+  homeRight: 300,
+  homeBottom: 260,
   bubbleOffsetX: 0,
   bubbleOffsetY: -10,
   bubbleBgColor: '#ffffff',
@@ -339,7 +340,6 @@ const MODELS_API = '/api/live2d-pet/models'
 const CUSTOM_MODELS_API = '/api/live2d-pet/custom-models'
 const STATE_API = '/api/live2d-pet/state'
 const TOUCH_PARTS_API = '/api/live2d-pet/touch-parts'
-const RESET_DISPLAY_API = '/api/live2d-pet/reset-display'
 
 /* ---- 设计 token（DSH Theme 变量；深/浅色自动适配） ---- */
 const C = {
@@ -380,16 +380,17 @@ const sectionDescStyle: CSSProperties = {
 }
 const subTitleStyle: CSSProperties = { margin: '12px 0 4px', fontSize: 12, fontWeight: 600, color: C.textSecondary }
 
-/** Card：bg-layer-1 + 1px border-l1 + radius 10 + padding 14/16。 */
+/** Card：容器 0 padding；标题行/内容区分别控制，卡片间距 10。 */
 const cardStyle: CSSProperties = {
   background: C.bgLayer1,
   border: `1px solid ${C.borderL1}`,
   borderRadius: 10,
-  padding: '14px 16px',
   marginBottom: 10,
   color: C.textPrimary,
 }
-const rowStyle: CSSProperties = { ...cardStyle }
+/** 无折叠头部的简单卡片：统一 12/14 内边距。 */
+const cardPadStyle: CSSProperties = { ...cardStyle, padding: '12px 14px' }
+const rowStyle: CSSProperties = cardPadStyle
 const labelStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -402,12 +403,21 @@ const labelStyle: CSSProperties = {
 }
 const hintStyle: CSSProperties = { fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }
 
-/** CardHeader：整行可点折叠、chevron 20×20、hover layer-2（CSS 见注入样式）。 */
-const cardHeaderStyle: CSSProperties = {
+/** CardHeader：一行 flex；[chevron][标题][摘要 flex1][右侧操作组]。 */
+const cardHeaderRowStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: GAP.sm,
-  width: '100%',
+  padding: '12px 14px',
+  minHeight: 44,
+  boxSizing: 'border-box',
+}
+const cardHeaderButtonStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.sm,
+  flex: 1,
+  minWidth: 0,
   margin: 0,
   padding: 0,
   border: 'none',
@@ -418,6 +428,13 @@ const cardHeaderStyle: CSSProperties = {
   cursor: 'pointer',
   outline: 'none',
 }
+const cardHeaderActionsStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: 6,
+  flexShrink: 0,
+}
 const cardTitleStyle: CSSProperties = { fontSize: 13, fontWeight: 600, color: C.textPrimary }
 const cardSummaryStyle: CSSProperties = {
   fontSize: 12,
@@ -426,7 +443,7 @@ const cardSummaryStyle: CSSProperties = {
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 }
-const cardBodyStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: GAP.sm, marginTop: GAP.md }
+const cardBodyStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: GAP.sm, padding: '0 14px 14px' }
 const chevronStyle: CSSProperties = {
   width: 20,
   height: 20,
@@ -520,6 +537,33 @@ const chipStyle: CSSProperties = {
   flexShrink: 0,
 }
 const statusTextStyle: CSSProperties = { fontSize: 12, lineHeight: 1.5 }
+/** 表单行：grid 96px label + 1fr 控件；行距 8；textarea 行顶部对齐。 */
+const formRowStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '96px minmax(0,1fr)',
+  alignItems: 'center',
+  columnGap: GAP.md,
+  marginBottom: GAP.sm,
+}
+const formRowStartStyle: CSSProperties = { ...formRowStyle, alignItems: 'start' }
+const formLabelStyle: CSSProperties = { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 }
+const formLabelStartStyle: CSSProperties = { ...formLabelStyle, paddingTop: 6 }
+const formControlStyle: CSSProperties = { minWidth: 0, display: 'flex', alignItems: 'center', gap: GAP.sm }
+
+/** box 编辑表格：列宽固定（# 24 / 四项 1fr / 删除 56）。 */
+const boxGridStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '24px repeat(4, minmax(0, 1fr)) 56px',
+  columnGap: GAP.sm,
+  alignItems: 'center',
+}
+const boxHeaderCellStyle: CSSProperties = { fontSize: 12, color: C.textSecondary }
+const boxCellInputStyle: CSSProperties = { ...inputStyle, width: '100%', flex: 'none' }
+/** 卡片头固定尺寸操作按钮。 */
+const moveButtonStyle: CSSProperties = { ...buttonSecondaryStyle, width: 34, minWidth: 34, padding: 0 }
+const deletePartButtonStyle: CSSProperties = { ...buttonDangerStyle, width: 88, minWidth: 88, padding: 0 }
+const deleteBoxButtonStyle: CSSProperties = { ...buttonDangerStyle, width: 56, minWidth: 56, padding: 0 }
+
 /** 状态提示：已保存 success / 未保存 warn / 失败 error / 中性 secondary。 */
 const noticeBaseStyle: CSSProperties = { margin: '0 0 8px', fontSize: 12, lineHeight: 1.6 }
 const noticeErrorStyle: CSSProperties = { ...noticeBaseStyle, color: C.error }
@@ -533,7 +577,7 @@ const stickyRowStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: 10,
+  gap: GAP.sm,
   padding: '8px 12px',
   marginBottom: GAP.sm,
   borderRadius: 8,
@@ -693,7 +737,7 @@ function ThemeRadioGroup(props: ThemeRadioGroupProps): ReactElement {
       display: 'flex',
       flexWrap: 'wrap',
       alignItems: 'center',
-      gap: '10px 18px',
+      gap: '8px 16px',
       opacity: disabled ? 0.55 : 1,
     },
   },
@@ -1044,30 +1088,15 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     setDraftSize(null)
   }
 
-  // 归位按钮结果提示（成功约 2 秒 / 失败约 4 秒后消失）
-  const [resetNotice, setResetNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  // 归位提示（约 2 秒后消失）
+  const [resetNotice, setResetNotice] = useState<string | null>(null)
   const resetNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** 归位：POST /api/live2d-pet/reset-display（位置回到默认停靠位置，尺寸不变）。 */
-  const resetDisplayPosition = (): void => {
-    setResetNotice(null)
-    fetch(RESET_DISPLAY_API, { method: 'POST' })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<{ ok?: boolean; error?: string | null } | null>
-      })
-      .then((data) => {
-        if (data?.error) throw new Error(data.error)
-        clientLog('info', 'display reset to home position')
-        setResetNotice({ kind: 'ok', text: '已归位' })
-        if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
-        resetNoticeTimer.current = setTimeout(() => setResetNotice(null), 2000)
-      })
-      .catch((error) => {
-        clientLog('error', 'reset display failed', error)
-        setResetNotice({ kind: 'error', text: `归位失败：${error instanceof Error ? error.message : String(error)}` })
-        if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
-        resetNoticeTimer.current = setTimeout(() => setResetNotice(null), 4000)
-      })
+  /** 归位：广播命令给宠物半边，按「显示区中心距右/距下」重新计算位置并持久化。 */
+  const requestRecenter = (): void => {
+    emitRecenter()
+    setResetNotice('已归位')
+    if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
+    resetNoticeTimer.current = setTimeout(() => setResetNotice(null), 2000)
   }
 
   // 自定义模型表单（添加 + 编辑）：仅名称 + URL
@@ -1644,11 +1673,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const reloadAll = (): void => { setReloadKey((key) => key + 1) }
   const retryMotionGroups = (): void => { setMotionReloadKey((key) => key + 1) }
 
-  /** 事件绑定卡片（默认折叠：头部显示事件名 + 摘要；展开后才显示编辑控件与恢复默认）。 */
+  /** 事件绑定卡片：header = [chevron][事件名][摘要][右侧操作组：脏提示/保存/恢复默认]。 */
   const renderEventCard = (event: PetEventKey): ReactElement => {
     const binding = eventBindings[event]
     const stages = eventStageLabels(event)
     const expanded = expandedEventKeys.has(event)
+    const dirty = dirtyEventKeys.has(event)
     const summary = `${binding.motions.length} 个动作组 · ${stages.length} 阶段台词`
     const options: ThemeSelectOption[] = [
       ...motionGroups,
@@ -1662,48 +1692,34 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         return next
       })
     }
-    return createElement('div', { key: event, style: rowStyle },
-      createElement('button', {
-        type: 'button',
-        'aria-expanded': expanded,
-        onClick: toggleExpanded,
-        className: 'dsh-card-header',
-        style: cardHeaderStyle,
-      },
-        createElement('span', { style: { ...chevronStyle, transform: expanded ? 'rotate(90deg)' : 'none' } }, '▸'),
-        createElement('span', { style: cardTitleStyle }, EVENT_LABELS[event]),
-        createElement('span', { style: { ...cardSummaryStyle, flex: 1, minWidth: 0 } }, summary),
-      ),
-      dirtyEventKeys.has(event)
-        ? createElement('div', {
-          key: 'event-dirty',
-          style: {
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: GAP.sm,
-            marginTop: GAP.sm,
-            fontSize: 12,
-            color: C.warn,
-          },
+    return createElement('div', { key: event, style: cardStyle },
+      createElement('div', { className: 'dsh-card-header-row', style: cardHeaderRowStyle },
+        createElement('button', {
+          type: 'button',
+          'aria-expanded': expanded,
+          onClick: toggleExpanded,
+          className: 'dsh-card-header',
+          style: cardHeaderButtonStyle,
         },
-          createElement('span', null, '● 未保存改动'),
-          createElement('button', {
-            type: 'button',
-            className: 'dsh-btn dsh-btn-primary',
-            style: buttonPrimaryStyle,
-            disabled: saveState === 'saving' || readOnly,
-            onClick: () => saveEventCardNow(event),
-          }, '保存'),
-        )
-        : savedEventFlash?.event === event
-          ? createElement('div', {
-            key: 'event-saved',
-            style: { marginTop: GAP.sm, fontSize: 12, color: C.success },
-          }, `已保存 ${savedEventFlash.time}`)
-          : null,
-      expanded && createElement('div', { style: cardBodyStyle },
-        createElement('div', { style: { display: 'flex', justifyContent: 'flex-end' } },
+          createElement('span', { style: { ...chevronStyle, transform: expanded ? 'rotate(90deg)' : 'none' } }, '▸'),
+          createElement('span', { style: cardTitleStyle }, EVENT_LABELS[event]),
+          createElement('span', { style: { ...cardSummaryStyle, flex: 1, minWidth: 0 } }, summary),
+        ),
+        createElement('div', { style: cardHeaderActionsStyle },
+          dirty
+            ? createElement('span', { style: { ...statusTextStyle, color: C.warn } }, '● 未保存改动')
+            : savedEventFlash?.event === event
+              ? createElement('span', { style: { ...statusTextStyle, color: C.success } }, `已保存 ${savedEventFlash.time}`)
+              : null,
+          dirty
+            ? createElement('button', {
+              type: 'button',
+              className: 'dsh-btn dsh-btn-primary',
+              style: buttonPrimaryStyle,
+              disabled: saveState === 'saving' || readOnly,
+              onClick: () => saveEventCardNow(event),
+            }, '保存')
+            : null,
           createElement('button', {
             type: 'button',
             className: 'dsh-btn dsh-btn-secondary',
@@ -1712,8 +1728,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             onClick: () => resetEventBinding(event),
           }, '恢复默认'),
         ),
-        createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary, flexShrink: 0, width: 48 } }, '动作组'),
+      ),
+      expanded && createElement('div', { style: cardBodyStyle },
+        createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+          createElement('span', { style: formLabelStyle }, '动作组'),
           createElement(ThemeMultiSelect, {
             value: binding.motions,
             options,
@@ -1728,8 +1746,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ...stages.map((stageLabel, stage) => {
           const draftKey = `${event}:${stage}`
           const pool = binding.lines[stage] ?? []
-          return createElement('div', { key: `stage-${stage}`, style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
-            createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, `台词池 · ${stageLabel}`),
+          return createElement('div', { key: `stage-${stage}`, style: { ...formRowStartStyle, marginBottom: 0 } },
+            createElement('span', { style: formLabelStartStyle }, `台词池 · ${stageLabel}`),
             createElement('textarea', {
               style: textareaStyle,
               value: eventLineDrafts[draftKey] ?? pool.join('\n'),
@@ -1754,29 +1772,21 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     )
   }
 
-  /** 单个触摸部位卡片（统一 CardHeader：chevron + 层号 chip + 名称/排序/删除）。 */
+  /** 部位卡片：header = [chevron][层号 chip][名称][↑][↓][删除部位]，统一 28 高垂直居中。 */
   const renderTouchPartCard = (part: TouchPart, index: number): ReactElement => {
     const expanded = expandedPartId === part.id
-    // 图层顺序 = 草稿数组顺序：index 0 为最上层
     const isTopLayer = index === 0
     const isBottomLayer = index === touchDraft.length - 1
     const layerLabel = `#${index + 1}${isTopLayer ? ' 顶层' : ''}${isBottomLayer && !isTopLayer ? ' 底层' : ''}`
-    // 已保存但当前解析失败/模型动作组变更时，也把部位里已有的动作组显示出来
     const groups = [...motionGroups, ...part.motions.filter((motion) => !motionGroups.includes(motion))]
+    const dirty = dirtyPartIds.has(part.id)
     const toggleExpanded = (): void => {
       const next = expanded ? null : part.id
       setExpandedPart(next)
       emitTouchDraft(touchEditingRef.current, touchDraftRef.current, next)
     }
-    return createElement('div', { key: part.id, style: rowStyle },
-      createElement('div', {
-        className: 'dsh-card-header',
-        style: { ...cardHeaderStyle, cursor: 'default' },
-        onClick: (e: MouseEvent<HTMLDivElement>) => {
-          // 整行空位点击也可折叠；输入框/按钮自身的事件不触发折叠
-          if (e.target === e.currentTarget) toggleExpanded()
-        },
-      },
+    return createElement('div', { key: part.id, style: cardStyle },
+      createElement('div', { className: 'dsh-card-header-row', style: cardHeaderRowStyle },
         createElement('button', {
           type: 'button',
           title: expanded ? '收起' : '展开',
@@ -1789,22 +1799,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           title: isTopLayer ? '最上层（box 重叠时优先）' : (isBottomLayer ? '最底层' : '图层'),
           style: { ...chipStyle, color: isTopLayer ? C.brand : C.textSecondary },
         }, layerLabel),
-        createElement('button', {
-          type: 'button',
-          title: '上移（更靠顶层）',
-          className: 'dsh-btn dsh-btn-secondary',
-          style: buttonSecondaryStyle,
-          disabled: readOnly || isTopLayer,
-          onClick: () => moveTouchPart(part.id, -1),
-        }, '↑ 上移'),
-        createElement('button', {
-          type: 'button',
-          title: '下移（更靠底层）',
-          className: 'dsh-btn dsh-btn-secondary',
-          style: buttonSecondaryStyle,
-          disabled: readOnly || isBottomLayer,
-          onClick: () => moveTouchPart(part.id, 1),
-        }, '↓ 下移'),
         createElement('input', {
           style: { ...inputStyle, flex: 1, minWidth: 80 },
           value: part.name,
@@ -1816,13 +1810,31 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         }),
         createElement('button', {
           type: 'button',
+          title: '上移（更靠顶层）',
+          'aria-label': '上移',
+          className: 'dsh-btn dsh-btn-secondary',
+          style: moveButtonStyle,
+          disabled: readOnly || isTopLayer,
+          onClick: () => moveTouchPart(part.id, -1),
+        }, '↑'),
+        createElement('button', {
+          type: 'button',
+          title: '下移（更靠底层）',
+          'aria-label': '下移',
+          className: 'dsh-btn dsh-btn-secondary',
+          style: moveButtonStyle,
+          disabled: readOnly || isBottomLayer,
+          onClick: () => moveTouchPart(part.id, 1),
+        }, '↓'),
+        createElement('button', {
+          type: 'button',
           className: 'dsh-btn dsh-btn-danger',
-          style: buttonDangerStyle,
+          style: deletePartButtonStyle,
           disabled: readOnly,
           onClick: () => removeTouchPart(part.id),
         }, '删除部位'),
       ),
-      dirtyPartIds.has(part.id)
+      dirty
         ? createElement('div', {
           key: 'part-dirty',
           style: {
@@ -1830,7 +1842,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: GAP.sm,
-            marginTop: GAP.sm,
+            padding: '0 14px 8px',
             fontSize: 12,
             color: C.warn,
           },
@@ -1847,42 +1859,38 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         : savedPartFlash?.partId === part.id
           ? createElement('div', {
             key: 'part-saved',
-            style: { marginTop: GAP.sm, fontSize: 12, color: C.success },
+            style: { padding: '0 14px 8px', fontSize: 12, color: C.success },
           }, `已保存 ${savedPartFlash.time}`)
           : null,
       expanded && createElement('div', { style: cardBodyStyle },
         createElement('div', { style: hintStyle },
           'box 用相对角色包围盒的百分比（0–100）表示；一个部位可有多个 box，命中任一即算该部位。'),
         part.boxes.length === 0
-          ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '还没有 box，点「+ 添加 box」画出点击区域。')
-          : createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
-            ...part.boxes.map((box, boxIndex) => createElement('div', {
-              key: `box-${boxIndex}`,
-              style: { display: 'flex', alignItems: 'flex-end', gap: GAP.xs },
-            },
-              createElement('span', {
-                style: { fontSize: 12, color: C.textSecondary, width: 32, flexShrink: 0, paddingBottom: 6 },
-              }, `#${boxIndex + 1}`),
-              ...TOUCH_BOX_FIELDS.map(({ key, label }) => createElement('label', {
+          ? createElement('div', { style: { ...hintStyle, marginBottom: GAP.sm } }, '还没有 box，点「+ 添加 box」画出点击区域。')
+          : createElement('div', { key: 'box-table', style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: GAP.sm } },
+            createElement('div', { key: 'box-head', style: { ...boxGridStyle, padding: '0 2px' } },
+              createElement('span', { style: boxHeaderCellStyle }, '#'),
+              ...TOUCH_BOX_FIELDS.map(({ key, label }) => createElement('span', { key, style: boxHeaderCellStyle }, label)),
+              createElement('span', { style: boxHeaderCellStyle }, ''),
+            ),
+            ...part.boxes.map((box, boxIndex) => createElement('div', { key: `box-${boxIndex}`, style: boxGridStyle },
+              createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, `#${boxIndex + 1}`),
+              ...TOUCH_BOX_FIELDS.map(({ key, label }) => createElement('input', {
                 key,
-                style: { display: 'flex', flexDirection: 'column', gap: GAP.xs, fontSize: 12, color: C.textSecondary, flex: 1, minWidth: 0 },
-              },
-                label,
-                createElement('input', {
-                  type: 'number',
-                  min: 0,
-                  max: 100,
-                  step: 1,
-                  value: toPercent(box[key]),
-                  disabled: readOnly,
-                  style: { ...inputStyle, width: '100%', padding: '0 6px' },
-                  onChange: (e: ChangeEvent<HTMLInputElement>) => setBoxField(part.id, boxIndex, key, e.target.value),
-                }),
-              )),
+                type: 'number',
+                min: 0,
+                max: 100,
+                step: 1,
+                'aria-label': `${label}（%）`,
+                value: toPercent(box[key]),
+                disabled: readOnly,
+                style: boxCellInputStyle,
+                onChange: (e: ChangeEvent<HTMLInputElement>) => setBoxField(part.id, boxIndex, key, e.target.value),
+              })),
               createElement('button', {
                 type: 'button',
                 className: 'dsh-btn dsh-btn-danger',
-                style: buttonDangerStyle,
+                style: deleteBoxButtonStyle,
                 disabled: readOnly,
                 onClick: () => removeBox(part.id, boxIndex),
               }, '删除'),
@@ -1895,55 +1903,59 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           disabled: readOnly || part.boxes.length >= MAX_BOXES_PER_PART,
           onClick: () => addBox(part.id),
         }, part.boxes.length >= MAX_BOXES_PER_PART ? `box 已达上限（${MAX_BOXES_PER_PART}）` : '+ 添加 box'),
-        createElement('div', { key: 'part-lines', style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
-          createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
-            '台词（一行一条；留空 = 使用全局默认台词池）'),
-          createElement('textarea', {
-            style: textareaStyle,
-            value: partLineDrafts[part.id] ?? (part.lines ?? []).join('\n'),
-            placeholder: '留空 = 使用全局默认台词池；一行一条',
-            disabled: readOnly,
-            onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
-              const raw = e.target.value
-              // 原始输入保留在缓冲里（否则空行/末尾换行被清洗掉，没法继续输入下一行）
-              setPartLineDrafts((prev) => ({ ...prev, [part.id]: raw }))
-              setPartLines(part.id, raw)
-            },
-            onBlur: () => setPartLineDrafts((prev) => {
-              if (!(part.id in prev)) return prev
-              const next = { ...prev }
-              delete next[part.id]
-              return next
+        createElement('div', { key: 'part-lines', style: { ...formRowStartStyle, marginBottom: 0 } },
+          createElement('span', { style: formLabelStartStyle }, '台词'),
+          createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs, minWidth: 0 } },
+            createElement('div', { style: hintStyle }, '一行一条；留空 = 使用全局默认台词池'),
+            createElement('textarea', {
+              style: textareaStyle,
+              value: partLineDrafts[part.id] ?? (part.lines ?? []).join('\n'),
+              placeholder: '留空 = 使用全局默认台词池；一行一条',
+              disabled: readOnly,
+              onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
+                const raw = e.target.value
+                // 原始输入保留在缓冲里（否则空行/末尾换行被清洗掉，没法继续输入下一行）
+                setPartLineDrafts((prev) => ({ ...prev, [part.id]: raw }))
+                setPartLines(part.id, raw)
+              },
+              onBlur: () => setPartLineDrafts((prev) => {
+                if (!(part.id in prev)) return prev
+                const next = { ...prev }
+                delete next[part.id]
+                return next
+              }),
             }),
-          }),
-          createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
-            part.lines && part.lines.length > 0
-              ? `${part.lines.length} 条（随机选一条）`
-              : `最多 ${MAX_LINES_PER_PART} 条 × ${MAX_LINE_LENGTH} 字`),
+            createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
+              part.lines && part.lines.length > 0
+                ? `${part.lines.length} 条（随机选一条）`
+                : `最多 ${MAX_LINES_PER_PART} 条 × ${MAX_LINE_LENGTH} 字`),
+          ),
         ),
-        createElement('div', { key: 'part-motions', style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
-          createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
-            '触摸动画：触摸该部位时随机播一个；不选 = 只出气泡。'),
-          motionGroupsStatus === 'loading'
-            ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '正在解析动作列表…')
-            : motionGroupsStatus === 'error'
-              ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（触摸动画可留空，部位仍会保存）')
-              : groups.length === 0
-                ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '该模型没有定义动作组')
-                : createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px' } },
-                  ...groups.map((group) => createElement('label', {
-                    key: group,
-                    style: { display: 'flex', alignItems: 'center', gap: GAP.xs, fontSize: 12, cursor: readOnly ? 'not-allowed' : 'pointer' },
-                  },
-                    createElement('input', {
-                      type: 'checkbox',
-                      checked: part.motions.includes(group),
-                      disabled: readOnly,
-                      onChange: (e: ChangeEvent<HTMLInputElement>) => togglePartMotion(part.id, group, e.target.checked),
-                    }),
-                    group,
-                  )),
-                ),
+        createElement('div', { key: 'part-motions', style: { ...formRowStyle, marginBottom: 0, alignItems: 'start' } },
+          createElement('span', { style: formLabelStartStyle }, '触摸动画'),
+          createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs, minWidth: 0 } },
+            createElement('div', { style: hintStyle }, '触摸该部位时随机播一个；不选 = 只出气泡。'),
+            motionGroupsStatus === 'loading'
+              ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '正在解析动作列表…')
+              : motionGroupsStatus === 'error'
+                ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（触摸动画可留空，部位仍会保存）')
+                : groups.length === 0
+                  ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '该模型没有定义动作组')
+                  : createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px' } },
+                    ...groups.map((group) => createElement('label', {
+                      key: group,
+                      style: { display: 'flex', alignItems: 'center', gap: GAP.xs, fontSize: 12, cursor: readOnly ? 'not-allowed' : 'pointer' },
+                    },
+                      createElement('input', {
+                        type: 'checkbox',
+                        checked: part.motions.includes(group),
+                        disabled: readOnly,
+                        onChange: (e: ChangeEvent<HTMLInputElement>) => togglePartMotion(part.id, group, e.target.checked),
+                      }),
+                      group,
+                    )),
+                  ),
+          ),
         ),
       ),
     )
@@ -2045,51 +2057,63 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
 
   // 1. 显示：开关
   children.push(createElement('div', { key: 'enabled', style: rowStyle },
-    createElement('label', { style: labelStyle },
-      createElement('input', {
-        type: 'checkbox',
-        checked: !!value.enabled,
-        disabled: !writable,
-        // 受控 checkbox 的事件期捕获：React 在 onChange 后会同步把 DOM
-        // 复位回上次渲染值，若出队时才读 e.target.checked 永远读到旧值
-        onChange: (e: ChangeEvent<HTMLInputElement>) => {
-          const next = e.target.checked
-          enqueueWrite(() => [{ op: 'set', path: ['enabled'], value: next }])
-        },
-      }),
-      createElement('span', null, '显示宠物'),
+    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+      createElement('span', { style: formLabelStyle }, '显示'),
+      createElement('label', { style: { ...labelStyle, flex: 'none' } },
+        createElement('input', {
+          type: 'checkbox',
+          checked: !!value.enabled,
+          disabled: !writable,
+          // 受控 checkbox 的事件期捕获：React 在 onChange 后会同步把 DOM
+          // 复位回上次渲染值，若出队时才读 e.target.checked 永远读到旧值
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            const next = e.target.checked
+            enqueueWrite(() => [{ op: 'set', path: ['enabled'], value: next }])
+          },
+        }),
+        createElement('span', null, '显示宠物'),
+      ),
     ),
   ))
 
   // 2. 显示：尺寸滑杆
   children.push(createElement('div', { key: 'size', style: rowStyle },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.md } },
-      createElement('span', { style: { whiteSpace: 'nowrap' } }, '尺寸'),
-      createElement('input', {
-        type: 'range',
-        min: 40,
-        max: 400,
-        step: 1,
-        value: size,
-        disabled: !writable,
-        style: { flex: 1 },
-        onChange: (e: ChangeEvent<HTMLInputElement>) => setDraftSize(Number(e.target.value)),
-        onPointerUp: commitSize,
-        onKeyUp: commitSize,
-        onBlur: commitSize,
-      }),
-      createElement('span', { style: { width: 56, textAlign: 'right', color: C.textSecondary, fontSize: 12 } }, `${size}px`),
+    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+      createElement('span', { style: formLabelStyle }, '尺寸'),
+      createElement('div', { style: formControlStyle },
+        createElement('input', {
+          type: 'range',
+          min: 40,
+          max: 400,
+          step: 1,
+          value: size,
+          disabled: !writable,
+          style: { flex: 1, minWidth: 0 },
+          onChange: (e: ChangeEvent<HTMLInputElement>) => setDraftSize(Number(e.target.value)),
+          onPointerUp: commitSize,
+          onKeyUp: commitSize,
+          onBlur: commitSize,
+        }),
+        createElement('span', { style: { width: 56, textAlign: 'right', color: C.textSecondary, fontSize: 12 } }, `${size}px`),
+      ),
     ),
   ))
 
   // 2.5 显示：画布留白（百分比；防动作甩尾被裁切）
   const canvasPadX = normalizeCanvasPad(state.value?.canvasPadX, 130)
   const canvasPadY = normalizeCanvasPad(state.value?.canvasPadY, 70)
-  const padInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88 }
+  const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
+  const colorInputStyle: CSSProperties = {
+    ...inputStyle,
+    flex: '0 0 48px',
+    width: 48,
+    padding: 2,
+    cursor: writable ? 'pointer' : 'not-allowed',
+  }
   children.push(createElement('div', { key: 'canvas-pad', style: rowStyle },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' } },
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '水平留白（%）'),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '水平留白（%）'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'number',
           min: 0,
@@ -2097,15 +2121,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           step: 5,
           value: canvasPadX,
           disabled: !writable,
-          style: padInputStyle,
+          style: numberInputStyle,
           onChange: (e: ChangeEvent<HTMLInputElement>) => {
             const next = normalizeCanvasPad(e.target.value, 0)
             enqueueWrite(() => [{ op: 'set', path: ['canvasPadX'], value: next }])
           },
         }),
       ),
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '垂直留白（%）'),
+    ),
+    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+      createElement('span', { style: formLabelStyle }, '垂直留白（%）'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'number',
           min: 0,
@@ -2113,7 +2139,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           step: 5,
           value: canvasPadY,
           disabled: !writable,
-          style: padInputStyle,
+          style: numberInputStyle,
           onChange: (e: ChangeEvent<HTMLInputElement>) => {
             const next = normalizeCanvasPad(e.target.value, 0)
             enqueueWrite(() => [{ op: 'set', path: ['canvasPadY'], value: next }])
@@ -2125,13 +2151,15 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       '角色四周的画布留白，防止动作甩尾被裁切。'),
   ))
 
-  // 2.6 显示：默认停靠位置 + 归位
-  const homeRight = normalizeHomePosition(state.value?.homeRight, 24)
-  const homeBottom = normalizeHomePosition(state.value?.homeBottom, 20)
+  // 2.6 显示：默认位置（显示区中心点距右/距下） + 归位
+  const homeRight = normalizeHomePosition(state.value?.homeRight, 300)
+  const homeBottom = normalizeHomePosition(state.value?.homeBottom, 260)
   children.push(createElement('div', { key: 'home-position', style: rowStyle },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' } },
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '距右边（px）'),
+    createElement('div', { style: { fontSize: 13, fontWeight: 600, color: C.textPrimary, marginBottom: GAP.sm } },
+      '默认位置（中心点）'),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '中心距右（px）'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'number',
           min: 0,
@@ -2139,15 +2167,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           step: 10,
           value: homeRight,
           disabled: !writable,
-          style: padInputStyle,
+          style: numberInputStyle,
           onChange: (e: ChangeEvent<HTMLInputElement>) => {
             const next = normalizeHomePosition(e.target.value, 0)
             enqueueWrite(() => [{ op: 'set', path: ['homeRight'], value: next }])
           },
         }),
       ),
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '距底部（px）'),
+    ),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '中心距下（px）'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'number',
           min: 0,
@@ -2155,32 +2185,34 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           step: 10,
           value: homeBottom,
           disabled: !writable,
-          style: padInputStyle,
+          style: numberInputStyle,
           onChange: (e: ChangeEvent<HTMLInputElement>) => {
             const next = normalizeHomePosition(e.target.value, 0)
             enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
           },
         }),
       ),
-      createElement('button', {
-        type: 'button',
-        className: 'dsh-btn dsh-btn-secondary',
-        style: buttonSecondaryStyle,
-        disabled: !writable,
-        onClick: resetDisplayPosition,
-      }, '归位'),
-      resetNotice
-        ? createElement('span', {
-          key: 'reset-notice',
-          style: {
-            ...statusTextStyle,
-            color: resetNotice.kind === 'ok' ? C.success : C.error,
-          },
-        }, resetNotice.text)
-        : null,
+    ),
+    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+      createElement('span', { style: formLabelStyle }, '操作'),
+      createElement('div', { style: { ...formControlStyle, flexWrap: 'wrap' } },
+        createElement('button', {
+          type: 'button',
+          className: 'dsh-btn dsh-btn-secondary',
+          style: buttonSecondaryStyle,
+          disabled: !writable,
+          onClick: requestRecenter,
+        }, '归位'),
+        resetNotice
+          ? createElement('span', {
+            key: 'reset-notice',
+            style: { ...statusTextStyle, color: C.success },
+          }, resetNotice)
+          : null,
+      ),
     ),
     createElement('div', { style: { ...sectionDescStyle, margin: '8px 0 0' } },
-      '首次启动 / 点归位时宠物停靠的位置。'),
+      '显示区中心点距窗口右/底边的距离；首次启动与「归位」使用。'),
   ))
 
   // 2.7 显示：对白气泡（位置 + 背景/文字样式）
@@ -2189,17 +2221,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const bubbleBgColor = normalizeHexColor(state.value?.bubbleBgColor, '#ffffff')
   const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
   const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
-  const colorInputStyle: CSSProperties = {
-    ...inputStyle,
-    flex: '0 0 48px',
-    width: 48,
-    padding: 2,
-    cursor: writable ? 'pointer' : 'not-allowed',
-  }
   children.push(createElement('div', { key: 'bubble-style', style: rowStyle },
-    createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' } },
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '水平偏移（px）'),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '水平偏移（px）'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'number',
           min: -1000,
@@ -2207,15 +2232,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           step: 5,
           value: bubbleOffsetX,
           disabled: !writable,
-          style: padInputStyle,
+          style: numberInputStyle,
           onChange: (e: ChangeEvent<HTMLInputElement>) => {
             const next = normalizeBubbleOffset(e.target.value, 0)
             enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetX'], value: next }])
           },
         }),
       ),
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '垂直偏移（px）'),
+    ),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '垂直偏移（px）'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'number',
           min: -1000,
@@ -2223,21 +2250,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           step: 5,
           value: bubbleOffsetY,
           disabled: !writable,
-          style: padInputStyle,
+          style: numberInputStyle,
           onChange: (e: ChangeEvent<HTMLInputElement>) => {
             const next = normalizeBubbleOffset(e.target.value, 0)
             enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetY'], value: next }])
           },
         }),
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, '相对角色顶部中心，负值向上。'),
       ),
     ),
-    createElement('div', { style: { ...sectionDescStyle, margin: '6px 0 0' } },
-      '相对角色顶部中心，负值向上。'),
-    createElement('div', {
-      style: { display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap', marginTop: GAP.sm },
-    },
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '背景色'),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '背景色'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'color',
           value: bubbleBgColor,
@@ -2249,8 +2273,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           },
         }),
       ),
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '背景不透明度（%）'),
+    ),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '背景不透明度（%）'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'number',
           min: 0,
@@ -2258,15 +2284,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           step: 1,
           value: bubbleBgOpacity,
           disabled: !writable,
-          style: padInputStyle,
+          style: numberInputStyle,
           onChange: (e: ChangeEvent<HTMLInputElement>) => {
             const next = normalizeBubbleOpacity(e.target.value, 0)
             enqueueWrite(() => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
           },
         }),
       ),
-      createElement('label', { style: { ...labelStyle, flex: 0 } },
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap' } }, '文字颜色'),
+    ),
+    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+      createElement('span', { style: formLabelStyle }, '文字颜色'),
+      createElement('div', { style: formControlStyle },
         createElement('input', {
           type: 'color',
           value: bubbleTextColor,
@@ -2314,22 +2342,25 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ),
     createElement('div', { style: { ...sectionDescStyle, marginTop: 8 } },
       '仅名称与 URL；动画映射与台词在下方「事件绑定」按事件统一配置。'),
-    createElement('div', { style: { display: 'flex', gap: GAP.sm, alignItems: 'center', flexWrap: 'wrap' } },
-      createElement('input', {
-        style: inputStyle,
-        value: newName,
-        placeholder: '名称',
-        disabled: !writable,
-        onChange: (e: ChangeEvent<HTMLInputElement>) => setNewName(e.target.value),
-      }),
-      createElement('input', {
-        style: { ...inputStyle, flex: 1, minWidth: 140 },
-        value: newUrl,
-        placeholder: 'https://…/xxx.model3.json 或 C:/models/...',
-        disabled: !writable,
-        onChange: (e: ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value),
-      }),
-      createElement('button', { className: 'dsh-btn dsh-btn-primary', style: buttonPrimaryStyle, onClick: addModel, disabled: !writable }, '添加'),
+    createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+      createElement('span', { style: formLabelStyle }, '添加模型'),
+      createElement('div', { style: { display: 'flex', gap: GAP.sm, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 } },
+        createElement('input', {
+          style: { ...inputStyle, flex: '1 1 120px' },
+          value: newName,
+          placeholder: '名称',
+          disabled: !writable,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => setNewName(e.target.value),
+        }),
+        createElement('input', {
+          style: { ...inputStyle, flex: '2 1 200px' },
+          value: newUrl,
+          placeholder: 'https://…/xxx.model3.json 或 C:/models/...',
+          disabled: !writable,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value),
+        }),
+        createElement('button', { className: 'dsh-btn dsh-btn-primary', style: buttonPrimaryStyle, onClick: addModel, disabled: !writable }, '添加'),
+      ),
     ),
   ))
 
@@ -2454,6 +2485,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       '.dsh-live2d-settings input[type="checkbox"], .dsh-live2d-settings input[type="range"] { accent-color: var(--dsw-alias-brand-primary); }' +
       '.dsh-live2d-settings button:focus-visible { outline: 1px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }' +
       '.dsh-live2d-settings .dsh-card-header { border-radius: 6px; transition: background .15s; }' +
+      '.dsh-live2d-settings .dsh-card-header-row { border-radius: 10px 10px 0 0; transition: background .15s; }' +
+      '.dsh-live2d-settings .dsh-card-header-row:hover { background: var(--dsw-alias-bg-layer-2); }' +
       '.dsh-live2d-settings .dsh-card-header:hover { background: var(--dsw-alias-bg-layer-2); }' +
       '.dsh-live2d-settings .dsh-chevron-button:hover { background: var(--dsw-alias-bg-layer-2); border-radius: 6px; }' +
       '.dsh-live2d-settings .dsh-btn { transition: background .12s, border-color .12s; }' +

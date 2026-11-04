@@ -94,6 +94,38 @@ describe('SettingsStore', () => {
     expect(store.get().maxFps).toBe(30)
   })
 
+  it('旧版设置文件（无 version）的 home 语义迁移到新默认（中心点距右/距下）', () => {
+    const store = new SettingsStore(BASE)
+    writeFileSync(store.path, JSON.stringify({
+      enabled: true,
+      size: 200,
+      maxFps: 60,
+      model: 'jian',
+      developerMode: false,
+      debug: false,
+      showTapZones: false,
+      canvasPadX: 130,
+      canvasPadY: 70,
+      homeRight: 24,
+      homeBottom: 20,
+    }), 'utf8')
+    const view = store.view()
+    expect(view.value.homeRight).toBe(BASE.homeRight)
+    expect(view.value.homeBottom).toBe(BASE.homeBottom)
+    expect(view.value.size).toBe(200)
+  })
+
+  it('新版本设置文件的 home 值原样保留', () => {
+    const store = new SettingsStore(BASE)
+    store.applyOps([
+      { op: 'set', path: ['homeRight'], value: 420 },
+      { op: 'set', path: ['homeBottom'], value: 300 },
+    ])
+    const view = store.view()
+    expect(view.value.homeRight).toBe(420)
+    expect(view.value.homeBottom).toBe(300)
+  })
+
   it('文件损坏时沿用上次好结果并报错', () => {
     const store = new SettingsStore(BASE)
     store.applyOps([{ op: 'set', path: ['size'], value: 200 }])

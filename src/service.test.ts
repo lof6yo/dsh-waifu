@@ -245,10 +245,10 @@ describe('PetService 显示配置', () => {
     expect(service.snapshot().version).toBe(v0 + 1)
   })
 
-  it('resetDisplay 归位到配置的默认位置（尺寸保持不变）', () => {
+  it('resetDisplay 回到内置默认显示（归位由客户端按中心点计算）', () => {
     const { service } = makeHarness({ homeRight: 40, homeBottom: 30 })
     service.setDisplay({ size: 300, right: -120, bottom: 800 })
-    expect(service.resetDisplay()).toEqual({ right: 40, bottom: 30, size: 300 })
+    expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 160 })
   })
 
   it('snapshot 解析模型 URL：内置同源路径 / 自定义 URL / 失效 id 回退内置', () => {
