@@ -350,12 +350,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let touchboxRaf = 0
   /** 命中层容器（点击穿透，spec §4）：覆盖 canvas，子 div 按触摸部位 box 定位并接收指针事件。 */
   let hitLayer: HTMLDivElement | null = null
-  /** 「脸红」补强叠色层：模型自带脸红偏淡，用两层径向渐变腮红补足（spec §5）。 */
-  let blushLayer: HTMLDivElement | null = null
-  let blushCheekL: HTMLDivElement | null = null
-  let blushCheekR: HTMLDivElement | null = null
-  let blushLevel = 0.6
-  let blushMix = 0
   /** 命中 div ↔ 部位 box 归一化坐标的对应关系（每帧按 model.getBounds 更新 CSS 位置）。 */
   let hitBoxEntries: Array<{ el: HTMLDivElement; box: TouchBox }> = []
   /** 命中层逐帧位置更新循环（跟随模型动作/物理/尺寸）。 */
@@ -901,10 +895,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     hitBoxEntries = []
     hitBoxesSignature = ''
     hitLayer = null
-    blushLayer = null
-    blushCheekL = null
-    blushCheekR = null
-    blushMix = 0
     if (app) { try { app.destroy(true) } catch { /* 已销毁 */ } }
     app = null
     model = null
@@ -953,7 +943,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       hitLayer = document.createElement('div')
       hitLayer.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3'
       petLayer.appendChild(canvas)
-      buildBlushLayer()
       petLayer.appendChild(touchboxOverlay)
       petLayer.appendChild(hitLayer)
       // 气泡改为相对 petLayer 定位，避免调试面板插入后把气泡顶到面板上方
@@ -1155,74 +1144,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (hitLayerRaf) { window.cancelAnimationFrame(hitLayerRaf); hitLayerRaf = 0 }
   }
 
-  /** 构建「脸红」补强叠色层：两层软边腮红，位置/透明度每帧更新（spec §5）。 */
-  function buildBlushLayer(): void {
-    if (!petLayer) return
-    blushLayer = document.createElement('div')
-    blushLayer.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:2;display:none;opacity:0'
-    const cheekStyle = 'position:absolute;border-radius:50%;'
-      + 'background:radial-gradient(closest-side,rgba(255,86,120,0.95) 0%,rgba(255,110,140,0.6) 45%,rgba(255,140,160,0) 100%);'
-      + 'filter:blur(3px)'
-    blushCheekL = document.createElement('div')
-    blushCheekL.style.cssText = cheekStyle
-    blushCheekR = document.createElement('div')
-    blushCheekR.style.cssText = cheekStyle
-    blushLayer.appendChild(blushCheekL)
-    blushLayer.appendChild(blushCheekR)
-    petLayer.appendChild(blushLayer)
-  }
-
-  /**
-   * 「脸红」叠色：表情切到脸红时淡入、离开时淡出；位置取「头发」部位 box（缺省回退「脸」，
-   * 再缺省用包围盒上部），强度由设置里的「脸红叠色」滑杆决定。
-   */
-  function updateBlushOverlay(): void {
-    if (!blushLayer || !blushCheekL || !blushCheekR) return
-    const target = desiredExpression() === 'blush' ? 1 : 0
-    blushMix += (target - blushMix) * 0.18
-    if (Math.abs(target - blushMix) < 0.01) blushMix = target
-    const strength = blushLevel * blushMix
-    if (strength < 0.01) {
-      if (blushLayer.style.display !== 'none') blushLayer.style.display = 'none'
-      return
-    }
-    let bounds: { x: number; y: number; width: number; height: number } | null = null
-    try {
-      const b = model?.getBounds?.()
-      if (b && b.width > 0 && b.height > 0) bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
-    } catch { /* 无包围盒 */ }
-    if (!bounds) {
-      blushLayer.style.display = 'none'
-      return
-    }
-    const parts = activeTouchParts()
-    const headBox = parts.find((part) => part.id === 'head' && part.boxes.length > 0)?.boxes[0]
-      ?? parts.find((part) => part.id === 'face' && part.boxes.length > 0)?.boxes[0]
-      ?? { left: 0.3, top: 0.05, right: 0.7, bottom: 0.28 }
-    const { x: bx, y: by, width: bw, height: bh } = bounds
-    const hx = bx + bw * headBox.left
-    const hy = by + bh * headBox.top
-    const hw = bw * (headBox.right - headBox.left)
-    const hh = bh * (headBox.bottom - headBox.top)
-    if (!(hw > 0 && hh > 0)) {
-      blushLayer.style.display = 'none'
-      return
-    }
-    const cheekW = hw * 0.34
-    const cheekH = cheekW * 0.6
-    const centerY = hy + hh * 0.66
-    blushLayer.style.display = ''
-    blushLayer.style.opacity = `${strength.toFixed(3)}`
-    const place = (el: HTMLDivElement, centerX: number): void => {
-      el.style.left = `${centerX - cheekW / 2}px`
-      el.style.top = `${centerY - cheekH / 2}px`
-      el.style.width = `${cheekW}px`
-      el.style.height = `${cheekH}px`
-    }
-    place(blushCheekL, hx + hw * 0.28)
-    place(blushCheekR, hx + hw * 0.72)
-  }
-
   /** 每帧按模型当前包围盒把命中 div 换算成 CSS 像素矩形（跟随动作/物理/尺寸变化）。 */
   function updateHitBoxPositions(): void {
     if (!hitLayer || hitBoxEntries.length === 0) return
@@ -1256,7 +1177,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!hitLayer || !petShown()) return
     const tick = () => {
       updateHitBoxPositions()
-      updateBlushOverlay()
       updateDebugPanelPosition()
       updateBubblePosition()
       hitLayerRaf = window.requestAnimationFrame(tick)
@@ -1706,7 +1626,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       exprCry: (Number(cfg.exprCry) || 0) / 100,
       exprEye: (Number(cfg.exprEye) || 0) / 100,
     }
-    blushLevel = Math.min(1, Math.max(0, (Number(cfg.exprBlush ?? 60) || 0) / 100))
     applyBubbleStyle()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -1857,7 +1776,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           exprCry: (Number(view.config.exprCry) || 0) / 100,
           exprEye: (Number(view.config.exprEye) || 0) / 100,
         }
-        blushLevel = Math.min(1, Math.max(0, (Number(view.config.exprBlush ?? 60) || 0) / 100))
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)
 

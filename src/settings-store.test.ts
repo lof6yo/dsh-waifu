@@ -26,7 +26,6 @@ const BASE: PetSettings = {
   exprAngry2: 0,
   exprCry: 0,
   exprEye: 0,
-  exprBlush: 60,
 }
 
 let home: string

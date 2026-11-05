@@ -93,7 +93,6 @@ export const Config: Schema<Config> = Schema.object({
   exprAngry2: Schema.number().min(0).max(100).default(0),
   exprCry: Schema.number().min(0).max(100).default(0),
   exprEye: Schema.number().min(0).max(100).default(0),
-  exprBlush: Schema.number().min(0).max(100).default(60),
 })
 
 /** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）。 */
@@ -128,7 +127,6 @@ export function apply(ctx: Context, config: Config): void {
     exprAngry2: config.exprAngry2,
     exprCry: config.exprCry,
     exprEye: config.exprEye,
-    exprBlush: config.exprBlush,
   }
   const settingsStore = new SettingsStore(baseSettings)
 
