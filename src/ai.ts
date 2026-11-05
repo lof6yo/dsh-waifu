@@ -69,10 +69,24 @@ export interface ReplyContext {
 /** 注入给模型的最近对话条数上限（防止超长历史把 token 预算吃满）。 */
 export const AI_HISTORY_MAX_ENTRIES: number = AI_HISTORY_LIMITS.max
 
-/** 一条对话历史（`user` = 我们发过去的情景描述，`assistant` = 桌宠当时的台词）。 */
+/**
+ * 一条对话历史（`user` = 我们发过去的情景描述，`assistant` = 桌宠当时的台词）。
+ * assistant 条目额外记住「当时是哪个 provider/model 说的」：pi-ai 适配器重建历史时要读
+ * `message.source`，缺了会直接抛 `Cannot read properties of undefined (reading 'replayState')`。
+ */
 export interface AiHistoryEntry {
   role: 'user' | 'assistant'
   text: string
+  provider?: string
+  model?: string
+}
+
+/** 历史消息的 `source`：assistant 必须是模型来源，user 可以是任何来源（这里用 user）。 */
+export interface HistoryMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: { type: 'text'; text: string }[]
+  source: { kind: 'user' } | { kind: 'model'; provider: string; model: string }
 }
 
 /**
@@ -82,14 +96,22 @@ export interface AiHistoryEntry {
 export function historyMessages(
   history: readonly AiHistoryEntry[],
   count: number,
-): { role: string; content: { type: 'text'; text: string }[] }[] {
+  fallback: { provider: string; model: string },
+): HistoryMessage[] {
   const limit = normalizeHistoryCount(count, 0)
   if (limit <= 0 || history.length === 0) return []
   const tail = history.slice(-limit)
   while (tail.length > 0 && tail[0].role === 'assistant') tail.shift()
   return tail
     .filter((entry) => entry.text.trim().length > 0)
-    .map((entry) => ({ role: entry.role, content: [{ type: 'text' as const, text: entry.text }] }))
+    .map((entry, index) => ({
+      id: `history-${index}`,
+      role: entry.role,
+      content: [{ type: 'text' as const, text: entry.text }],
+      source: entry.role === 'assistant'
+        ? { kind: 'model' as const, provider: entry.provider || fallback.provider, model: entry.model || fallback.model }
+        : { kind: 'user' as const },
+    }))
 }
 
 /** 追加一条历史并按上限裁剪（原地返回新数组，调用方负责替换引用）。 */
@@ -208,7 +230,10 @@ export async function generateReply(
 输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
 不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`,
         messages: [
-          ...historyMessages(options.history ?? [], options.historyCount ?? 0),
+          ...historyMessages(options.history ?? [], options.historyCount ?? 0, {
+            provider: options.provider,
+            model: options.model,
+          }),
           { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context) }] },
         ],
         temperature: 1,

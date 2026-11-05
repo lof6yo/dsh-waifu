@@ -175,6 +175,7 @@ describe('savePersona', () => {
 })
 
 describe('最近对话注入（ADR-030）', () => {
+  const FALLBACK = { provider: 'p', model: 'm' }
   const history: AiHistoryEntry[] = [
     { role: 'user', text: '第 1 句' },
     { role: 'assistant', text: '第 2 句' },
@@ -183,16 +184,16 @@ describe('最近对话注入（ADR-030）', () => {
   ]
 
   it('条数为 0 时不注入', () => {
-    expect(historyMessages(history, 0)).toHaveLength(0)
-    expect(historyMessages([], 10)).toHaveLength(0)
+    expect(historyMessages(history, 0, FALLBACK)).toHaveLength(0)
+    expect(historyMessages([], 10, FALLBACK)).toHaveLength(0)
   })
 
   it('按条数取最近若干条，且丢掉开头没有提问的 assistant', () => {
-    expect(historyMessages(history, 2)).toHaveLength(2)
-    expect(historyMessages(history, 2)[0].role).toBe('user')
+    expect(historyMessages(history, 2, FALLBACK)).toHaveLength(2)
+    expect(historyMessages(history, 2, FALLBACK)[0].role).toBe('user')
     // 取 1 条时末尾是 assistant → 整段丢弃（避免以 assistant 开头的上下文）
-    expect(historyMessages(history, 1)).toHaveLength(0)
-    expect(historyMessages(history, 99)).toHaveLength(4)
+    expect(historyMessages(history, 1, FALLBACK)).toHaveLength(0)
+    expect(historyMessages(history, 99, FALLBACK)).toHaveLength(4)
   })
 
   it('注入内容排在当前情景之前', async () => {
@@ -211,6 +212,8 @@ describe('最近对话注入（ADR-030）', () => {
     expect(messages[1].role).toBe('assistant')
     expect(messages[2].role).toBe('user')
     expect(JSON.stringify(messages[0])).toContain('第 3 句')
+    // assistant 历史必须带 source（否则 pi-ai 重建历史时读 message.source.replayState 崩）
+    expect(messages[1]).toMatchObject({ role: 'assistant', source: { kind: 'model' } })
     expect(JSON.stringify(messages[2])).toContain('主人刚戳了你的「脸」')
   })
 

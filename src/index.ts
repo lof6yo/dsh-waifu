@@ -218,7 +218,11 @@ export function apply(ctx: Context, config: Config): void {
       if (attempt.text) {
         // 只记录成功的往来：失败的请求不该污染上下文
         aiHistory = appendHistory(aiHistory, { role: 'user', text: buildSceneMessage(input) })
-        aiHistory = appendHistory(aiHistory, { role: 'assistant', text: attempt.text }, AI_HISTORY_MAX_ENTRIES)
+        aiHistory = appendHistory(
+          aiHistory,
+          { role: 'assistant', text: attempt.text, provider: settings.aiProvider, model: settings.aiModel },
+          AI_HISTORY_MAX_ENTRIES,
+        )
         return { ok: true, text: attempt.text }
       }
       // 失败原因回传（ADR-028）：设置页/排查时能直接看到是「没配 provider」还是「模型空回复」
