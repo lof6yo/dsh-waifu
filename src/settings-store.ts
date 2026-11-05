@@ -16,8 +16,6 @@ import { petHomeDir, fileStamp } from './home.ts'
 import { clampInt } from './clamp.ts'
 import {
   AI_HISTORY_LIMITS,
-  normalizeTtsEngine,
-  type TtsEngineId,
   normalizeInteractionMode,
   normalizeLipsyncGain,
   ttsModelRandomVoice,
@@ -97,12 +95,6 @@ export interface PetSettings {
   ttsEnabled: boolean
   /** 语音引擎 id（目前只有 openrouter）。 */
   ttsEngine: string
-  /** Fish Audio 原生接口的模型（`drama-3` / `s2.1-pro-free` …），仅在引擎为 fish 时用。 */
-  fishModel: string
-  /** Fish 的音色 id（`reference_id`），空 = 供应商默认音色。 */
-  fishVoice: string
-  /** Fish API key（本地明文；优先用 DSH 凭据 `FISH_API_KEY`）。 */
-  fishApiKey: string
   /** 语音模型 slug（OpenRouter 的 speech 模型）。 */
   ttsModel: string
   /** 音色标识（空 = 模型默认）。 */
@@ -257,10 +249,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     waitingAiInterval: clampInt(record.waitingAiInterval, base.waitingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
     waitingAiMax: clampInt(record.waitingAiMax, base.waitingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
     ttsEnabled: bool('ttsEnabled'),
-    ttsEngine: normalizeTtsEngine(record.ttsEngine, base.ttsEngine as TtsEngineId),
-    fishModel: pickString(record.fishModel) ?? base.fishModel,
-    fishVoice: typeof record.fishVoice === 'string' ? record.fishVoice.trim().slice(0, 64) : base.fishVoice,
-    fishApiKey: typeof record.fishApiKey === 'string' ? record.fishApiKey.trim().slice(0, 200) : base.fishApiKey,
+    ttsEngine: pickString(record.ttsEngine) ?? base.ttsEngine,
     ttsModel: voiceFix.model,
     // 音色与演绎指令允许空串（空 = 模型默认音色 / 不加语气提示），所以不走 pickString
     ttsVoice: voiceFix.voice,

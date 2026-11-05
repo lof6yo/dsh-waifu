@@ -48,7 +48,6 @@ import {
   normalizeLipsyncGain,
   DEFAULT_INTERACTION_MODE,
   TTS_MODELS,
-  FISH_TTS_MODELS,
   ttsDefaultVoice,
   ttsModelOption,
   type InteractionMode,
@@ -109,14 +108,6 @@ export interface PetSettingsValue {
   aiHistoryCount: number
   /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
   ttsEnabled: boolean
-  /** 语音供应商：`openrouter` 走无状态克隆，`fish` 走 Fish 原生 `reference_id`。 */
-  ttsEngine: string
-  /** Fish 原生接口的模型。 */
-  fishModel: string
-  /** Fish 的音色 id（`reference_id`）。 */
-  fishVoice: string
-  /** Fish API key（留空则读 DSH 凭据）。 */
-  fishApiKey: string
   /** 语音模型 slug（OpenRouter speech 模型）。 */
   ttsModel: string
   /** 音色标识（空 = 模型默认）。 */
@@ -2875,11 +2866,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   // 将来接 ElevenLabs/MiniMax 的真流式实现时只需加引擎，不动这页。
   // 模型与音色都走目录下拉：Drama 3 这类没有 `supported_voices` 的模型每句都会换人声，
   // 只能用「音色可固定」的模型才稳定（ADR-033 修订）。
-  // 引擎由模型下拉的第二组决定（ADR-033 修订三）：`fish:` 前缀 = 走 Fish 原生接口
-  const fishSelected = value.ttsEngine === 'fish'
-  const currentModelValue = fishSelected ? `fish:${value.fishModel}` : value.ttsModel
   const voiceModel = ttsModelOption(value.ttsModel)
-  const randomVoice = !fishSelected && voiceModel?.randomVoice === true
+  const randomVoice = voiceModel?.randomVoice === true
   const voiceOptions = voiceModel?.voices ?? []
   children.push(createElement('div', { key: 'voice', style: sectionStyle },
     createElement(SectionHeader, {
@@ -2898,66 +2886,31 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         createElement('span', { style: formLabelInlineStyle }, '语音模型'),
         createElement('div', { style: formControlInlineStyle },
           createElement('select', {
-            value: currentModelValue,
+            value: value.ttsModel,
             disabled: !writable,
-            style: { ...selectStyle, width: 300 },
+            style: { ...selectStyle, width: 260 },
             onChange: (e: ChangeEvent<HTMLSelectElement>) => {
               const next = e.target.value
-              if (next === currentModelValue) return
-              // Fish 原生：只换引擎与 fishModel，OpenRouter 的选择留着下次切回来
-              if (next.startsWith('fish:')) {
-                const model = next.slice('fish:'.length)
-                enqueueWrite(() => [
-                  { op: 'set', path: ['ttsEngine'], value: 'fish' },
-                  { op: 'set', path: ['fishModel'], value: model },
-                ])
-                return
-              }
+              if (next === value.ttsModel) return
               // 换模型时音色跟着换成该模型的首个音色（随机音色模型则清空）
               const voice = ttsDefaultVoice(next)
               enqueueWrite(() => [
-                { op: 'set', path: ['ttsEngine'], value: 'openrouter' },
                 { op: 'set', path: ['ttsModel'], value: next },
                 { op: 'set', path: ['ttsVoice'], value: voice },
               ])
             },
           },
-          createElement('optgroup', { label: 'OpenRouter' },
-            // 目录外的旧模型 id 也要能显示出来，否则下拉会静默跳到第一项
-            (ttsModelOption(value.ttsModel) ? [] : [value.ttsModel])
-              .concat(TTS_MODELS.map((item) => item.id))
-              .map((id) => createElement('option', { key: id, value: id },
-                ttsModelOption(id)?.label ?? `自定义：${id}`)),
-          ),
-          createElement('optgroup', { label: 'Fish Audio（原生，reference_id 固定音色）' },
-            FISH_TTS_MODELS.map((item) => createElement('option', {
-              key: `fish:${item.id}`,
-              value: `fish:${item.id}`,
-            }, item.label)),
-          ),
+          // 目录外的旧模型 id 也要能显示出来，否则下拉会静默跳到第一项
+          (ttsModelOption(value.ttsModel) ? [] : [value.ttsModel])
+            .concat(TTS_MODELS.map((item) => item.id))
+            .map((id) => createElement('option', { key: id, value: id },
+              ttsModelOption(id)?.label ?? `自定义：${id}`)),
           ),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, fishSelected ? '音色 ID' : '音色'),
-        fishSelected
-          ? createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
-            createElement('input', {
-              type: 'text',
-              defaultValue: value.fishVoice,
-              disabled: !writable,
-              placeholder: 'reference_id，例如 b0c9f71fbfa84584a65e08ac5a600be4',
-              style: { ...inputStyle, width: 300 },
-              onBlur: (e: FocusEvent<HTMLInputElement>) => {
-                const next = e.target.value.trim()
-                if (next === value.fishVoice) return
-                enqueueWrite(() => [{ op: 'set', path: ['fishVoice'], value: next }])
-              },
-            }),
-            createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
-              value.fishVoice ? '已固定音色' : '留空 = 供应商默认音色'),
-          )
-          : createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
+        createElement('span', { style: formLabelInlineStyle }, '音色'),
+        createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
           createElement('select', {
             value: value.ttsVoice,
             disabled: !writable || randomVoice,
@@ -2979,25 +2932,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           ),
           createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
             randomVoice ? '该模型没有固定音色，每句都会换人声' : '固定音色，改完点「试听一句」确认'),
-        ),
-      ),
-      fishSelected && createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, 'Fish API Key'),
-        createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
-          createElement('input', {
-            type: 'password',
-            defaultValue: value.fishApiKey,
-            disabled: !writable,
-            placeholder: '留空则读 DSH 凭据 FISH_API_KEY',
-            style: { ...inputStyle, width: 300 },
-            onBlur: (e: FocusEvent<HTMLInputElement>) => {
-              const next = e.target.value.trim()
-              if (next === value.fishApiKey) return
-              enqueueWrite(() => [{ op: 'set', path: ['fishApiKey'], value: next }])
-            },
-          }),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
-            'API 额度与订阅额度分开；drama-3 需单独充值，s2.1-pro-free 免费'),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
@@ -3063,8 +2997,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             ttsStatus ?? '用当前的模型 / 音色 / 演绎指令合成一句话'),
         ),
       ),
-      // 音色样本是无状态克隆用的；Fish 原生用 reference_id，不需要它
-      fishSelected ? null : createElement('div', { style: formRowInlineStyle },
+      createElement('div', { style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '音色样本'),
         createElement('div', { style: { ...formControlInlineStyle, flexWrap: 'wrap', gap: GAP.sm } },
           createElement('button', {

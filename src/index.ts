@@ -71,7 +71,7 @@ import {
   resolveMotionMap,
 } from './models-host.ts'
 import { SettingsStore, type PetSettings } from './settings-store.ts'
-import { FishTtsEngine, OpenRouterTtsEngine, type TtsAudio, type TtsEngine, type TtsVoiceOptions } from './tts.ts'
+import { OpenRouterTtsEngine, type TtsAudio, type TtsVoiceOptions } from './tts.ts'
 import { runSpeakPipeline } from './speak.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
@@ -159,9 +159,6 @@ export const Config: Schema<Config> = Schema.object({
   // 语音合成与口型（ADR-033）：模型/音色/演绎指令全部留成设置项，换供应商只加引擎实现
   ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
   ttsEngine: Schema.string().default(DEFAULT_SETTINGS.ttsEngine),
-  fishModel: Schema.string().default(DEFAULT_SETTINGS.fishModel),
-  fishVoice: Schema.string().default(DEFAULT_SETTINGS.fishVoice),
-  fishApiKey: Schema.string().default(DEFAULT_SETTINGS.fishApiKey),
   ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
   ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
   ttsReference: Schema.string().default(DEFAULT_SETTINGS.ttsReference),
@@ -213,9 +210,6 @@ export function apply(ctx: Context, config: Config): void {
     waitingAiMax: config.waitingAiMax,
     ttsEnabled: config.ttsEnabled,
     ttsEngine: config.ttsEngine,
-    fishModel: config.fishModel,
-    fishVoice: config.fishVoice,
-    fishApiKey: config.fishApiKey,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
     ttsReference: config.ttsReference,
@@ -344,23 +338,7 @@ export function apply(ctx: Context, config: Config): void {
       return undefined
     }
   }
-  /** Fish 原生接口的 key：设置页填了就用它，否则读 DSH 凭据 `FISH_API_KEY`。 */
-  const resolveFishKey = async (): Promise<string | undefined> => {
-    const fromSettings = settingsStore.get().fishApiKey.trim()
-    if (fromSettings) return fromSettings
-    if (!credentials) return undefined
-    try {
-      const resolved = await credentials.resolve('FISH_API_KEY')
-      return resolved?.value
-    } catch {
-      return undefined
-    }
-  }
-  const openRouterEngine = new OpenRouterTtsEngine(resolveOpenRouterKey, dirname(settingsStore.path))
-  const fishEngine = new FishTtsEngine(resolveFishKey, dirname(settingsStore.path))
-  /** 当前引擎：每次按设置取，切引擎不需要重启。 */
-  const ttsEngine = (): TtsEngine =>
-    settingsStore.get().ttsEngine === 'fish' ? fishEngine : openRouterEngine
+  const ttsEngine = new OpenRouterTtsEngine(resolveOpenRouterKey, dirname(settingsStore.path))
   const voiceDir = (): string => join(dirname(settingsStore.path), TTS_REFERENCE_DIR)
   const voiceFile = (): string => join(voiceDir(), TTS_REFERENCE_FILENAME)
   // 参考样本读进内存后按 mtime/size 缓存：一句一读 100 KB 不值得，但换了样本要立刻生效
@@ -388,10 +366,6 @@ export function apply(ctx: Context, config: Config): void {
   }
   const voiceOptions = async (): Promise<TtsVoiceOptions> => {
     const settings = settingsStore.get()
-    // Fish 原生：drama-3 也没有固定音色，直接用 reference_id 钉住，不需要参考资料样本
-    if (settings.ttsEngine === 'fish') {
-      return { model: settings.fishModel, voice: settings.fishVoice.trim() || undefined }
-    }
     return {
       model: settings.ttsModel,
       voice: settings.ttsVoice.trim() || undefined,
@@ -403,7 +377,7 @@ export function apply(ctx: Context, config: Config): void {
   const speakApi: SpeakRoutesApi = {
     // 排查用单段合成：设置页「试听」与 curl 都走这里
     synthesize: async (text) => {
-      const audio = await ttsEngine().synthesize(text, await voiceOptions())
+      const audio = await ttsEngine.synthesize(text, await voiceOptions())
       return { mime: audio.mime, audio: audio.audio }
     },
     stream: async (input, emit, signal) => {
@@ -435,7 +409,7 @@ export function apply(ctx: Context, config: Config): void {
       const synthesize = async (text: string): Promise<TtsAudio | null> => {
         if (!speakOn || signal.aborted) return null
         try {
-          return await ttsEngine().synthesize(text, speakOptions, signal)
+          return await ttsEngine.synthesize(text, speakOptions, signal)
         } catch {
           // 合成失败不让气泡断掉：这一段没声音，文字照常上屏
           return null
@@ -479,7 +453,7 @@ export function apply(ctx: Context, config: Config): void {
       const samples: { mime: string; data: string }[] = []
       for (let index = 0; index < count; index += 1) {
         try {
-          const audio = await ttsEngine().synthesize(line, base)
+          const audio = await ttsEngine.synthesize(line, base)
           samples.push({ mime: audio.mime, data: audio.audio.toString('base64') })
         } catch (error) {
           if (samples.length === 0) throw error

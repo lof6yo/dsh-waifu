@@ -125,7 +125,6 @@ dsh plugin --profile <profile> remove dsh-waifu
 - 合成走 OpenRouter 的 `/api/v1/audio/speech`（OpenAI 兼容），默认模型 `fish-audio/drama-3`；Key 直接用 DSH 凭据里的 `OPENROUTER_API_KEY`（就是在「设置 → 模型」里填过的那份），不用在这里再填一次
 - **同步方式**：模型出字的同时按标点切成小段，每段立刻合成 → 该段音频**开始播放时**气泡才出现这一段文字。所以不会出现「字全出来了声音还没跟上」，也不会出现「说着上一句、屏幕上是下一句」
 - **口型**：`ParamMouthOpenY` 由正在播放的那段音频的波形能量驱动（张得快、收得慢），强度 0–300% 可调；不想要口型可以单独关掉
-- **语音引擎**：模型下拉分两组——`OpenRouter` 走 `/api/v1/audio/speech`（drama-3 用「音色样本」做无状态克隆）；`Fish Audio` 走原生 `api.fish.audio`，用 `reference_id` 固定音色（key 填在设置页 `Fish API Key`，留空则读 DSH 凭据 `FISH_API_KEY`）。注意 Fish 的 API 额度与订阅额度分开：免费只覆盖 `s2.1-pro-free`，`drama-3` 需单独充值
 - **音色样本**：点「生成候选（3 条）」→ 试听后「用这条」，插件把这段 mp3 存到 `$DSH_HOME/waifu/voices/reference.mp3`，之后每次合成都带它做无状态音色克隆，人声就固定了；「清除已固定的样本」恢复随机人声
 - **演绎指令**：一句话描述想要的声音（默认「年轻女性，语气自然，带点得意和小脾气」）。Fish Audio 会把它拼在文本前面当语气提示；想更细可以在人设里直接写方括号标签，例如 `[小声] 才不要呢…`
 - **试听一句**：设置页按钮，直接用当前模型 / 音色 / 指令合成一句话播放，调参不用反复去戳宠物

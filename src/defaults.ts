@@ -156,31 +156,6 @@ export function normalizeInteractionMode(value: unknown, fallback: InteractionMo
  * 标量设置默认值（除 `model`：模型 id 由内置 preset 目录动态决定）。
  * 与 `Config` schema 的 `.default()`、设置页 `DEFAULT_VALUE` 保持逐项一致。
  */
-/** 可选的语音供应商（ADR-033 修订三）：OpenRouter 走无状态克隆，Fish 走原生 `reference_id`。 */
-export const TTS_ENGINES = [
-  { id: 'openrouter', label: 'OpenRouter（复用现成 key）' },
-  { id: 'fish', label: 'Fish Audio（原生，音色更稳）' },
-] as const
-
-export type TtsEngineId = (typeof TTS_ENGINES)[number]['id']
-
-/** Fish Audio 原生接口的模型（`model` 放在请求头）。 */
-export const FISH_TTS_MODELS = [
-  { id: 'drama-3', label: 'Drama 3（最会演；API 额度需单独充值）' },
-  { id: 's2.1-pro-free', label: 'S2.1 Pro Free（免费额度）' },
-  { id: 's2.1-pro', label: 'S2.1 Pro' },
-] as const
-
-export const DEFAULT_FISH_MODEL = 'drama-3'
-export const DEFAULT_FISH_VOICE = ''
-
-/** 语音供应商归一化：未知值回退（不静默改成别的引擎会让用户的 key 白配）。 */
-export function normalizeTtsEngine(value: unknown, fallback: TtsEngineId): TtsEngineId {
-  if (typeof value !== 'string') return fallback
-  const id = value.trim()
-  return TTS_ENGINES.some((item) => item.id === id) ? (id as TtsEngineId) : fallback
-}
-
 export const DEFAULT_SETTINGS = {
   enabled: true,
   size: DEFAULT_DISPLAY.size,
@@ -208,9 +183,6 @@ export const DEFAULT_SETTINGS = {
   interactionMode: DEFAULT_INTERACTION_MODE,
   ttsEnabled: DEFAULT_TTS_ENABLED,
   ttsEngine: DEFAULT_TTS_ENGINE,
-  fishModel: DEFAULT_FISH_MODEL,
-  fishVoice: DEFAULT_FISH_VOICE,
-  fishApiKey: '',
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: DEFAULT_TTS_VOICE,
   ttsReference: DEFAULT_TTS_REFERENCE,

@@ -12,7 +12,6 @@
 
 ### Added
 
-- **语音引擎可切 Fish Audio 原生**（ADR-033 修订三）：模型下拉分成 `OpenRouter` 与 `Fish Audio` 两组，选 Fish 就走 `POST https://api.fish.audio/v1/tts`，`model` 放请求头、`reference_id` 固定音色（不再需要音色样本）；key 优先用设置页填的 `fishApiKey`，其次读 DSH 凭据 `FISH_API_KEY`。两个引擎共用缓存/超时/错误透传实现
 - **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`，默认 `fish-audio/drama-3`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、演绎指令、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
 - **音色样本把 Drama 3 的人声钉住**（ADR-033 修订二）：Drama 3 是 OpenRouter 上最会演的语音模型，但没有固定音色。现在可以在设置页「生成候选（3 条）」试听后采用一条，插件把它存到 `$DSH_HOME/waifu/voices/reference.mp3`，之后每次合成带上这份样本走 **无状态音色克隆**（`input_references`），人声固定、表演力不变；`microsoft/mai-voice-2.1-flash` 已从目录删除（用户实测效果差）。设置文件版本升到 6，旧文件里的 MAI-Voice 自动回落到 Drama 3；样本可选，不选时仍会每句换人声
 - 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
