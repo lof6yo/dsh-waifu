@@ -278,6 +278,19 @@ function describeFinish(reason: unknown): string | undefined {
   return parts.length === 0 ? undefined : parts.join(': ')
 }
 
+/**
+ * 拼 system 提示词：人设 + 输出要求（长度/单行/不旁白/不复述参考台词）。
+ * 一次性回复与流式回复共用，保证两条路径的口味一致。
+ * @param persona - 人设正文（`$DSH_HOME/waifu/persona.md`）。
+ * @returns 完整 system 字符串。
+ */
+export function systemPrompt(persona: string): string {
+  return `${persona}
+
+输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
+不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`
+}
+
 export async function generateReply(
   llm: WaifuLlm,
   options: {
@@ -298,10 +311,7 @@ export async function generateReply(
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const system = `${options.persona}
-
-输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
-不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`
+      const system = systemPrompt(options.persona)
       const history = historyMessages(options.history ?? [], options.historyCount ?? 0, {
         provider: options.provider,
         model: options.model,
@@ -357,4 +367,91 @@ export async function generateReply(
   if (!first.error?.startsWith('empty')) return first
   const retry = await attempt('off')
   return retry.text === null ? first : retry
+}
+
+/** 流式回复的一块：文本增量，或收尾（携带清洗后的整句）。 */
+export type ReplyChunk =
+  | { type: 'delta'; text: string }
+  | { type: 'done'; text: string }
+  | { type: 'error'; error: string }
+
+/**
+ * 流式回复：把 LLM 的 `text-delta` 原样吐给调用方（供气泡逐字显示 + 句读切分），
+ * 结束时给出清洗后的整句（与 `generateReply` 同一套 `sanitizeLine` / system 提示词）。
+ *
+ * 与 `generateReply` 的差别：这里不重试。重试要重发整段请求，流式下会把已经说出口的
+ * 半句再念一遍，反而更糟；空回复由调用方按「无台词」处理。
+ * @param llm - DSH 的 `ctx.llm`。
+ * @param options - provider/model/人设/场景/历史与载荷回调。
+ * @yields 文本增量、收尾整句或失败原因。
+ */
+export async function* streamReply(
+  llm: WaifuLlm,
+  options: {
+    provider: string
+    model: string
+    persona: string
+    context: ReplyContext
+    timeoutMs?: number
+    history?: readonly AiHistoryEntry[]
+    historyCount?: number
+    onPayload?: (payload: AiPayload) => void
+    signal?: AbortSignal
+  },
+): AsyncGenerator<ReplyChunk> {
+  const timeoutMs = options.timeoutMs ?? 20_000
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const forward = () => controller.abort()
+  options.signal?.addEventListener('abort', forward, { once: true })
+  let raw = ''
+  try {
+    const system = systemPrompt(options.persona)
+    const history = historyMessages(options.history ?? [], options.historyCount ?? 0, {
+      provider: options.provider,
+      model: options.model,
+    })
+    const messages = [
+      ...history,
+      { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context) }] },
+    ]
+    options.onPayload?.({
+      provider: options.provider,
+      model: options.model,
+      system,
+      messages: messages.map((message) => ({
+        role: message.role,
+        content: message.content
+          .map((part) => (typeof part === 'object' && part !== null && 'text' in part ? String(part.text) : ''))
+          .join(''),
+      })),
+    })
+    const stream = llm.stream({
+      provider: options.provider,
+      model: options.model,
+      system,
+      messages,
+      temperature: 1,
+      maxTokens: 120,
+      signal: controller.signal,
+    })
+    let finish: string | undefined
+    for await (const chunk of stream) {
+      if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+        raw += chunk.text
+        yield { type: 'delta', text: chunk.text }
+      } else if (chunk.type === 'finish') {
+        finish = describeFinish((chunk as { reason?: unknown }).reason)
+      }
+    }
+    const line = sanitizeLine(raw)
+    if (line) yield { type: 'done', text: line }
+    else yield { type: 'error', error: raw ? 'empty-after-sanitize' : `empty-stream${finish === undefined ? '' : ` (${finish})`}` }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    yield { type: 'error', error: reason.slice(0, 200) || 'stream-failed' }
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', forward)
+  }
 }

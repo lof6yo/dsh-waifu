@@ -38,3 +38,4 @@
 | [030](030-ai-history-injection.md) | AI 演绎注入最近对话历史（条数可配，默认 10） | Accepted |
 | [031](031-ai-takeover.md) | 全 AI 接管：不显示固定对白，长状态延迟失效、入态即请求模型 | Accepted |
 | [032](032-interaction-priority.md) | 打断优先级：触摸优先 / 互相打断 / 事件优先 | Accepted |
+| [033](033-tts-streaming-lipsync.md) | 语音合成按句读流式，气泡与口型吃同一段音频 | Accepted |

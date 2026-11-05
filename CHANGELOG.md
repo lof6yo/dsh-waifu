@@ -12,6 +12,9 @@
 
 ### Added
 
+- **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`，默认 `fish-audio/drama-3`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、演绎指令、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
+- 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
+
 - **AI 请求注入时间**：当前情景带上「现在是 X月X日 周X HH:MM」，注入历史每条带 `[HH:MM]`（跨天 `[M/D HH:MM]`）时间戳，模型可判断两次互动隔了多久（ADR-030 修订）
 
 - **打断优先级设置 `interactionMode`**（ADR-032）：触摸优先（默认，触摸立刻接管长状态演绎）/ 互相打断 / 事件优先三档；长状态期间点宠物不再没反应

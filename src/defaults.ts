@@ -34,6 +34,28 @@ export const DEFAULT_AI_MODEL = 'deepseek-flash'
 /** 注入到 prompt 的最近对话条数（0 = 不注入；ADR-030）。 */
 export const DEFAULT_AI_HISTORY = 10
 
+/** 语音合成（TTS，ADR-033）：默认引擎 = OpenRouter 的 `/api/v1/audio/speech`。 */
+export const DEFAULT_TTS_ENABLED = true
+/** 引擎 id（目前只有 openrouter；留给将来直连 ElevenLabs / MiniMax 的实现）。 */
+export const DEFAULT_TTS_ENGINE = 'openrouter'
+/** 默认 TTS 模型：Fish Audio Drama 3（支持方括号演绎指令，中文自然）。 */
+export const DEFAULT_TTS_MODEL = 'fish-audio/drama-3'
+/** 默认音色（空 = 用模型默认音色）。 */
+export const DEFAULT_TTS_VOICE = ''
+/** 演绎指令：Fish Audio 会把它拼进文本开头当作语气提示。 */
+export const DEFAULT_TTS_INSTRUCTIONS = '年轻女性，语气自然，带点得意和小脾气'
+/** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */
+export const DEFAULT_LIPSYNC_ENABLED = true
+/** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
+export const DEFAULT_LIPSYNC_GAIN = 100
+/** 口型强度边界。 */
+export const LIPSYNC_GAIN_LIMITS = { min: 0, max: 300 } as const
+
+/** 归一化口型强度：0–300 的整数，非法值回退默认。 */
+export function normalizeLipsyncGain(value: unknown, fallback: number): number {
+  return clampInt(value, fallback, LIPSYNC_GAIN_LIMITS.min, LIPSYNC_GAIN_LIMITS.max)
+}
+
 /** 注入历史条数的边界（条 = 一条消息；0 = 不注入）。 */
 export const AI_HISTORY_LIMITS = { min: 0, max: 50 } as const
 
@@ -86,4 +108,11 @@ export const DEFAULT_SETTINGS = {
   aiModel: DEFAULT_AI_MODEL,
   aiHistoryCount: DEFAULT_AI_HISTORY,
   interactionMode: DEFAULT_INTERACTION_MODE,
+  ttsEnabled: DEFAULT_TTS_ENABLED,
+  ttsEngine: DEFAULT_TTS_ENGINE,
+  ttsModel: DEFAULT_TTS_MODEL,
+  ttsVoice: DEFAULT_TTS_VOICE,
+  ttsInstructions: DEFAULT_TTS_INSTRUCTIONS,
+  lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,
+  lipsyncGain: DEFAULT_LIPSYNC_GAIN,
 } as const

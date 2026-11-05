@@ -43,13 +43,18 @@ import {
   DEFAULT_AI_HISTORY,
   DEFAULT_MODEL_ID,
   DEFAULT_SETTINGS,
+  LIPSYNC_GAIN_LIMITS,
   normalizeHistoryCount,
+  normalizeLipsyncGain,
   DEFAULT_INTERACTION_MODE,
   type InteractionMode,
 } from '../defaults.ts'
 import { clientLog } from './client-log.ts'
 import { emitCaptureHome, emitRecenter } from './pet-commands.ts'
 import { emitTouchEdit } from './touch-edit.ts'
+
+/** 插件 API 前缀（与 index.ts / client-log.ts 保持一致）。 */
+const PET_API = '/api/dsh-waifu'
 
 /** 设置解析值（与 Host PetSettings 对齐）。 */
 export interface PetSettingsValue {
@@ -98,6 +103,18 @@ export interface PetSettingsValue {
   interactionMode: InteractionMode
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10，ADR-030）。 */
   aiHistoryCount: number
+  /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
+  ttsEnabled: boolean
+  /** 语音模型 slug（OpenRouter speech 模型）。 */
+  ttsModel: string
+  /** 音色标识（空 = 模型默认）。 */
+  ttsVoice: string
+  /** 演绎指令（Fish Audio 拼进文本开头当语气提示）。 */
+  ttsInstructions: string
+  /** 口型跟随开关。 */
+  lipsyncEnabled: boolean
+  /** 口型强度（0–300）。 */
+  lipsyncGain: number
   /** 长状态「思考」AI 演绎节奏：入态延迟（秒）/ 间隔（秒）/ 每次入态上限（ADR-026）。 */
   thinkingAiDelay: number
   thinkingAiInterval: number
@@ -1262,6 +1279,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const [personaDraft, setPersonaDraft] = useState<string | null>(null)
   const [personaStatus, setPersonaStatus] = useState<string | null>(null)
   const [personaSaving, setPersonaSaving] = useState(false)
+  const [ttsStatus, setTtsStatus] = useState<string | null>(null)
+  const [ttsBusy, setTtsBusy] = useState(false)
   const [aiCheckStatus, setAiCheckStatus] = useState<{ ok: boolean; text: string } | null>(null)
   const [aiChecking, setAiChecking] = useState(false)
 
@@ -2511,6 +2530,29 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ? modelChoices
     : [{ id: value.aiModel, name: value.aiModel }, ...modelChoices]
 
+  /** 试听：把一句样例发给 /tts，拿回 mp3 直接播（不写缓存文件、不改设置）。 */
+  const auditionVoice = async (): Promise<void> => {
+    if (ttsBusy) return
+    setTtsBusy(true)
+    setTtsStatus('合成中…')
+    try {
+      const res = await fetch(`${PET_API}/tts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '哼，主人又在偷看我了？我可没那么好哄哦。' }),
+      })
+      const payload = await res.json() as { ok?: boolean; data?: string; error?: string }
+      if (!payload.ok || !payload.data) throw new Error(payload.error ?? `http ${res.status}`)
+      const audio = new Audio(`data:audio/mpeg;base64,${payload.data}`)
+      void audio.play().catch(() => undefined)
+      setTtsStatus('试听已播放')
+    } catch (error) {
+      setTtsStatus(`试听失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setTtsBusy(false)
+    }
+  }
+
   // 6. AI 回复（ADR-025）：复用 DSH 已配置的 provider/model；人设读 $DSH_HOME/waifu/persona.md
   children.push(createElement('div', { key: 'ai-reply', style: sectionStyle },
     createElement(SectionHeader, {
@@ -2723,7 +2765,122 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ),
   ))
 
-  // 7. 开发者选项
+  // 7. 语音（ADR-033）：OpenRouter 的 /api/v1/audio/speech；模型/音色/演绎指令都留成设置项，
+  // 将来接 ElevenLabs/MiniMax 的真流式实现时只需加引擎，不动这页。
+  children.push(createElement('div', { key: 'voice', style: sectionStyle },
+    createElement(SectionHeader, {
+      title: '语音',
+      description: '开启后 AI 台词按句读逐段合成并播放，气泡跟着语音逐段显示，口型跟随音频。',
+      action: createElement(ThemeSwitch, {
+        checked: !!value.ttsEnabled,
+        disabled: !writable,
+        onChange: (next) => {
+          enqueueWrite(() => [{ op: 'set', path: ['ttsEnabled'], value: next }])
+        },
+      }),
+    }),
+    !!value.ttsEnabled && createElement('div', null,
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '语音模型'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'text',
+            defaultValue: value.ttsModel,
+            disabled: !writable,
+            placeholder: 'fish-audio/drama-3',
+            style: { ...inputStyle, width: 220 },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              const next = e.target.value.trim()
+              if (!next || next === value.ttsModel) return
+              enqueueWrite(() => [{ op: 'set', path: ['ttsModel'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '音色（空 = 模型默认）'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'text',
+            defaultValue: value.ttsVoice,
+            disabled: !writable,
+            placeholder: '留空用默认音色',
+            style: { ...inputStyle, width: 220 },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              const next = e.target.value.trim()
+              if (next === value.ttsVoice) return
+              enqueueWrite(() => [{ op: 'set', path: ['ttsVoice'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '演绎指令'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'text',
+            defaultValue: value.ttsInstructions,
+            disabled: !writable,
+            placeholder: '年轻女性，语气自然，带点得意和小脾气',
+            style: { ...inputStyle, width: 260 },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              const next = e.target.value.trim()
+              if (next === value.ttsInstructions) return
+              enqueueWrite(() => [{ op: 'set', path: ['ttsInstructions'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '口型跟随'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement(ThemeSwitch, {
+            checked: !!value.lipsyncEnabled,
+            disabled: !writable,
+            onChange: (next) => {
+              enqueueWrite(() => [{ op: 'set', path: ['lipsyncEnabled'], value: next }])
+            },
+          }),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginLeft: 8 } },
+            value.lipsyncEnabled ? '按正在播放的音频能量张嘴' : '不驱动口型（ParamMouthOpenY）'),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '口型强度'),
+        createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
+          createElement('input', {
+            type: 'range',
+            min: LIPSYNC_GAIN_LIMITS.min,
+            max: LIPSYNC_GAIN_LIMITS.max,
+            step: 10,
+            value: value.lipsyncGain,
+            disabled: !writable,
+            style: { width: 180 },
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeLipsyncGain(e.target.value, DEFAULT_SETTINGS.lipsyncGain)
+              enqueueWrite(() => [{ op: 'set', path: ['lipsyncGain'], value: next }])
+            },
+          }),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, `${value.lipsyncGain}%`),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '试听'),
+        createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
+          createElement('button', {
+            type: 'button',
+            style: { ...buttonPrimaryStyle, opacity: ttsBusy ? 0.6 : 1 },
+            disabled: !writable || ttsBusy,
+            onClick: () => { void auditionVoice() },
+          }, ttsBusy ? '合成中…' : '试听一句'),
+          createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } },
+            ttsStatus ?? '用当前的模型 / 音色 / 演绎指令合成一句话'),
+        ),
+      ),
+    ),
+  ))
+
+  // 8. 开发者选项
   children.push(createElement('div', { key: 'devtools', style: sectionStyle },
     createElement(SectionHeader, {
       title: '开发者选项',

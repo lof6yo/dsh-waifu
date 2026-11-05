@@ -17,6 +17,7 @@ import { clampInt } from './clamp.ts'
 import {
   AI_HISTORY_LIMITS,
   normalizeInteractionMode,
+  normalizeLipsyncGain,
   type InteractionMode,
 } from './defaults.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
@@ -88,6 +89,21 @@ export interface PetSettings {
   waitingAiInterval: number
   /** 「等确认」每次入态最多演绎几次。 */
   waitingAiMax: number
+
+  /** 语音合成开关（ADR-033）。 */
+  ttsEnabled: boolean
+  /** 语音引擎 id（目前只有 openrouter）。 */
+  ttsEngine: string
+  /** 语音模型 slug（OpenRouter 的 speech 模型）。 */
+  ttsModel: string
+  /** 音色标识（空 = 模型默认）。 */
+  ttsVoice: string
+  /** 演绎指令（Fish Audio 拼进文本开头当语气提示）。 */
+  ttsInstructions: string
+  /** 口型跟随开关。 */
+  lipsyncEnabled: boolean
+  /** 口型强度（0–300，100 = 标准）。 */
+  lipsyncGain: number
 }
 
 /** 设置文件视图（设置页读取用）。 */
@@ -103,7 +119,8 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 建议通过设置页「桌宠配置」修改；直接编辑保存后刷新页面生效。
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
-//        aiEnabled / aiTouchOnly / aiProvider / aiModel`
+//        aiEnabled / aiTouchOnly / aiProvider / aiModel / aiHistoryCount /
+//        ttsEnabled / ttsEngine / ttsModel / ttsVoice / ttsInstructions / lipsyncEnabled / lipsyncGain`
 
 /**
  * 设置文件结构版本：
@@ -196,6 +213,15 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     waitingAiDelay: clampInt(record.waitingAiDelay, base.waitingAiDelay, LONG_AI_LIMITS.delay.min, LONG_AI_LIMITS.delay.max),
     waitingAiInterval: clampInt(record.waitingAiInterval, base.waitingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
     waitingAiMax: clampInt(record.waitingAiMax, base.waitingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
+    ttsEnabled: bool('ttsEnabled'),
+    ttsEngine: pickString(record.ttsEngine) ?? base.ttsEngine,
+    ttsModel: pickString(record.ttsModel) ?? base.ttsModel,
+    // 音色与演绎指令允许空串（空 = 模型默认音色 / 不加语气提示），所以不走 pickString
+    ttsVoice: typeof record.ttsVoice === 'string' ? record.ttsVoice.trim().slice(0, 64) : base.ttsVoice,
+    ttsInstructions:
+      typeof record.ttsInstructions === 'string' ? record.ttsInstructions.trim().slice(0, 200) : base.ttsInstructions,
+    lipsyncEnabled: bool('lipsyncEnabled'),
+    lipsyncGain: normalizeLipsyncGain(record.lipsyncGain, base.lipsyncGain),
   }
 }
 

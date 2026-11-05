@@ -244,6 +244,23 @@ export interface InteractRoutesApi {
   }>
 }
 
+/** 流式演绎 API（ADR-033）：文本增量 → 句读 → 音频，事件由路由层写成 SSE 帧。 */
+export interface SpeakRoutesApi {
+  /**
+   * 跑一轮流式演绎并把事件写进 `emit`。
+   * @param input - 场景（触摸/状态），与 `/interact` 同构。
+   * @param emit - `(event, data)`，由路由层转成 `event: …\ndata: …`。
+   * @param signal - 连接断开时中止合成。
+   */
+  stream(
+    input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    emit: (event: 'text' | 'clause' | 'audio' | 'done' | 'error', data: unknown) => void,
+    signal: AbortSignal,
+  ): Promise<void>
+  /** 单段合成（排查用）：直接回一段音频字节。 */
+  synthesize?(text: string): Promise<{ mime: string; audio: Buffer }>
+}
+
 /** 构建完整路由族（API + SSE + 素材 + 本地模型）供 ctx.webServer.register。 */
 export function makePetRoutes(deps: {
   service: PetService
@@ -253,10 +270,12 @@ export function makePetRoutes(deps: {
   ai?: InteractRoutesApi
   /** AI 设置（可选：未接线时不注册 /ai-options 与 /persona）。 */
   aiSettings?: AiRoutesApi
+  /** 流式演绎 + 语音合成（可选：未接线时不注册 /speak 与 /tts）。 */
+  speak?: SpeakRoutesApi
   /** SSE 活跃流注册钩子：插件卸载时由调用方逐一 close（ADR-006）。 */
   onStream?: (close: () => void) => void
 }): WebRoute[] {
-  const { service, packageRoot, settings, ai, aiSettings, onStream } = deps
+  const { service, packageRoot, settings, ai, aiSettings, speak, onStream } = deps
   const apiRoutes: WebRoute[] = [
     sseStateRoute(`${PET_API_PREFIX}/events`, service, onStream),
     getRoute(`${PET_API_PREFIX}/state`, async () => service.snapshot()),
@@ -334,6 +353,58 @@ export function makePetRoutes(deps: {
       const state = typeof body.state === 'string' ? body.state.slice(0, 20) : undefined
       const hint = typeof body.hint === 'string' ? body.hint.slice(0, 120) : undefined
       return ai.reply({ kind, part, state, hint })
+    })] : []),
+    // 流式演绎（ADR-033）：SSE 下发 text / clause / audio / done / error，
+    // 客户端按 clause 显示气泡、按 audio 播放并用同一段音频驱动口型。
+    ...(speak ? [{
+      kind: 'exact' as const,
+      path: `${PET_API_PREFIX}/speak`,
+      handler: (req: IncomingMessage, res: ServerResponse): void => {
+        if (req.method !== 'POST') {
+          json(res, 405, { ok: false, error: 'method-not-allowed' })
+          return
+        }
+        readJsonBody(req).then((body) => {
+          const record = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {}
+          const input = {
+            kind: record.kind === 'state' ? 'state' as const : 'tap' as const,
+            part: typeof record.part === 'string' ? record.part.slice(0, 40) : undefined,
+            state: typeof record.state === 'string' ? record.state.slice(0, 20) : undefined,
+            hint: typeof record.hint === 'string' ? record.hint.slice(0, 120) : undefined,
+          }
+          res.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache, no-store',
+            connection: 'keep-alive',
+            'x-accel-buffering': 'no',
+          })
+          res.on('error', () => {})
+          const controller = new AbortController()
+          const close = () => { controller.abort(); try { res.end() } catch { /* 已关闭 */ } }
+          req.on('close', close)
+          res.on('close', close)
+          onStream?.(close)
+          const emit = (event: string, data: unknown): void => {
+            if (controller.signal.aborted) return
+            try {
+              res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+            } catch { /* 连接已断 */ }
+          }
+          speak.stream(input, emit, controller.signal).catch((error: unknown) => {
+            emit('error', { error: error instanceof Error ? error.message : String(error) })
+          }).finally(() => {
+            try { res.end() } catch { /* 已关闭 */ }
+          })
+        }, (error: unknown) => {
+          json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        })
+      },
+    }] : []),
+    // 单段合成（排查用）：POST {text} → audio/mpeg 字节
+    ...(speak?.synthesize ? [postRoute(`${PET_API_PREFIX}/tts`, async (body) => {
+      const text = typeof body.text === 'string' ? body.text.slice(0, 400) : ''
+      const audio = await speak.synthesize!(text)
+      return { ok: true, mime: audio.mime, data: audio.audio.toString('base64') }
     })] : []),
     // 浏览器侧诊断日志（spec §9）：客户端启动里程碑/错误上报，Host 落盘便于无控制台环境排查
     getPostRoute(

@@ -36,6 +36,13 @@ const BASE: PetSettings = {
   waitingAiDelay: 4,
   waitingAiInterval: 30,
   waitingAiMax: 3,
+  ttsEnabled: true,
+  ttsEngine: 'openrouter',
+  ttsModel: 'fish-audio/drama-3',
+  ttsVoice: '',
+  ttsInstructions: 'test',
+  lipsyncEnabled: true,
+  lipsyncGain: 100,
 }
 
 let home: string
@@ -280,5 +287,32 @@ describe('注入历史条数（ADR-030）', () => {
     expect(normalizeSettings({ aiHistoryCount: -3 }, BASE).aiHistoryCount).toBe(0)
     expect(normalizeSettings({ aiHistoryCount: 'abc' }, BASE).aiHistoryCount).toBe(BASE.aiHistoryCount)
     expect(BASE.aiHistoryCount).toBe(10)
+  })
+})
+
+describe('normalizeSettings · 语音（ADR-033）', () => {
+  it('默认值与可写字段', () => {
+    const base = normalizeSettings({}, BASE)
+    expect(base.ttsEnabled).toBe(true)
+    expect(base.ttsModel).toBe('fish-audio/drama-3')
+    expect(base.ttsVoice).toBe('')
+    expect(base.lipsyncEnabled).toBe(true)
+    expect(base.lipsyncGain).toBe(100)
+    const custom = normalizeSettings({ ttsModel: 'x/y', ttsVoice: 'voice-1', lipsyncGain: 240 }, BASE)
+    expect(custom.ttsModel).toBe('x/y')
+    expect(custom.ttsVoice).toBe('voice-1')
+    expect(custom.lipsyncGain).toBe(240)
+  })
+
+  it('口型强度越界夹取，非法值回落 base', () => {
+    expect(normalizeSettings({ lipsyncGain: 999 }, BASE).lipsyncGain).toBe(300)
+    expect(normalizeSettings({ lipsyncGain: -5 }, BASE).lipsyncGain).toBe(0)
+    expect(normalizeSettings({ lipsyncGain: 'abc' }, BASE).lipsyncGain).toBe(BASE.lipsyncGain)
+  })
+
+  it('音色与演绎指令允许空串（空 = 模型默认音色）', () => {
+    const value = normalizeSettings({ ttsVoice: '   ', ttsInstructions: '' }, BASE)
+    expect(value.ttsVoice).toBe('')
+    expect(value.ttsInstructions).toBe('')
   })
 })

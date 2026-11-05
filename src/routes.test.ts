@@ -74,6 +74,13 @@ const BASE_SETTINGS: PetSettings = {
   waitingAiDelay: 4,
   waitingAiInterval: 30,
   waitingAiMax: 3,
+  ttsEnabled: true,
+  ttsEngine: 'openrouter',
+  ttsModel: 'fish-audio/drama-3',
+  ttsVoice: '',
+  ttsInstructions: 'test',
+  lipsyncEnabled: true,
+  lipsyncGain: 100,
 }
 
 function makeRoutes(

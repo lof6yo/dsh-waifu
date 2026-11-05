@@ -36,6 +36,7 @@ import {
   DEFAULT_HOME_RIGHT,
   DEFAULT_MAX_FPS,
   DEFAULT_SETTINGS,
+  LIPSYNC_GAIN_LIMITS,
 } from './defaults.ts'
 import {
   makePetRoutes,
@@ -43,6 +44,7 @@ import {
   type AiRoutesApi,
   type InteractRoutesApi,
   type SettingsRoutesApi,
+  type SpeakRoutesApi,
 } from './routes.ts'
 import {
   AI_HISTORY_MAX_ENTRIES,
@@ -50,6 +52,7 @@ import {
   buildSceneMessage,
   generateReply,
   loadPersona,
+  streamReply,
   personaPath,
   savePersona,
   type AiHistoryEntry,
@@ -63,6 +66,8 @@ import {
   resolveMotionMap,
 } from './models-host.ts'
 import { SettingsStore, type PetSettings } from './settings-store.ts'
+import { OpenRouterTtsEngine, type TtsAudio, type TtsVoiceOptions } from './tts.ts'
+import { runSpeakPipeline } from './speak.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
 export { PetService } from './service.ts'
@@ -146,10 +151,18 @@ export const Config: Schema<Config> = Schema.object({
   waitingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.waiting.delay),
   waitingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.waiting.interval),
   waitingAiMax: Schema.number().min(1).max(10).default(DEFAULT_LONG_AI.waiting.max),
+  // 语音合成与口型（ADR-033）：模型/音色/演绎指令全部留成设置项，换供应商只加引擎实现
+  ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
+  ttsEngine: Schema.string().default(DEFAULT_SETTINGS.ttsEngine),
+  ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
+  ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
+  ttsInstructions: Schema.string().default(DEFAULT_SETTINGS.ttsInstructions),
+  lipsyncEnabled: Schema.boolean().default(DEFAULT_SETTINGS.lipsyncEnabled),
+  lipsyncGain: Schema.number().min(LIPSYNC_GAIN_LIMITS.min).max(LIPSYNC_GAIN_LIMITS.max).default(DEFAULT_SETTINGS.lipsyncGain),
 })
 
 /** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）、llm（AI 回复，ADR-025）。 */
-export const inject = ['webServer', 'settings', 'llm']
+export const inject = ['webServer', 'settings', 'llm', 'credentials']
 
 /** 注册宠物服务、设置 API 与素材路由。 */
 export function apply(ctx: Context, config: Config): void {
@@ -189,6 +202,13 @@ export function apply(ctx: Context, config: Config): void {
     waitingAiDelay: config.waitingAiDelay,
     waitingAiInterval: config.waitingAiInterval,
     waitingAiMax: config.waitingAiMax,
+    ttsEnabled: config.ttsEnabled,
+    ttsEngine: config.ttsEngine,
+    ttsModel: config.ttsModel,
+    ttsVoice: config.ttsVoice,
+    ttsInstructions: config.ttsInstructions,
+    lipsyncEnabled: config.lipsyncEnabled,
+    lipsyncGain: config.lipsyncGain,
   }
   const settingsStore = new SettingsStore(baseSettings)
 
@@ -296,6 +316,88 @@ export function apply(ctx: Context, config: Config): void {
     },
   }
 
+  // 语音合成（ADR-033）：OpenRouter 的 `/api/v1/audio/speech`。
+  // key 从 DSH 凭据服务按需解析（不落插件配置、不缓存跨操作），与 llm-pi-ai 用同一份 OPENROUTER_API_KEY。
+  // 只声明用到的那一个方法：避免为一行调用引入 @deepseek-ai/dsh-credentials 这个依赖。
+  const credentials = (ctx as unknown as {
+    credentials?: { resolve(ref: unknown): Promise<{ value: string } | undefined> }
+  }).credentials
+  const resolveOpenRouterKey = async (): Promise<string | undefined> => {
+    if (!credentials) return undefined
+    try {
+      const resolved = await credentials.resolve('OPENROUTER_API_KEY')
+      return resolved?.value
+    } catch {
+      return undefined
+    }
+  }
+  const ttsEngine = new OpenRouterTtsEngine(resolveOpenRouterKey, dirname(settingsStore.path))
+  const voiceOptions = (): TtsVoiceOptions => {
+    const settings = settingsStore.get()
+    return {
+      model: settings.ttsModel,
+      voice: settings.ttsVoice.trim() || undefined,
+      instructions: settings.ttsInstructions.trim() || undefined,
+    }
+  }
+
+  const speakApi: SpeakRoutesApi = {
+    // 排查用单段合成：设置页「试听」与 curl 都走这里
+    synthesize: async (text) => {
+      const audio = await ttsEngine.synthesize(text, voiceOptions())
+      return { mime: audio.mime, audio: audio.audio }
+    },
+    stream: async (input, emit, signal) => {
+      const settings = settingsStore.get()
+      if (!settings.aiEnabled) {
+        emit('error', { error: 'ai-disabled' })
+        return
+      }
+      const now = Date.now()
+      if (now - lastAiAt < 1200) {
+        emit('error', { error: 'cooldown' })
+        return
+      }
+      lastAiAt = now
+      // 全 AI 接管：参考台词一律不给模型（与 /interact 同一层兜底）
+      const context = settings.aiTakeover ? { ...input, hint: undefined } : input
+      const speakOn = settings.ttsEnabled && settings.ttsModel.trim().length > 0
+      const chunks = streamReply(ctx.llm, {
+        provider: settings.aiProvider,
+        model: settings.aiModel,
+        persona: loadPersona(dirname(settingsStore.path)),
+        context,
+        history: aiHistory,
+        historyCount: settings.aiHistoryCount,
+        onPayload: (payload) => { lastAiPayload = payload },
+        signal,
+      })
+      const synthesize = async (text: string): Promise<TtsAudio | null> => {
+        if (!speakOn || signal.aborted) return null
+        try {
+          return await ttsEngine.synthesize(text, voiceOptions(), signal)
+        } catch {
+          // 合成失败不让气泡断掉：这一段没声音，文字照常上屏
+          return null
+        }
+      }
+      const result = await runSpeakPipeline({ chunks, synthesize, emit, signal })
+      if (result.text) {
+        const at = Date.now()
+        aiHistory = appendHistory(aiHistory, {
+          role: 'user',
+          text: buildSceneMessage(context, { forHistory: true }),
+          at,
+        })
+        aiHistory = appendHistory(
+          aiHistory,
+          { role: 'assistant', text: result.text, at: Date.now(), provider: settings.aiProvider, model: settings.aiModel },
+          AI_HISTORY_MAX_ENTRIES,
+        )
+      }
+    },
+  }
+
   // 路由随插件生命周期注册/清理。插件卸载时同时关闭全部活跃 SSE 流（onStream），
   // 避免旧流在路由注销后空转心跳。
   ctx.effect(() => {
@@ -306,6 +408,7 @@ export function apply(ctx: Context, config: Config): void {
       settings: settingsApi,
       ai: aiApi,
       aiSettings: aiSettingsApi,
+      speak: speakApi,
       onStream: (close) => { openStreams.add(close) },
     })
     const disposers = routes.map((route) => ctx.webServer.register(route))

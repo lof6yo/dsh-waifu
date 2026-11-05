@@ -48,6 +48,7 @@ import {
   DEFAULT_BUBBLE_BG_COLOR,
   DEFAULT_BUBBLE_BG_OPACITY,
   DEFAULT_BUBBLE_MAX_SECONDS,
+  DEFAULT_SETTINGS,
   DEFAULT_BUBBLE_OFFSET_X,
   DEFAULT_BUBBLE_OFFSET_Y,
   DEFAULT_BUBBLE_TEXT_COLOR,
@@ -262,6 +263,50 @@ const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }).then((res) => readJson<{ ok: boolean; text?: string; error?: string }>(res)),
+  /**
+   * 流式演绎（ADR-033）：POST /speak 走 SSE，逐条回调 `text`/`clause`/`audio`/`done`/`error`。
+   * 用 fetch + ReadableStream 手动解帧（EventSource 不支持 POST 带 body）。
+   */
+  speak: async (
+    body: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    onEvent: (event: string, data: unknown) => void,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    const res = await fetch(`${PET_API}/speak`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (!res.ok || !res.body) throw new Error(`http ${res.status}`)
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let split = buffer.indexOf('\n\n')
+      while (split >= 0) {
+        const frame = buffer.slice(0, split)
+        buffer = buffer.slice(split + 2)
+        let event = 'message'
+        const dataLines: string[] = []
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+        }
+        if (dataLines.length > 0) {
+          try {
+            onEvent(event, JSON.parse(dataLines.join('\n')) as unknown)
+          } catch {
+            // 坏帧跳过，等下一帧
+          }
+        }
+        split = buffer.indexOf('\n\n')
+      }
+    }
+  },
   setDisplay: (patch: { right?: number; bottom?: number }): Promise<{ ok: boolean }> =>
     fetch(`${PET_API}/set-display`, {
       method: 'POST',
@@ -310,7 +355,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let disposed = false
   pushCleanup(() => { disposed = true })
   // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
-  pushCleanup(() => { clearLongState(); clearTapHold(); clearBubbleHideTimer() })
+  pushCleanup(() => { clearLongState(); clearTapHold(); clearBubbleHideTimer(); stopSpeaking() })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
@@ -461,6 +506,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 长状态的「延迟」失效——入态立刻请求一句，之后仍按间隔/上限反复演绎。
    */
   let aiTakeover = false
+  /** 语音合成开关（SSE config.ttsEnabled；ADR-033）：开启后走 /speak 流式管线（气泡与语音同步）。 */
+  let ttsEnabled: boolean = DEFAULT_SETTINGS.ttsEnabled
+  /** 口型跟随开关（SSE config.lipsyncEnabled）：按正在播放的音频能量驱动 ParamMouthOpenY。 */
+  let lipsyncEnabled: boolean = DEFAULT_SETTINGS.lipsyncEnabled
+  /** 口型强度百分比（0–300，100 = 标准）。 */
+  let lipsyncGain: number = DEFAULT_SETTINGS.lipsyncGain
   /** 打断优先级（ADR-032）：触摸互动与状态事件抢气泡/动作/AI 演绎时的规则。 */
   let interactionMode: InteractionMode = DEFAULT_INTERACTION_MODE
   /** 触摸互动保持窗口的截止时间戳；窗口内状态事件按优先级决定是否接管。 */
@@ -712,6 +763,94 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     showBubbleNow(text)
   }
 
+  // ---- 语音与口型（ADR-033）----
+  /** 音频上下文（首次用户手势后才创建，遵守浏览器自动播放策略）。 */
+  let audioCtx: AudioContext | null = null
+  /** 口型分析器：每段音频接到它上面，按波形 RMS 驱动张嘴。 */
+  let lipsyncAnalyser: AnalyserNode | null = null
+  let lipsyncData: Uint8Array | null = null
+  /** 当前口型开合（0–1，已按 lipsyncGain 缩放）。 */
+  let mouthLevel = 0
+  /** 本轮演绎的中止器与序号（新的一轮直接作废旧一轮）。 */
+  let speakAbort: AbortController | null = null
+  let speakSeq = 0
+  /** 本轮已经下发的句读（气泡按音频进度逐段显示）。 */
+  let speakClauses: { index: number; text: string }[] = []
+  /** 已经显示到第几段（-1 = 还没显示）。 */
+  let speakRevealed = -1
+  /** 音频播放串行链：保证第 0 段播完才播第 1 段。 */
+  let speakChain: Promise<void> = Promise.resolve()
+
+  /** 懒创建 AudioContext + 分析器；被浏览器挂起时顺手恢复。 */
+  function ensureAudio(): AudioContext | null {
+    if (audioCtx) {
+      if (audioCtx.state === 'suspended') void audioCtx.resume()
+      return audioCtx
+    }
+    try {
+      const Ctor = window.AudioContext
+        ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!Ctor) return null
+      audioCtx = new Ctor()
+      lipsyncAnalyser = audioCtx.createAnalyser()
+      lipsyncAnalyser.fftSize = 1024
+      lipsyncAnalyser.smoothingTimeConstant = 0.55
+      lipsyncData = new Uint8Array(new ArrayBuffer(lipsyncAnalyser.fftSize))
+    } catch {
+      audioCtx = null
+    }
+    return audioCtx
+  }
+
+  /** 中止当前演绎（新触摸/状态切换/卸载时调用）。 */
+  function stopSpeaking(): void {
+    if (speakAbort !== null) {
+      try { speakAbort.abort() } catch { /* 已结束 */ }
+      speakAbort = null
+    }
+    speakClauses = []
+    speakRevealed = -1
+    mouthLevel = 0
+  }
+
+  /** 解码并播放一段音频（mp3 整段解码 → 播放 → 结束回调）。 */
+  function playClip(base64: string, _mime: string): Promise<void> {
+    const ctx = ensureAudio()
+    const analyser = lipsyncAnalyser
+    if (!ctx || !analyser) return Promise.resolve()
+    const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0))
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    return new Promise<void>((resolve) => {
+      const finish = () => { try { analyser.disconnect() } catch { /* 已断开 */ } resolve() }
+      ctx.decodeAudioData(buffer, (decoded) => {
+        try {
+          const source = ctx.createBufferSource()
+          source.buffer = decoded
+          source.connect(analyser)
+          analyser.connect(ctx.destination)
+          source.onended = finish
+          source.start()
+        } catch {
+          finish()
+        }
+      }, () => resolve())
+    })
+  }
+
+  /** 把气泡文字补到第 `index` 段（含被跳过的段：合成失败也不能丢字）。 */
+  function revealClausesUntil(index: number): void {
+    if (index <= speakRevealed) return
+    const visible = speakClauses.filter((item) => item.index <= index).map((item) => item.text).join('')
+    if (!visible) return
+    speakRevealed = index
+    showBubbleNow(visible)
+  }
+
+  function revealAllClauses(): void {
+    const last = speakClauses.length - 1
+    if (last >= 0) revealClausesUntil(speakClauses[last]!.index)
+  }
+
   /** 退出长状态：取消演绎计时、清掉常驻底稿。 */
   function clearLongState(): void {
     for (const t of longAiTimers) window.clearTimeout(t)
@@ -798,7 +937,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const tick = (): void => {
       if (longState !== state) return
       attempts += 1
-      void requestAiReply({ kind: 'state', state, hint: takeover ? undefined : hint }, { sticky: true })
+      void requestSpeak({ kind: 'state', state, hint: takeover ? undefined : hint }, { sticky: true })
       if (attempts < cadence.max) {
         longAiTimers.push(window.setTimeout(tick, cadence.interval * 1000))
       }
@@ -941,7 +1080,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         else if (line !== undefined) showBubble(line)
         else hideBubble()
         if (state !== 'idle' && !touchHolding) {
-          void requestAiReply({ kind: 'state', state, hint: takeover ? undefined : line })
+          void requestSpeak({ kind: 'state', state, hint: takeover ? undefined : line })
         }
       }
       if (!touchHolding) playState(state)
@@ -1244,6 +1383,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         const originalUpdate = internal.update.bind(internal)
         internal.update = (dt = 1 / 60, now = performance.now()) => {
           applyExpressionParams(internal.coreModel, dt)
+          applyLipsync(internal.coreModel, dt)
           return originalUpdate(dt, now)
         }
       }
@@ -1882,6 +2022,39 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     expressionSettled = settled
   }
 
+  /**
+   * 口型跟随（ADR-033）：按正在播放的音频的波形 RMS 驱动 `ParamMouthOpenY`
+   * （model3 里 `Groups.LipSync` 就声明了这个参数，别的参数不碰）。
+   * 张得快、收得慢，接近真人说话的包络；没在放音时自然回到闭合。
+   */
+  function applyLipsync(
+    coreModel: { setParameterValueById?(id: string, value: number, weight?: number): void } | undefined,
+    dt: number,
+  ): void {
+    const set = coreModel?.setParameterValueById
+    if (typeof set !== 'function') return
+    const gain = Math.max(0, Math.min(300, lipsyncGain)) / 100
+    let target = 0
+    if (lipsyncEnabled && lipsyncAnalyser && lipsyncData) {
+      lipsyncAnalyser.getByteTimeDomainData(lipsyncData as Uint8Array<ArrayBuffer>)
+      let sum = 0
+      for (let i = 0; i < lipsyncData.length; i += 1) {
+        const sample = (lipsyncData[i]! - 128) / 128
+        sum += sample * sample
+      }
+      const rms = Math.sqrt(sum / lipsyncData.length)
+      // 正常语音 RMS 约 0.04–0.25；放大 6 倍后再按强度缩放，避免一直张满
+      target = Math.min(1, rms * 6) * gain
+    }
+    const approach = (target > mouthLevel ? 0.6 : 0.28) * Math.min(1, dt * 60)
+    mouthLevel += (target - mouthLevel) * Math.max(0.05, approach)
+    try {
+      set.call(coreModel, 'ParamMouthOpenY', Math.max(0, Math.min(1, mouthLevel)), 1)
+    } catch {
+      // 模型没有该参数：忽略
+    }
+  }
+
   /** 运行时应用配置变化（spec §2/§3/§6/§7）：开关 / 尺寸 / 帧率 / 调试 / 触摸部位 / 事件绑定 / 模型。 */
   function applyConfig(next: PetStateView): void {
     const cfg = next.config
@@ -1947,6 +2120,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     aiEnabled = cfg.aiEnabled === true
     aiTouchOnly = cfg.aiTouchOnly === true
     aiTakeover = cfg.aiTakeover === true
+    ttsEnabled = cfg.ttsEnabled !== false
+    lipsyncEnabled = cfg.lipsyncEnabled !== false
+    lipsyncGain = Number.isFinite(cfg.lipsyncGain) ? cfg.lipsyncGain! : DEFAULT_SETTINGS.lipsyncGain
     interactionMode = normalizeInteractionMode(cfg.interactionMode, interactionMode)
     applyLongAiConfig(cfg)
     applyBubbleMaxConfig(cfg)
@@ -2046,8 +2222,90 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
+  /**
+   * 流式演绎（ADR-033）：/speak 同时给出文本段与音频段，气泡按「音频播到第几段」逐段显示，
+   * 口型吃同一段音频的波形。语音关闭或一句都没出来时回落到一次性的 {@link requestAiReply}。
+   */
+  async function requestSpeak(
+    input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    options?: { sticky?: boolean },
+  ): Promise<string | null> {
+    if (!aiEnabled) return null
+    if (aiTouchOnly && input.kind === 'state') return null
+    if (input.kind === 'state' && interactionMode !== 'event-first' && tapActive()) return null
+    // 语音关掉：走一次性回复（少一条长连接，行为与 ADR-025 完全一致）
+    if (!ttsEnabled) return requestAiReply(input, options)
+    const seq = ++speakSeq
+    // 新的一轮先掐掉上一轮的播放与合成
+    stopSpeaking()
+    // 作废可能在飞的 /interact 结果，避免两句台词抢同一个气泡
+    aiRequestSeq += 1
+    const targetState = input.state
+    const controller = new AbortController()
+    speakAbort = controller
+    speakClauses = []
+    speakRevealed = -1
+    speakChain = Promise.resolve()
+    let finalText: string | null = null
+    let sawClause = false
+    try {
+      await api.speak(input, (event, data) => {
+        if (seq !== speakSeq) return
+        if (event === 'clause') {
+          const item = data as { index?: unknown; text?: unknown }
+          if (typeof item.index !== 'number' || typeof item.text !== 'string') return
+          sawClause = true
+          speakClauses.push({ index: item.index, text: item.text })
+          return
+        }
+        if (event === 'audio') {
+          const item = data as { index?: unknown; mime?: unknown; data?: unknown }
+          if (typeof item.index !== 'number' || typeof item.data !== 'string') return
+          const mime = typeof item.mime === 'string' ? item.mime : 'audio/mpeg'
+          const index = item.index
+          // 串行播放：后段音频必须等前段播完，口型才对得上
+          speakChain = speakChain.then(async () => {
+            if (seq !== speakSeq) return
+            revealClausesUntil(index)
+            await playClip(item.data as string, mime)
+          })
+          return
+        }
+        if (event === 'done') {
+          const payload = data as { text?: unknown }
+          finalText = typeof payload.text === 'string' ? payload.text : null
+          return
+        }
+        if (event === 'error') {
+          // 交给下面的兜底判断：一句都没有就回落一次性回复
+          return
+        }
+      }, controller.signal)
+    } catch {
+      // 连接失败/中止：同样走兜底
+    }
+    if (seq !== speakSeq) return null
+    await speakChain.catch(() => undefined)
+    if (seq !== speakSeq) return null
+    if (targetState !== undefined && targetState !== lastState) return null
+    if (!sawClause && finalText === null) {
+      // 禁用/冷却/失败/零文本：与改造前一致，回落一次性回复
+      return requestAiReply(input, options)
+    }
+    // 合成失败被跳过的段也要补上文字
+    revealAllClauses()
+    if (finalText !== null) {
+      if (options?.sticky) bubbleStickyText = finalText
+      showAiBubble(finalText)
+      return finalText
+    }
+    return null
+  }
+
   function handleTap(e: PointerEvent): void {
     if (!canvas || !model) return
+    // 用户手势里顺手解锁音频（浏览器不允许无交互自动播放）
+    if (aiEnabled && ttsEnabled) ensureAudio()
     const now = Date.now()
     if (now - lastTapAt < TAP_DEBOUNCE_MS) return
     lastTapAt = now
@@ -2081,7 +2339,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         }
       }
       // AI 回复（ADR-025）：预置台词先出、AI 台词到了再替换（失败即保持预置台词）
-      void requestAiReply({ kind: 'tap', part: part.name, hint: takeover ? undefined : spoken })
+      void requestSpeak({ kind: 'tap', part: part.name, hint: takeover ? undefined : spoken })
       // 动作组 / 表情：部位混选里 1 个动作组 + 若干表情；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
       const selection = splitMotionSelection(part.motions)
       if (selection.expressions.length > 0) {
@@ -2137,6 +2395,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         aiEnabled = view.config.aiEnabled === true
         aiTouchOnly = view.config.aiTouchOnly === true
         aiTakeover = view.config.aiTakeover === true
+        ttsEnabled = view.config.ttsEnabled !== false
+        lipsyncEnabled = view.config.lipsyncEnabled !== false
+        lipsyncGain = Number.isFinite(view.config.lipsyncGain)
+          ? view.config.lipsyncGain!
+          : DEFAULT_SETTINGS.lipsyncGain
         interactionMode = normalizeInteractionMode(view.config.interactionMode, interactionMode)
         applyLongAiConfig(view.config)
         applyBubbleMaxConfig(view.config)
