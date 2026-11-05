@@ -217,7 +217,11 @@ export function apply(ctx: Context, config: Config): void {
       })
       if (attempt.text) {
         // 只记录成功的往来：失败的请求不该污染上下文
-        aiHistory = appendHistory(aiHistory, { role: 'user', text: buildSceneMessage(input) })
+        // 历史只记真实发生的事：去掉参考台词（它没有上屏），避免模型把预置对白当成自己说过的话
+        aiHistory = appendHistory(aiHistory, {
+          role: 'user',
+          text: buildSceneMessage(input, { forHistory: true }),
+        })
         aiHistory = appendHistory(
           aiHistory,
           { role: 'assistant', text: attempt.text, provider: settings.aiProvider, model: settings.aiModel },

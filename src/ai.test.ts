@@ -217,6 +217,15 @@ describe('最近对话注入（ADR-030）', () => {
     expect(JSON.stringify(messages[2])).toContain('主人刚戳了你的「脸」')
   })
 
+  it('历史版情景描述不含参考台词', () => {
+    const live = buildSceneMessage({ kind: 'tap', part: '脸', hint: '别捏脸啦～' })
+    const forHistory = buildSceneMessage({ kind: 'tap', part: '脸', hint: '别捏脸啦～' }, { forHistory: true })
+    expect(live).toContain('你下意识想说的是「别捏脸啦～」')
+    expect(forHistory).not.toContain('你下意识想说的是')
+    expect(forHistory).not.toContain('别捏脸啦')
+    expect(forHistory).toContain('主人刚戳了你的「脸」')
+  })
+
   it('历史只保留上限条数，且默认上限等于 limits.max', () => {
     expect(AI_HISTORY_MAX_ENTRIES).toBe(AI_HISTORY_LIMITS.max)
     let list: AiHistoryEntry[] = []

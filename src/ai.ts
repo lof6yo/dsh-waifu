@@ -158,8 +158,13 @@ export function loadPersona(homeDir: string): string {
   }
 }
 
-/** 拼「现在发生了什么」的用户消息（模型只看这一句就能接话）。 */
-export function buildSceneMessage(context: ReplyContext): string {
+/**
+ * 拼「现在发生了什么」的用户消息（模型只看这一句就能接话）。
+ *
+ * `forHistory: true` 时去掉「你下意识想说的是『…』」这半句（ADR-030 修订）：
+ * 历史只该记录真实发生的事——参考台词并没有上屏，留着会让模型把预置台词当成自己说过的话。
+ */
+export function buildSceneMessage(context: ReplyContext, options: { forHistory?: boolean } = {}): string {
   const state = context.state ?? 'idle'
   const where = context.kind === 'tap'
     ? `主人刚戳了你的「${context.part || '身体'}」`
@@ -172,7 +177,9 @@ export function buildSceneMessage(context: ReplyContext): string {
                 : '主人在看着你'
     }）`
   // 参考台词只给方向，明确禁止「换一种说法」式的改写：要的是即兴演绎，不是 paraphrasing
-  const hint = context.hint ? `你下意识想说的是「${context.hint}」，但别照搬，也不必复述。` : ''
+  const hint = !options.forHistory && context.hint
+    ? `你下意识想说的是「${context.hint}」，但别照搬，也不必复述。`
+    : ''
   return `（${where}。${hint}）按你的人设即兴演一下这一刻的反应，一句话。`
 }
 
