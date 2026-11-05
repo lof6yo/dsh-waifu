@@ -169,6 +169,13 @@ describe('PetService 状态机', () => {
     expect(next).toHaveBeenCalled()
   })
 
+  it('user-questions/request → waiting，且放行到 answerer', () => {
+    const { service, emit } = makeHarness()
+    const next = emit('user-questions/request', {})
+    expect(service.snapshot().state).toBe('waiting')
+    expect(next).toHaveBeenCalled()
+  })
+
   it('turn-stopping → done；保持期内 idle 不打断，3.5s 后回 idle', () => {
     const { service, emit } = makeHarness()
     emit('agent/turn-stopping', {})

@@ -39,7 +39,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 | 出错 | `agent/error` | 摇头 `ShakeHead`；瞬态气泡（事件 error 台词池） |
 | 完成 | `agent/turn-stopping` + running→idle 下降沿 | 无动作（保持 `Idle`）；瞬态气泡（事件 done 台词池） |
 | 交付 | `session/event` 中 `deliverables/presented` | 无动作（保持 `Idle`，可单独映射）；瞬态气泡（事件 delivered 台词池） |
-| （可选）等审批 | `approval/request` | 左右晃 `Sway`；气泡**常驻**，文案随等待时长阶段演进（三阶段台词池） |
+| （可选）等人确认 / 等审批 | `approval/request`、`user-questions/request` | 左右晃 `Sway`；气泡**常驻**，文案随等待时长阶段演进（三阶段台词池） |
 
 - 状态变化即时反映（事件驱动，SSE 推送）
 - **长状态气泡与状态同生命周期**：思考中/等审批期间气泡常驻并按入态后耗时**阶段演进**文案（事件 `thinking`/`waiting` 的 3 组台词池）：思考 入态/约15s/约40s，等审批 入态/约30s/约90s；每次阶段切换重播一次该状态动作；某阶段台词池留空 → 该阶段不显示气泡
@@ -140,7 +140,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - 渲染：pixi-live2d-display 0.4.0 + PixiJS 6.5.10 + Cubism Core 4（ADR-003）
 - 挂载：Client Slot `shell.overlay`；设置入口：Client Slot `settings.section`（ADR-002）
 - 设置：插件私有 `$DSH_HOME/waifu/settings.jsonc`（ADR-013；DSH 0.2.x `ctx.settings` 不再是 namespace 注册表，写入会触发整插件重载；`settings.configure({auto:false})` 隐藏自动表单页）；读写经 `/api/dsh-waifu/settings`（GET `{value,error,path,writable}` / POST `{ops}`）
-- 状态源：Host 订阅 `agent/status`、`agent/error`、`agent/turn-stopping`、`approval/request`（ADR-002）；交付态订阅 `session/event` 的 `deliverables/presented`（ADR-012）
+- 状态源：Host 订阅 `agent/status`、`agent/error`、`agent/turn-stopping`、`approval/request`、`user-questions/request`（ADR-002）；交付态订阅 `session/event` 的 `deliverables/presented`（ADR-012）
 - 状态传输：Host→Client 同源 SSE `/api/dsh-waifu/events`（快照 + 变更推送 + 30s 心跳，ADR-006）；首帧走 `GET /api/dsh-waifu/state`
 - **事件绑定**（ADR-015）：`EventBindings`（`models.ts`）随 `PetStateView.config.events` 下发；默认台词常量 `DEFAULT_EVENT_BINDINGS` + 模型 `animationMap` 提供动作组，用户覆盖存 `touch-parts.jsonc` 的 `models[<id>].events`（整事件替换）；无固定人设，后续 LLM 人设走提示词
 - **模型与素材**：内置模型随包（`assets/models/jian/`），`/waifu-assets/*` prefix 路由（目录穿越防护）；本版 UI 不暴露模型选择/自定义模型

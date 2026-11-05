@@ -122,6 +122,16 @@ export class PetService {
       this.set('waiting')
       return next()
     })
+    // 向用户提问（agent 的 ask_user_question 等）同样是「等人做选择」，按 waiting 处理；
+    // 这也是 waterfall 事件，必须 next() 放行到真正的 answerer。
+    // cordis 的 Events 类型未声明该事件（它由 @deepseek-ai/dsh-user-questions 定义），
+    // 这里按字符串事件订阅，运行期等价。
+    ;(ctx as unknown as {
+      on(event: string, fn: (request: unknown, next?: () => unknown) => unknown): void
+    }).on('user-questions/request', (_request: unknown, next?: () => unknown) => {
+      this.set('waiting')
+      return next?.()
+    })
     // 模型经 present 工具交付文件（会话事件总线，ADR-012）
     ctx.on('session/event', (_session, event) => {
       if (event?.type === 'deliverables/presented') this.setDelivered()
