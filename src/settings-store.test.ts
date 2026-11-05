@@ -40,10 +40,8 @@ const BASE: PetSettings = {
   ttsEngine: 'openrouter',
   ttsModel: 'fish-audio/drama-3',
   ttsVoice: '',
-  ttsInstructions: 'test',
   lipsyncEnabled: true,
   lipsyncGain: 100,
-  ttsReference: '',
 }
 
 let home: string
@@ -311,13 +309,11 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
     expect(normalizeSettings({ lipsyncGain: 'abc' }, BASE).lipsyncGain).toBe(BASE.lipsyncGain)
   })
 
-  it('音色与演绎指令允许空串（空 = 模型默认音色）', () => {
-    const value = normalizeSettings({ ttsVoice: '   ', ttsInstructions: '' }, BASE)
-    expect(value.ttsVoice).toBe('')
-    expect(value.ttsInstructions).toBe('')
+  it('音色允许空串（空 = 模型默认音色）', () => {
+    expect(normalizeSettings({ ttsVoice: '   ' }, BASE).ttsVoice).toBe('')
   })
 
-  it('v5 文件里的 MAI-Voice 回落到默认 Drama 3（人声改由音色样本固定）', () => {
+  it('v5 文件里的 MAI-Voice 回落到默认 Drama 3', () => {
     const legacy = normalizeSettings(
       { version: 5, ttsModel: 'microsoft/mai-voice-2.1-flash', ttsVoice: 'zh-CN-Mei:MAI-Voice-2.1-Flash' },
       BASE,
@@ -333,16 +329,5 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
     const own = normalizeSettings({ version: 4, ttsModel: 'hexgrad/kokoro-82m', ttsVoice: '' }, BASE)
     expect(own.ttsModel).toBe('hexgrad/kokoro-82m')
     expect(own.ttsVoice).toBe('')
-  })
-
-  it('v6 文件不再迁移，样本文件名原样保留', () => {
-    const current = normalizeSettings(
-      { version: 6, ttsModel: 'fish-audio/drama-3', ttsVoice: '', ttsReference: 'reference.mp3' },
-      BASE,
-    )
-    expect(current.ttsModel).toBe('fish-audio/drama-3')
-    expect(current.ttsVoice).toBe('')
-    expect(current.ttsReference).toBe('reference.mp3')
-    expect(normalizeSettings({ version: 6, ttsReference: 42 }, BASE).ttsReference).toBe(BASE.ttsReference)
   })
 })

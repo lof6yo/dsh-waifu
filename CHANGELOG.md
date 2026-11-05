@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- 去掉「音色样本」（无状态音色克隆，`ttsReference` + `voices/reference.mp3` + `GET|POST /tts-sample*`）与「演绎指令」（`ttsInstructions`）：设置页少两行、少三个接口，请求体也不再带参考音频。`fish-audio/drama-3` 仍是默认模型（每句人声随机）；要固定人声请换 `TTS_MODELS` 里带音色列表的模型。
+
 ### Performance
 
 - **浮层不再按显示器刷新率空转**（ADR-029）：命中层与触摸叠加层合并成一条 rAF，按 `maxFps` 限频；每帧只算一次模型包围盒，用取整签名判断这一帧是否真的需要写 DOM —— 角色静止、调试面板关闭时几乎零写入，无浮层时直接停掉循环。
@@ -12,8 +16,7 @@
 
 ### Added
 
-- **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`，默认 `fish-audio/drama-3`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、演绎指令、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
-- **音色样本把 Drama 3 的人声钉住**（ADR-033 修订二）：Drama 3 是 OpenRouter 上最会演的语音模型，但没有固定音色。现在可以在设置页「生成候选（3 条）」试听后采用一条，插件把它存到 `$DSH_HOME/waifu/voices/reference.mp3`，之后每次合成带上这份样本走 **无状态音色克隆**（`input_references`），人声固定、表演力不变；`microsoft/mai-voice-2.1-flash` 已从目录删除（用户实测效果差）。设置文件版本升到 6，旧文件里的 MAI-Voice 自动回落到 Drama 3；样本可选，不选时仍会每句换人声
+- **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`，默认 `fish-audio/drama-3`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
 - 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
 
 - **AI 请求注入时间**：当前情景带上「现在是 X月X日 周X HH:MM」，注入历史每条带 `[HH:MM]`（跨天 `[M/D HH:MM]`）时间戳，模型可判断两次互动隔了多久（ADR-030 修订）

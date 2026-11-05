@@ -21,7 +21,7 @@
 
 `src/tts.ts` 定义 `TtsEngine.synthesize(text, voice, signal)`，默认实现 `OpenRouterTtsEngine` 打
 `POST https://openrouter.ai/api/v1/audio/speech`（OpenAI 兼容，返回原始 `audio/mpeg` 字节）。
-模型、音色、演绎指令（`instructions`）全部来自设置项，默认 `fish-audio/drama-3`。
+模型与音色全部来自设置项，默认 `fish-audio/drama-3`。
 
 换供应商（ElevenLabs / MiniMax 的 PCM 真流式）只加一个实现，路由、客户端不动。key 每次合成时
 通过 `ctx.credentials.resolve('OPENROUTER_API_KEY')` 取，不缓存、不落盘、不进插件配置。
@@ -67,7 +67,7 @@
   同文同参数命中本地缓存（`$DSH_HOME/waifu/tts-cache`，最多留 200 个 mp3）后不再计费；
 - 台词与气泡严格同段，代价是气泡不是「打字机」逐字出现，而是逐段出现——用户明确要的是
   「气泡和语音和 lipsync 一起」，逐段出现在观感上更像人在说话；
-- 新增设置项 6 个（`ttsEnabled` / `ttsModel` / `ttsVoice` / `ttsInstructions` /
+- 新增设置项 4 个（`ttsEnabled` / `ttsModel` / `ttsVoice` /
   `lipsyncEnabled` / `lipsyncGain`），Host 变更需重启 dsh-web 才生效；
 - 真流式（PCM 边收边播）留给将来的引擎实现：`TtsEngine` 接口不变，客户端只需支持
   「一段音频分多个 chunk 到达」。
@@ -90,38 +90,17 @@
 - `SETTINGS_SCHEMA_VERSION` 4 → 5：旧文件若为「随机音色模型 + 空音色」，加载时迁移到新默认
   （其余情况原样保留）。
 
-## 修订二：用「音色样本」钉住 Drama 3 的人声（2026-11-05）
+## 修订二：去掉「音色样本」与「演绎指令」（2026-11-05）
 
-修订一把默认换成了音色固定的 MAI-Voice，但用户实测「效果很差」，要求回到 Drama 3。Drama 3 的问题是
-**没有固定音色**：模型本身不带 `supported_voices`，每次请求由供应商随机挑一个人声。
+音色样本（无状态克隆）与演绎指令（`instructions`）两条路都试过后被用户否决：设置页多两行、多三个接口，
+实际收益不足以抵消维护成本与请求体积。现在的语音链路只保留三件事：
 
-两条路：
+- 模型（下拉，`TTS_MODELS` 目录）与音色（下拉；随机音色模型没有音色列表）；
+- 句读级流式合成 + 气泡跟随音频 + 口型跟随；
+- 本地缓存（`$DSH_HOME/waifu/tts-cache`）。
 
-1. Fish Audio 官方 API 用 `reference_id`（音色模型 id）固定人声，但需要 Fish 账号与 API key，
-   本机不可达 `docs.fish.audio`，也无法在没有 key 的情况下枚举可用音色。
-2. OpenRouter 支持 **无状态音色克隆**：请求里带
-   `input_references: [{ type: 'input_audio', input_audio: { data: 'data:audio/mpeg;base64,…' } }]`，
-   只有 endpoints 元数据 `supports_voice_cloning: true` 的模型接受这种请求——`fish-audio/drama-3` 正好是。
-   代价是每次请求多传一段参考音频（请求体变大、多几百毫秒），换来的人声完全一致。
+随之删除：`ttsReference` / `ttsInstructions` 两个设置项、`voices/` 目录、`GET|POST /tts-sample*` 三个接口、
+`TtsVoiceOptions.reference` 与 `TtsVoiceOptions.instructions`。`fish-audio/drama-3` 仍是默认模型
+（它本身没有固定音色，每句人声会变）；想固定音色请换用 `TTS_MODELS` 里带音色列表的模型（qwen / kokoro）。
 
-选择方案 2：不需要第二把 key，保留 Drama 3 的表演力。
-
-实现：
-
-- 设置项 `ttsReference`（默认空）：只存**文件名**，实际文件在 `$DSH_HOME/waifu/voices/reference.mp3`，
-  样本跟着设置目录走，不进仓库也不进 git。
-- 设置页「音色样本」行：`生成候选（3 条）` → 用同一句台词连发三次（每次随机人声）→ 逐条「试听」/「用这条」；
-  采用后显示「已固定：reference.mp3（N KB）」，另有「清除已固定的样本」。
-- Host 端：`GET /api/dsh-waifu/tts-sample`（状态）、`POST /api/dsh-waifu/tts-sample/candidates`（`{count}`）、
-  `POST /api/dsh-waifu/tts-sample`（`{data}` 保存 / `{clear:true}` 清除）。保存限制 1 KB–8 MiB。
-- `TtsVoiceOptions.reference` 为 data URI；`ttsCacheKey` 把 reference 的哈希算进缓存键，
-  换样本自动换缓存，不会拿旧样本的音频顶替。
-- `microsoft/mai-voice-2.1-flash` 从 `TTS_MODELS` 删除；默认回到 `fish-audio/drama-3` + 空音色 + 空样本。
-- `SETTINGS_SCHEMA_VERSION` 5 → 6：旧文件里的 MAI-Voice 一律回落到 Drama 3（MAI 只存活了一个版本）。
-
-后果：
-
-- 未选样本时音色仍每句随机（这是 Drama 3 的默认行为，设置页会明说）。
-- 选样本后每次请求都带一段 base64 音频，首声延迟比不克隆时高一点；音频按 `reference.mp3` 的 `mtimeMs:size`
-  缓存成 data URI，不重复读盘转码。
-- 样本质量直接决定音色：太短、噪声大或有背景音的样本会让合成变差，建议用插件自己生成的候选。
+`SETTINGS_SCHEMA_VERSION` 保持 6：旧文件里的这两个键会被忽略（未知键不报错），下次保存即消失。

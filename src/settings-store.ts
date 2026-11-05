@@ -99,10 +99,6 @@ export interface PetSettings {
   ttsModel: string
   /** 音色标识（空 = 模型默认）。 */
   ttsVoice: string
-  /** 音色样本文件名（`$DSH_HOME/waifu/voices/` 下；空 = 没有样本）。 */
-  ttsReference: string
-  /** 演绎指令（Fish Audio 拼进文本开头当语气提示）。 */
-  ttsInstructions: string
   /** 口型跟随开关。 */
   lipsyncEnabled: boolean
   /** 口型强度（0–300，100 = 标准）。 */
@@ -123,7 +119,7 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
 //        aiEnabled / aiTouchOnly / aiProvider / aiModel / aiHistoryCount /
-//        ttsEnabled / ttsEngine / ttsModel / ttsVoice / ttsReference / ttsInstructions / lipsyncEnabled / lipsyncGain`
+//        ttsEnabled / ttsEngine / ttsModel / ttsVoice / lipsyncEnabled / lipsyncGain`
 
 /**
  * 设置文件结构版本：
@@ -131,21 +127,21 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
  * - 3 起 homeRight/homeBottom 改为**视口宽/高的百分比**（0–100）；bubbleOffsetY 改为负值向下
  * - 4 起去掉基础表情与连续表情强度（`expression` / `expr*`），表情改为挂在事件/触摸部位上（ADR-023）
  * - 5 起默认语音模型换成音色可固定的 MAI-Voice 2.1 Flash（Drama 3 每句都换人声，ADR-033 修订）
- * - 6 起默认回到 Fish Audio Drama 3，人声改由「音色样本」固定（`ttsReference`，走无状态音色克隆）
+ * - 6 起默认回到 Fish Audio Drama 3（MAI-Voice 只存活一个版本）
  */
 const SETTINGS_SCHEMA_VERSION = 6
 
 /** home 改成视口百分比的版本（3）；更早的文件 home 语义不同，直接回退 base。 */
 const HOME_PERCENT_VERSION = 3
 
-/** 语音默认模型的两次调整：5 = 换 MAI-Voice，6 = 换回 Drama 3 + 音色样本（ADR-033 修订二）。 */
+/** 语音默认模型的调整：5 = 换 MAI-Voice，6 = 换回 Drama 3（ADR-033 修订二）。 */
 const TTS_VOICE_FIX_VERSION = 5
-const TTS_REFERENCE_VERSION = 6
+const TTS_MODEL_RESET_VERSION = 6
 
 /**
- * 语音默认值的两次迁移（ADR-033 修订）：
- * - v5：MAI-Voice 只存活了一个版本，旧文件里的它统一换回默认（Drama 3）；
- * - v6：Drama 3 的人声改由音色样本固定，空样本保持原样等用户挑一条。
+ * 语音默认值的迁移（ADR-033 修订）：
+ * - v5：旧的「随机音色模型 + 没选音色」组合统一换成默认模型；
+ * - v6：MAI-Voice 只存活了一个版本，旧文件里的它统一换回默认（Drama 3）。
  */
 function migrateTtsVoice(
   version: number,
@@ -156,7 +152,7 @@ function migrateTtsVoice(
   const model = pickString(rawModel) ?? base.ttsModel
   // 音色允许空串（空 = 模型默认音色），所以不走 pickString
   const voice = typeof rawVoice === 'string' ? rawVoice.trim().slice(0, 64) : base.ttsVoice
-  if (version < TTS_REFERENCE_VERSION && model === 'microsoft/mai-voice-2.1-flash') {
+  if (version < TTS_MODEL_RESET_VERSION && model === 'microsoft/mai-voice-2.1-flash') {
     return { model: base.ttsModel, voice: base.ttsVoice }
   }
   if (version < TTS_VOICE_FIX_VERSION && voice.length === 0 && ttsModelRandomVoice(model)) {
@@ -251,11 +247,8 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     ttsEnabled: bool('ttsEnabled'),
     ttsEngine: pickString(record.ttsEngine) ?? base.ttsEngine,
     ttsModel: voiceFix.model,
-    // 音色与演绎指令允许空串（空 = 模型默认音色 / 不加语气提示），所以不走 pickString
+    // 音色允许空串（空 = 模型默认音色），所以不走 pickString
     ttsVoice: voiceFix.voice,
-    ttsReference: typeof record.ttsReference === 'string' ? record.ttsReference.trim().slice(0, 80) : base.ttsReference,
-    ttsInstructions:
-      typeof record.ttsInstructions === 'string' ? record.ttsInstructions.trim().slice(0, 200) : base.ttsInstructions,
     lipsyncEnabled: bool('lipsyncEnabled'),
     lipsyncGain: normalizeLipsyncGain(record.lipsyncGain, base.lipsyncGain),
   }

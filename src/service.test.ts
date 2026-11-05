@@ -42,10 +42,8 @@ const BASE_SETTINGS: PetSettings = {
   ttsEngine: 'openrouter',
   ttsModel: 'fish-audio/drama-3',
   ttsVoice: '',
-  ttsInstructions: 'test',
   lipsyncEnabled: true,
   lipsyncGain: 100,
-  ttsReference: '',
 }
 
 function makeHarness(overrides: Partial<PetSettings> = {}) {

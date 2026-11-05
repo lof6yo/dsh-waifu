@@ -7,7 +7,7 @@
  *   真流式实现时只需再加一个实现，上层（路由与客户端）不动。
  * - 句读切分放在这里（纯函数）：客户端与宿主共用同一套切分规则，气泡与音频
  *   才能按同一粒度对齐。
- * - 合成结果按 `model|voice|instructions|text` 哈希缓存到
+ * - 合成结果按 `model|voice|text` 哈希缓存到
  *   `$DSH_HOME/waifu/tts-cache/`，同一句重复播报不再花钱。
  * @module dsh-waifu/tts
  */
@@ -90,14 +90,6 @@ export interface TtsVoiceOptions {
   model: string
   /** 音色标识；空字符串表示用模型默认音色。 */
   voice?: string
-  /** 演绎指令（Fish Audio 会把它拼进文本开头，作为「[语气]」提示）。 */
-  instructions?: string
-  /**
-   * 音色参考样本（ADR-033 修订二）：base64 数据 URI，随请求走 OpenRouter 的无状态音色克隆
-   * （`input_references`）。Drama 3 这类「表演模型」没有 `supported_voices`，不发参考时每句
-   * 都会换人声；发了就固定在这一个音色上。
-   */
-  reference?: string
 }
 
 /** 合成结果。 */
@@ -117,11 +109,7 @@ export interface TtsEngine {
 
 /** 缓存键：同一段文字 + 同一套语音参数才复用。 */
 export function ttsCacheKey(text: string, options: TtsVoiceOptions): string {
-  // 参考样本可能很长：只把它的哈希算进键，换样本即换缓存
-  const reference = options.reference
-    ? createHash('sha1').update(options.reference).digest('hex').slice(0, 12)
-    : ''
-  const payload = [options.model, options.voice ?? '', options.instructions ?? '', reference, text].join('\u0000')
+  const payload = [options.model, options.voice ?? '', text].join('\u0000')
   return createHash('sha1').update(payload).digest('hex')
 }
 
@@ -196,10 +184,6 @@ export class OpenRouterTtsEngine implements TtsEngine {
         response_format: 'mp3',
       }
       if (options.voice) body.voice = options.voice
-      if (options.instructions) body.instructions = options.instructions
-      if (options.reference) {
-        body.input_references = [{ type: 'input_audio', input_audio: { data: options.reference } }]
-      }
       const response = await this.fetcher(this.endpoint, {
         method: 'POST',
         headers: {

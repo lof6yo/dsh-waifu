@@ -43,7 +43,7 @@ describe('语音模型目录（ADR-033 修订）', () => {
     const model = TTS_MODELS.find((item) => item.id === DEFAULT_TTS_MODEL)
     expect(model, '默认模型必须在目录里').toBeTruthy()
     if (model?.randomVoice) {
-      // Drama 3 这类模型没有固定音色：默认音色留空，靠「音色样本」钉住人声
+      // Drama 3 这类模型没有固定音色：默认音色留空，由用户从下拉里选
       expect(DEFAULT_TTS_VOICE).toBe('')
       expect(model.voices).toEqual([])
       expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe('')

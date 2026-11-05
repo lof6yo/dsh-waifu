@@ -62,7 +62,7 @@ export interface TtsModelOption {
 export const TTS_MODELS: TtsModelOption[] = [
   {
     id: 'fish-audio/drama-3',
-    label: 'Fish Audio Drama 3（最会演，需选一条音色样本固定人声）',
+    label: 'Fish Audio Drama 3（最会演，每句人声随机）',
     voices: [],
     randomVoice: true,
   },
@@ -87,19 +87,10 @@ export const TTS_MODELS: TtsModelOption[] = [
   },
 ]
 
-/** 默认 TTS 模型：Fish Audio Drama 3（表演力最好；人声由「音色样本」固定）。 */
+/** 默认 TTS 模型：Fish Audio Drama 3（表演力最好）。 */
 export const DEFAULT_TTS_MODEL = 'fish-audio/drama-3'
 /** 默认音色（空 = 用模型默认音色；随机音色的模型必须留空）。 */
 export const DEFAULT_TTS_VOICE = ''
-/** 音色样本文件名（空 = 没有样本；存在时随每次请求走无状态音色克隆）。 */
-export const DEFAULT_TTS_REFERENCE = ''
-/** 音色样本目录（`$DSH_HOME/waifu/voices`）。 */
-export const TTS_REFERENCE_DIR = 'voices'
-/** 选中样本的文件名（同一时间只保留一条）。 */
-export const TTS_REFERENCE_FILENAME = 'reference.mp3'
-/** 音色样本大小上限（字节）：样本只用来克隆音色，太长白花钱。 */
-export const TTS_REFERENCE_MAX_BYTES = 8 * 1024 * 1024
-
 /** 按 id 查模型选项。 */
 export function ttsModelOption(id: string): TtsModelOption | undefined {
   return TTS_MODELS.find((item) => item.id === id)
@@ -115,8 +106,6 @@ export function ttsDefaultVoice(model: string): string {
   const option = ttsModelOption(model)
   return option && !option.randomVoice ? (option.voices[0]?.id ?? '') : ''
 }
-/** 演绎指令：Fish Audio 会把它拼进文本开头当作语气提示。 */
-export const DEFAULT_TTS_INSTRUCTIONS = '年轻女性，语气自然，带点得意和小脾气'
 /** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */
 export const DEFAULT_LIPSYNC_ENABLED = true
 /** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
@@ -185,8 +174,6 @@ export const DEFAULT_SETTINGS = {
   ttsEngine: DEFAULT_TTS_ENGINE,
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: DEFAULT_TTS_VOICE,
-  ttsReference: DEFAULT_TTS_REFERENCE,
-  ttsInstructions: DEFAULT_TTS_INSTRUCTIONS,
   lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,
   lipsyncGain: DEFAULT_LIPSYNC_GAIN,
 } as const

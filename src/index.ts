@@ -11,7 +11,6 @@
  * @module dsh-waifu
  */
 
-import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
@@ -19,7 +18,6 @@ import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-llm'
 import { PetService } from './service.ts'
-import { fileStamp } from './home.ts'
 import { DEFAULT_LONG_AI } from './models.ts'
 import {
   DEFAULT_AI_HISTORY,
@@ -39,9 +37,6 @@ import {
   DEFAULT_MAX_FPS,
   DEFAULT_SETTINGS,
   LIPSYNC_GAIN_LIMITS,
-  TTS_REFERENCE_DIR,
-  TTS_REFERENCE_FILENAME,
-  TTS_REFERENCE_MAX_BYTES,
 } from './defaults.ts'
 import {
   makePetRoutes,
@@ -156,13 +151,11 @@ export const Config: Schema<Config> = Schema.object({
   waitingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.waiting.delay),
   waitingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.waiting.interval),
   waitingAiMax: Schema.number().min(1).max(10).default(DEFAULT_LONG_AI.waiting.max),
-  // 语音合成与口型（ADR-033）：模型/音色/演绎指令全部留成设置项，换供应商只加引擎实现
+  // 语音合成与口型（ADR-033）：模型/音色留成设置项，换供应商只加引擎实现
   ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
   ttsEngine: Schema.string().default(DEFAULT_SETTINGS.ttsEngine),
   ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
   ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
-  ttsReference: Schema.string().default(DEFAULT_SETTINGS.ttsReference),
-  ttsInstructions: Schema.string().default(DEFAULT_SETTINGS.ttsInstructions),
   lipsyncEnabled: Schema.boolean().default(DEFAULT_SETTINGS.lipsyncEnabled),
   lipsyncGain: Schema.number().min(LIPSYNC_GAIN_LIMITS.min).max(LIPSYNC_GAIN_LIMITS.max).default(DEFAULT_SETTINGS.lipsyncGain),
 })
@@ -212,8 +205,6 @@ export function apply(ctx: Context, config: Config): void {
     ttsEngine: config.ttsEngine,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
-    ttsReference: config.ttsReference,
-    ttsInstructions: config.ttsInstructions,
     lipsyncEnabled: config.lipsyncEnabled,
     lipsyncGain: config.lipsyncGain,
   }
@@ -339,45 +330,18 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
   const ttsEngine = new OpenRouterTtsEngine(resolveOpenRouterKey, dirname(settingsStore.path))
-  const voiceDir = (): string => join(dirname(settingsStore.path), TTS_REFERENCE_DIR)
-  const voiceFile = (): string => join(voiceDir(), TTS_REFERENCE_FILENAME)
-  // 参考样本读进内存后按 mtime/size 缓存：一句一读 100 KB 不值得，但换了样本要立刻生效
-  let referenceCache: { stamp: string; data: string } | null = null
-  const loadReference = async (): Promise<string | undefined> => {
-    const settings = settingsStore.get()
-    if (!settings.ttsReference) return undefined
-    const file = voiceFile()
-    let stamp = ''
-    try {
-      const info = await stat(file)
-      stamp = `${info.mtimeMs}:${info.size}`
-    } catch {
-      return undefined
-    }
-    if (referenceCache?.stamp === stamp) return referenceCache.data
-    try {
-      const bytes = await readFile(file)
-      const data = `data:audio/mpeg;base64,${bytes.toString('base64')}`
-      referenceCache = { stamp, data }
-      return data
-    } catch {
-      return undefined
-    }
-  }
-  const voiceOptions = async (): Promise<TtsVoiceOptions> => {
+  const voiceOptions = (): TtsVoiceOptions => {
     const settings = settingsStore.get()
     return {
       model: settings.ttsModel,
       voice: settings.ttsVoice.trim() || undefined,
-      instructions: settings.ttsInstructions.trim() || undefined,
-      reference: await loadReference(),
     }
   }
 
   const speakApi: SpeakRoutesApi = {
     // 排查用单段合成：设置页「试听」与 curl 都走这里
     synthesize: async (text) => {
-      const audio = await ttsEngine.synthesize(text, await voiceOptions())
+      const audio = await ttsEngine.synthesize(text, voiceOptions())
       return { mime: audio.mime, audio: audio.audio }
     },
     stream: async (input, emit, signal) => {
@@ -405,7 +369,7 @@ export function apply(ctx: Context, config: Config): void {
         onPayload: (payload) => { lastAiPayload = payload },
         signal,
       })
-      const speakOptions = await voiceOptions()
+      const speakOptions = voiceOptions()
       const synthesize = async (text: string): Promise<TtsAudio | null> => {
         if (!speakOn || signal.aborted) return null
         try {
@@ -429,60 +393,6 @@ export function apply(ctx: Context, config: Config): void {
           AI_HISTORY_MAX_ENTRIES,
         )
       }
-    },
-  }
-
-  // 音色样本（ADR-033 修订二）：Drama 3 这类「表演模型」没有固定音色，
-  // 用「选一条样本 → 以后每次合成带上它」的无状态克隆（input_references）把音色钉住。
-  speakApi.sample = {
-    status: () => {
-      const settings = settingsStore.get()
-      if (!settings.ttsReference) return { reference: '', bytes: 0 }
-      const stamp = fileStamp(voiceFile())
-      const bytes = stamp ? Number(stamp.slice(stamp.lastIndexOf(':') + 1)) : 0
-      return { reference: settings.ttsReference, bytes }
-    },
-    // 候选样本：同一模型连发几次，每次随机人声不同，供用户挑一条
-    candidates: async (count) => {
-      const settings = settingsStore.get()
-      const base = {
-        model: settings.ttsModel,
-        instructions: settings.ttsInstructions.trim() || undefined,
-      }
-      const line = '哼，人家才不是随便就会害羞的那种人，你倒是说说看呀。'
-      const samples: { mime: string; data: string }[] = []
-      for (let index = 0; index < count; index += 1) {
-        try {
-          const audio = await ttsEngine.synthesize(line, base)
-          samples.push({ mime: audio.mime, data: audio.audio.toString('base64') })
-        } catch (error) {
-          if (samples.length === 0) throw error
-        }
-      }
-      return samples
-    },
-    save: async (data) => {
-      const clean = data.includes(',') ? data.slice(data.indexOf(',') + 1) : data
-      const bytes = Buffer.from(clean, 'base64')
-      if (bytes.byteLength < 1024) return { ok: false, error: 'sample-too-small' }
-      if (bytes.byteLength > TTS_REFERENCE_MAX_BYTES) return { ok: false, error: 'sample-too-large' }
-      await mkdir(voiceDir(), { recursive: true })
-      await writeFile(voiceFile(), bytes)
-      referenceCache = null
-      settingsStore.applyOps([{ op: 'set', path: ['ttsReference'], value: TTS_REFERENCE_FILENAME }])
-      service.notifyConfigChanged()
-      return { ok: true }
-    },
-    clear: async () => {
-      referenceCache = null
-      try {
-        await unlink(voiceFile())
-      } catch {
-        // 没有文件也算清除成功
-      }
-      settingsStore.applyOps([{ op: 'set', path: ['ttsReference'], value: '' }])
-      service.notifyConfigChanged()
-      return { ok: true }
     },
   }
 

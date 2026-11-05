@@ -257,17 +257,6 @@ export interface SpeakRoutesApi {
     emit: (event: 'text' | 'clause' | 'audio' | 'done' | 'error', data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void>
-  /** 音色样本（可选）：生成候选 / 保存 / 清除，用于固定随机音色模型的人声。 */
-  sample?: {
-    /** 生成若干条候选样本（同模型不同随机人声），返回 base64 音频供试听。 */
-    candidates?(count: number): Promise<{ mime: string; data: string }[]>
-    /** 保存一条样本（base64 mp3）为当前音色参考。 */
-    save?(data: string): Promise<{ ok: boolean; error?: string }>
-    /** 清除当前音色参考。 */
-    clear?(): Promise<{ ok: boolean }>
-    /** 当前样本状态（文件名 + 字节数）。 */
-    status?(): Promise<{ reference: string; bytes: number }> | { reference: string; bytes: number }
-  }
   /** 单段合成（排查用）：直接回一段音频字节。 */
   synthesize?(text: string): Promise<{ mime: string; audio: Buffer }>
 }
@@ -425,37 +414,6 @@ export function makePetRoutes(deps: {
       const text = typeof body.text === 'string' ? body.text.slice(0, 400) : ''
       const audio = await speak.synthesize!(text)
       return { ok: true, mime: audio.mime, data: audio.audio.toString('base64') }
-    })] : []),
-    // 音色样本（ADR-033 修订二）：生成候选 → 试听 → 采用，之后每次合成带这份样本做无状态克隆
-    // GET /tts-sample（状态）与 POST /tts-sample（保存/清除）必须合并在同一条 route 上：
-    // dsh webserver 按 path 唯一注册（duplicate exact route），不能按 method 拆两条。
-    ...(speak?.sample?.status && speak?.sample?.save
-      ? [getPostRoute(
-          `${PET_API_PREFIX}/tts-sample`,
-          async () => speak.sample!.status!(),
-          async (body) => {
-            if (body.clear === true) {
-              await speak.sample!.clear?.()
-              return { ok: true, cleared: true }
-            }
-            const data = typeof body.data === 'string' ? body.data : ''
-            return speak.sample!.save!(data)
-          },
-        )]
-      : [
-          ...(speak?.sample?.status ? [getRoute(`${PET_API_PREFIX}/tts-sample`, async () => speak.sample!.status!())] : []),
-          ...(speak?.sample?.save ? [postRoute(`${PET_API_PREFIX}/tts-sample`, async (body) => {
-            if (body.clear === true) {
-              await speak.sample!.clear?.()
-              return { ok: true, cleared: true }
-            }
-            const data = typeof body.data === 'string' ? body.data : ''
-            return speak.sample!.save!(data)
-          })] : []),
-        ]),
-    ...(speak?.sample?.candidates ? [postRoute(`${PET_API_PREFIX}/tts-sample/candidates`, async (body) => {
-      const count = typeof body.count === 'number' ? Math.min(5, Math.max(1, Math.round(body.count))) : 3
-      return { ok: true, samples: await speak.sample!.candidates!(count) }
     })] : []),
     // 浏览器侧诊断日志（spec §9）：客户端启动里程碑/错误上报，Host 落盘便于无控制台环境排查
     getPostRoute(
