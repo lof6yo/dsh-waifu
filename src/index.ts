@@ -106,8 +106,8 @@ export const Config: Schema<Config> = Schema.object({
   bubbleTextColor: Schema.string().default('#222222'),
   aiEnabled: Schema.boolean().default(true),
   aiTouchOnly: Schema.boolean().default(false),
-  aiProvider: Schema.string().default('openrouter'),
-  aiModel: Schema.string().default('google/gemma-4-31b-it'),
+  aiProvider: Schema.string().default('deepseek-official'),
+  aiModel: Schema.string().default('deepseek-flash'),
   // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
   thinkingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.thinking.delay),
   thinkingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.thinking.interval),
@@ -181,13 +181,15 @@ export function apply(ctx: Context, config: Config): void {
       const now = Date.now()
       if (now - lastAiAt < 1200) return { ok: false, error: 'cooldown' }
       lastAiAt = now
-      const text = await generateReply(ctx.llm, {
+      const attempt = await generateReply(ctx.llm, {
         provider: settings.aiProvider,
         model: settings.aiModel,
         persona: loadPersona(dirname(settingsStore.path)),
         context: input,
       })
-      return text ? { ok: true, text } : { ok: false, error: 'no-reply' }
+      if (attempt.text) return { ok: true, text: attempt.text }
+      // 失败原因回传（ADR-028）：设置页/排查时能直接看到是「没配 provider」还是「模型空回复」
+      return { ok: false, error: `no-reply: ${attempt.error ?? 'unknown'}` }
     },
   }
 

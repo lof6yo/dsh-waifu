@@ -125,6 +125,12 @@ export function sanitizeLine(raw: string): string {
 }
 
 /** 生成一条台词；超时、无文本或抛错时返回 null（调用方回落预置台词）。 */
+/** 生成结果：`text` 为空时 `error` 给出原因（供路由层回传，便于排查「为什么没台词」）。 */
+export interface ReplyAttempt {
+  text: string | null
+  error?: string
+}
+
 export async function generateReply(
   llm: WaifuLlm,
   options: {
@@ -134,7 +140,7 @@ export async function generateReply(
     context: ReplyContext
     timeoutMs?: number
   },
-): Promise<string | null> {
+): Promise<ReplyAttempt> {
   const controller = new AbortController()
   const timeoutMs = options.timeoutMs ?? 12_000
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -157,9 +163,11 @@ export async function generateReply(
       if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
     }
     const line = sanitizeLine(text)
-    return line || null
-  } catch {
-    return null
+    if (line) return { text: line }
+    return { text: null, error: text ? 'empty-after-sanitize' : 'empty-stream' }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return { text: null, error: reason.slice(0, 200) || 'stream-failed' }
   } finally {
     clearTimeout(timer)
   }

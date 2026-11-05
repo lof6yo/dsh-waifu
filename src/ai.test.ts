@@ -86,13 +86,13 @@ describe('loadPersona', () => {
 describe('generateReply', () => {
   it('拼接文本增量并清理成单行台词', async () => {
     const llm = fakeLlm(['「好', '吧…', '就一下」\n多余行'])
-    const text = await generateReply(llm, {
+    const attempt = await generateReply(llm, {
       provider: 'deepseek-official',
       model: 'deepseek-flash',
       persona: DEFAULT_PERSONA,
       context: { kind: 'tap', part: '手' },
     })
-    expect(text).toBe('好吧…就一下')
+    expect(attempt.text).toBe('好吧…就一下')
     // 请求带上 provider/model 与人设前缀
     expect(llm.calls).toHaveLength(1)
     expect(llm.calls[0].provider).toBe('deepseek-official')
@@ -101,11 +101,15 @@ describe('generateReply', () => {
     expect(llm.calls[0].maxTokens).toBe(80)
   })
 
-  it('流中断或空文本返回 null（调用方回落预置台词）', async () => {
+  it('流中断或空文本返回 null + 原因（调用方回落预置台词）', async () => {
     const broken = fakeLlm(['啊', '哦'], { throwAt: 1 })
-    expect(await generateReply(broken, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })).toBeNull()
+    const failed = await generateReply(broken, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })
+    expect(failed.text).toBeNull()
+    expect(failed.error).toBeTruthy()
     const empty = fakeLlm(['   '])
-    expect(await generateReply(empty, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'state', state: 'idle' } })).toBeNull()
+    const blank = await generateReply(empty, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'state', state: 'idle' } })
+    expect(blank.text).toBeNull()
+    expect(blank.error).toBe('empty-after-sanitize')
   })
 })
 
