@@ -220,6 +220,14 @@ describe('makePetRoutes API 路由', () => {
     cleanup()
   })
 
+  it('exact 路由 path 不重复（dsh webserver 按 path 唯一注册，重复会激活失败）', () => {
+    const { routes, cleanup } = makeRoutes()
+    const paths = routes.filter((r) => r.kind === 'exact').map((r) => r.path)
+    const duplicates = paths.filter((path, index) => paths.indexOf(path) !== index)
+    expect(duplicates).toEqual([])
+    cleanup()
+  })
+
   it('错误方法返回 405', () => {
     const { route, cleanup } = makeRoutes()
     const res = fakeRes()

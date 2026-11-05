@@ -427,18 +427,35 @@ export function makePetRoutes(deps: {
       return { ok: true, mime: audio.mime, data: audio.audio.toString('base64') }
     })] : []),
     // 音色样本（ADR-033 修订二）：生成候选 → 试听 → 采用，之后每次合成带这份样本做无状态克隆
-    ...(speak?.sample?.status ? [getRoute(`${PET_API_PREFIX}/tts-sample`, async () => speak.sample!.status!())] : []),
+    // GET /tts-sample（状态）与 POST /tts-sample（保存/清除）必须合并在同一条 route 上：
+    // dsh webserver 按 path 唯一注册（duplicate exact route），不能按 method 拆两条。
+    ...(speak?.sample?.status && speak?.sample?.save
+      ? [getPostRoute(
+          `${PET_API_PREFIX}/tts-sample`,
+          async () => speak.sample!.status!(),
+          async (body) => {
+            if (body.clear === true) {
+              await speak.sample!.clear?.()
+              return { ok: true, cleared: true }
+            }
+            const data = typeof body.data === 'string' ? body.data : ''
+            return speak.sample!.save!(data)
+          },
+        )]
+      : [
+          ...(speak?.sample?.status ? [getRoute(`${PET_API_PREFIX}/tts-sample`, async () => speak.sample!.status!())] : []),
+          ...(speak?.sample?.save ? [postRoute(`${PET_API_PREFIX}/tts-sample`, async (body) => {
+            if (body.clear === true) {
+              await speak.sample!.clear?.()
+              return { ok: true, cleared: true }
+            }
+            const data = typeof body.data === 'string' ? body.data : ''
+            return speak.sample!.save!(data)
+          })] : []),
+        ]),
     ...(speak?.sample?.candidates ? [postRoute(`${PET_API_PREFIX}/tts-sample/candidates`, async (body) => {
       const count = typeof body.count === 'number' ? Math.min(5, Math.max(1, Math.round(body.count))) : 3
       return { ok: true, samples: await speak.sample!.candidates!(count) }
-    })] : []),
-    ...(speak?.sample?.save ? [postRoute(`${PET_API_PREFIX}/tts-sample`, async (body) => {
-      if (body.clear === true) {
-        await speak.sample!.clear?.()
-        return { ok: true, cleared: true }
-      }
-      const data = typeof body.data === 'string' ? body.data : ''
-      return speak.sample!.save!(data)
     })] : []),
     // 浏览器侧诊断日志（spec §9）：客户端启动里程碑/错误上报，Host 落盘便于无控制台环境排查
     getPostRoute(
