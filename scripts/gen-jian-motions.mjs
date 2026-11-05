@@ -234,6 +234,19 @@ function pulse(t, c, w) {
   return 0.5 * (1 - Math.cos(TAU * u))
 }
 
+/** 非对称俯冲：快速低头（ease-out）→ 短暂停住 → 慢慢抬起（ease-out 收尾）。
+ *  用于点头——对称脉冲（两端速度都为 0）会让动作变成「一顿一顿」，看着发楞。 */
+function dip(t, start, down, hold, up, amp) {
+  if (t <= start) return 0
+  let p = t - start
+  if (p < down) return amp * Math.sin((p / down) * (Math.PI / 2))
+  p -= down
+  if (p < hold) return amp
+  p -= hold
+  if (p < up) return amp * Math.cos((p / up) * (Math.PI / 2))
+  return 0
+}
+
 /** 0→1 平滑阶跃（用于「到位并停住」）。 */
 function smoothstep(t, a, b) {
   const u = Math.min(1, Math.max(0, (t - a) / (b - a)))
@@ -318,20 +331,35 @@ const MOTION_DEFS = [
   {
     group: 'Nod',
     file: 'nod.motion3.json',
-    duration: 1.5,
+    duration: 1.7,
     loop: false,
     build: () => {
-      const d = 1.5
-      // 两次点头：14° → 20°，收尾上抬 3° 过冲再落回（后坐力/踩刹车）
-      const headY = (t) => 14 * pulse(t, 0.24, 0.12) + 20 * pulse(t, 0.66, 0.14) - 3 * pulse(t, 1.04, 0.1)
-      const headZ = (t) => 2.6 * pulse(t, 0.3, 0.16) - 2.0 * pulse(t, 0.72, 0.16) + 1.2 * pulse(t, 1.14, 0.12)
-      const headPX = (t) => 1.8 * pulse(t, 0.3, 0.18) - 1.3 * pulse(t, 0.74, 0.18)
-      const eye = (t) => 1 - 0.38 * pulse(t, 0.24, 0.1) - 0.44 * pulse(t, 0.66, 0.11) - 0.96 * pulse(t, 1.26, 0.05)
-      const brow = (t) => -0.22 * pulse(t, 0.3, 0.2) + 0.14 * pulse(t, 1.12, 0.16)
-      const mouth = (t) => 0.24 * pulse(t, 0.42, 0.28)
+      const d = 1.7
+      // 两次点头：先小后大；每次「快下 → 短暂停 → 慢起」，末尾留一点阻尼余振，避免机械感
+      const headY = (t) =>
+        dip(t, 0.16, 0.12, 0.03, 0.22, 11) +
+        dip(t, 0.56, 0.14, 0.05, 0.3, 18) -
+        3.0 * pulse(t, 1.16, 0.14) +
+        1.1 * pulse(t, 1.5, 0.12)
+      // 侧倾比俯仰晚 0.05s，且幅度小：头不是绕一根轴转
+      const headZ = (t) =>
+        2.2 * dip(t, 0.21, 0.14, 0.03, 0.24, 1) -
+        1.6 * dip(t, 0.61, 0.16, 0.05, 0.3, 1) +
+        1.0 * pulse(t, 1.2, 0.16)
+      const headX = (t) => 1.3 * dip(t, 0.19, 0.15, 0.02, 0.3, 1) - 0.9 * dip(t, 0.59, 0.17, 0.04, 0.34, 1)
+      const headPX = (t) => 1.4 * dip(t, 0.2, 0.16, 0.03, 0.3, 1) - 1.0 * dip(t, 0.6, 0.18, 0.05, 0.34, 1)
+      // 眼睑比头慢一拍（+0.03s），抬起来之前眨一次
+      const eye = (t) =>
+        1 -
+        0.32 * dip(t, 0.19, 0.12, 0.03, 0.22, 1) -
+        0.4 * dip(t, 0.59, 0.14, 0.05, 0.3, 1) -
+        0.95 * pulse(t, 1.34, 0.05)
+      const brow = (t) => -0.2 * dip(t, 0.22, 0.2, 0.05, 0.4, 1) + 0.12 * pulse(t, 1.2, 0.18)
+      const mouth = (t) => 0.22 * dip(t, 0.3, 0.3, 0.2, 0.5, 1)
       return [
         buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
         buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
         buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
         buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
         buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
