@@ -64,6 +64,12 @@ const BASE_SETTINGS: PetSettings = {
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
+  thinkingAiDelay: 3,
+  thinkingAiInterval: 20,
+  thinkingAiMax: 3,
+  waitingAiDelay: 4,
+  waitingAiInterval: 30,
+  waitingAiMax: 3,
 }
 
 function makeRoutes(
@@ -213,7 +219,7 @@ describe('makePetRoutes API 路由', () => {
     expect(body.parts.length).toBe(9)
     // 事件绑定（当前模型生效值，供设置页初始化）
     expect(body.events.idle.motions).toEqual(['Idle'])
-    expect(body.events.thinking.lines.length).toBe(3)
+    expect(body.events.thinking.lines.length).toBe(1)
     cleanup()
   })
 

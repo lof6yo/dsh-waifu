@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { stripJsonComments } from './jsonc.ts'
+import { LONG_AI_LIMITS } from './models.ts'
 
 /** 设置文件名（$DSH_HOME/waifu 下）。 */
 export const SETTINGS_FILENAME = 'settings.jsonc'
@@ -61,6 +62,18 @@ export interface PetSettings {
   aiProvider: string
   /** AI 回复使用的模型 id（provider 下可用模型）。 */
   aiModel: string
+  /** 长状态「思考」的 AI 演绎节奏：入态后延迟多久开始（秒，0–120）。 */
+  thinkingAiDelay: number
+  /** 「思考」的演绎间隔（秒，5–600）。 */
+  thinkingAiInterval: number
+  /** 「思考」每次入态最多演绎几次（1–10）。 */
+  thinkingAiMax: number
+  /** 长状态「等确认」的入态延迟（秒）。 */
+  waitingAiDelay: number
+  /** 「等确认」的演绎间隔（秒）。 */
+  waitingAiInterval: number
+  /** 「等确认」每次入态最多演绎几次。 */
+  waitingAiMax: number
 }
 
 /** 设置文件视图（设置页读取用）。 */
@@ -141,6 +154,11 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     const text = typeof value === 'string' ? value.trim() : ''
     return /^#[0-9a-f]{6}$/i.test(text) ? text.toLowerCase() : fallback
   }
+  const clampInt = (value: unknown, fallback: number, min: number, max: number): number => {
+    const n = typeof value === 'number' ? value : Number(value)
+    if (!Number.isFinite(n)) return fallback
+    return Math.round(Math.min(max, Math.max(min, n)))
+  }
   const opacity = (value: unknown, fallback: number): number => {
     const n = typeof value === 'number' ? value : Number(value)
     if (!Number.isFinite(n)) return fallback
@@ -176,6 +194,12 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     aiTouchOnly: bool('aiTouchOnly'),
     aiProvider: pickString(record.aiProvider) ?? base.aiProvider,
     aiModel: pickString(record.aiModel) ?? base.aiModel,
+    thinkingAiDelay: clampInt(record.thinkingAiDelay, base.thinkingAiDelay, LONG_AI_LIMITS.delay.min, LONG_AI_LIMITS.delay.max),
+    thinkingAiInterval: clampInt(record.thinkingAiInterval, base.thinkingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
+    thinkingAiMax: clampInt(record.thinkingAiMax, base.thinkingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
+    waitingAiDelay: clampInt(record.waitingAiDelay, base.waitingAiDelay, LONG_AI_LIMITS.delay.min, LONG_AI_LIMITS.delay.max),
+    waitingAiInterval: clampInt(record.waitingAiInterval, base.waitingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
+    waitingAiMax: clampInt(record.waitingAiMax, base.waitingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
   }
 }
 

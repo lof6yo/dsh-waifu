@@ -226,11 +226,29 @@ export interface EventBinding {
 /** 六个事件的绑定表。 */
 export type EventBindings = Record<PetEventKey, EventBinding>
 
-/** 长状态的阶段推进时长（ms，距入态偏移）：index 与 EventBinding.lines 对应。 */
-export const EVENT_STAGE_DELAYS: Partial<Record<PetEventKey, readonly number[]>> = {
-  thinking: [0, 15_000, 40_000],
-  waiting: [0, 30_000, 90_000],
+/** 长状态（思考/等确认）：入态台词常驻，之后由 AI 演绎按节奏刷新（ADR-026）。 */
+export const LONG_STATES = ['thinking', 'waiting'] as const
+
+/** 长状态键。 */
+export type LongState = typeof LONG_STATES[number]
+
+/** 是否长状态：气泡常驻、台词可被 AI 反复演绎替换。 */
+export function isLongState(state: PetEventKey): state is LongState {
+  return (LONG_STATES as readonly string[]).includes(state)
 }
+
+/** 长状态 AI 演绎的默认节奏（delay/interval 单位秒，max 为每次入态最多演绎次数）。 */
+export const DEFAULT_LONG_AI: Record<LongState, { delay: number; interval: number; max: number }> = {
+  thinking: { delay: 3, interval: 20, max: 3 },
+  waiting: { delay: 4, interval: 30, max: 3 },
+}
+
+/** 长状态 AI 演绎节奏的取值范围（设置页滑杆/校验共用）。 */
+export const LONG_AI_LIMITS = {
+  delay: { min: 0, max: 120 },
+  interval: { min: 5, max: 600 },
+  max: { min: 1, max: 10 },
+} as const
 
 /** 台词池最多条数（每个阶段）。 */
 export const MAX_LINES_PER_POOL = 20
@@ -246,11 +264,7 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
   },
   thinking: {
     motions: ['Tilt'],
-    lines: [
-      ['思考中…', '让我想想。'],
-      ['还在想，稍等…', '这个问题有点绕。'],
-      ['马上就好…', '再给我一点时间。'],
-    ],
+    lines: [['思考中…', '让我想想。']],
   },
   error: {
     motions: ['ShakeHead', 'angry'],
@@ -266,17 +280,14 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
   },
   waiting: {
     motions: ['Sway'],
-    lines: [
-      ['等你确认。', '需要你决定一下。'],
-      ['还在等你哦。', '不着急，我等着。'],
-      ['考虑好了吗？', '随时可以继续。'],
-    ],
+    lines: [['等你确认。', '需要你决定一下。']],
   },
 }
 
 /**
  * 归一化单个事件绑定：motions 收敛为「动作组 + 表情」混选（旧版 `expression` 字段并入）；
- * lines 清洗为「阶段 → 台词数组」，至少 1 组。
+ * lines 只保留**入态**一组（ADR-026 取消多阶段固定台词，其余阶段丢弃；旧文件的多阶段
+ * 二维数组取第一组）。
  */
 function normalizeEventBinding(raw: unknown): EventBinding | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -297,7 +308,7 @@ function normalizeEventBinding(raw: unknown): EventBinding | null {
         .slice(0, MAX_LINES_PER_POOL),
     )]
     lines.push(cleaned)
-    if (lines.length >= 3) break
+    break
   }
   if (lines.length === 0) lines.push([])
   return { motions, lines }

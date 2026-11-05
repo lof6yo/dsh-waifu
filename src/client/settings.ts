@@ -1,7 +1,7 @@
 /**
  * 桌宠配置设置页（`settings.section` 注册体，spec §2）。
  * 单页信息架构（从上到下）：显示（开关 / 尺寸 / 留白 / 位置 / 气泡 / 帧率）/
- * 事件绑定（当前模型：6 事件的动作组 + 分阶段台词池）/ 触摸部位
+ * 事件绑定（当前模型：6 事件的动作 / 表情 + 入态台词池）/ 触摸部位
  * （box / 台词 / 动作组）/ 开发者选项。仅内置「简」模型，不再有模型选择/导入、
  * 固定人设、跳转链接或文件路径展示。
  * 读写经插件自己的同源 API `/api/dsh-waifu/settings` 与 `/api/dsh-waifu/touch-parts`
@@ -23,7 +23,6 @@ import type {
 } from '../models.ts'
 import {
   DEFAULT_EVENT_BINDINGS,
-  EVENT_STAGE_DELAYS,
   MAX_BOXES_PER_PART,
   MAX_LINE_LENGTH,
   MAX_LINES_PER_PART,
@@ -81,6 +80,14 @@ export interface PetSettingsValue {
   aiProvider: string
   /** AI 回复使用的模型 id。 */
   aiModel: string
+  /** 长状态「思考」AI 演绎节奏：入态延迟（秒）/ 间隔（秒）/ 每次入态上限（ADR-026）。 */
+  thinkingAiDelay: number
+  thinkingAiInterval: number
+  thinkingAiMax: number
+  /** 长状态「等确认」AI 演绎节奏。 */
+  waitingAiDelay: number
+  waitingAiInterval: number
+  waitingAiMax: number
 }
 
 /** GET /api/dsh-waifu/settings 视图（settings.jsonc 读取结果）。 */
@@ -128,6 +135,12 @@ const DEFAULT_VALUE: PetSettingsValue = {
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
+  thinkingAiDelay: 3,
+  thinkingAiInterval: 20,
+  thinkingAiMax: 3,
+  waitingAiDelay: 4,
+  waitingAiInterval: 30,
+  waitingAiMax: 3,
 }
 
 /** 事件卡片展示顺序（空闲/思考中/出错/完成/交付/等审批）。 */
@@ -143,10 +156,9 @@ const EVENT_LABELS: Record<PetEventKey, string> = {
   waiting: '等审批',
 }
 
-/** 事件台词池的阶段名（thinking/waiting 有 3 个阶段，其余 1 个）。 */
-function eventStageLabels(event: PetEventKey): string[] {
-  const delays = EVENT_STAGE_DELAYS[event] ?? [0]
-  return delays.map((delay, index) => (index === 0 ? '入态' : `${Math.round(delay / 1000)} 秒后`))
+/** 事件台词池只有「入态」一组（ADR-026：多阶段固定台词已取消，长状态交给 AI 演绎）。 */
+function eventStageLabels(_event: PetEventKey): string[] {
+  return ['入态']
 }
 
 /** 深拷贝事件绑定（避免草稿与 API 对象 / 默认常量互相污染）。 */
@@ -162,7 +174,7 @@ function cloneEventBindings(bindings: EventBindings): EventBindings {
   return out
 }
 
-/** 把某事件绑定补齐/裁剪到该事件的阶段数（普通事件 1 组、thinking/waiting 3 组）。 */
+/** 把某事件绑定裁剪到「入态」一组（ADR-026）。 */
 function normalizeEventDraft(binding: EventBinding, event: PetEventKey): EventBinding {
   const stageCount = eventStageLabels(event).length
   const lines = Array.from({ length: stageCount }, (_, stage) => [...(binding.lines[stage] ?? [])])
@@ -1737,7 +1749,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const stages = eventStageLabels(event)
     const expanded = expandedEventKeys.has(event)
     const dirty = dirtyEventKeys.has(event)
-    const summary = `${motionSelectionLabel(binding.motions) || '不触发'} · ${stages.length} 阶段台词`
+    const summary = `${motionSelectionLabel(binding.motions) || '不触发'} · ${binding.lines[0]?.length ?? 0} 条台词`
     const options = motionSelectionOptions(motionGroups, binding.motions)
     const toggleExpanded = (): void => {
       setExpandedEventKeys((prev) => {
@@ -2320,12 +2332,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ),
   ))
 
-  // 4. 事件绑定（当前模型）：6 事件的「动作 / 表情」+ 分阶段台词池
+  // 4. 事件绑定（当前模型）：6 事件的「动作 / 表情」+ 入态台词池
   children.push(createElement('div', { key: 'event-bindings', style: sectionStyle },
     createElement(SectionHeader, {
       title: '事件绑定（当前模型）',
       description: createElement('div', null,
-        '每个事件 = 动作组 + 分阶段台词池；改完点卡片内的「保存」。',
+        '每个事件 = 动作 / 表情 + 入态台词；长状态（思考/等确认）之后交给 AI 演绎。改完点卡片内的「保存」。',
         motionGroupsStatus === 'error'
           ? createElement('div', { style: { ...noticeErrorStyle, marginTop: 8, marginBottom: 0 } },
             '无法解析当前模型的动作组，动作多选暂不可用（可稍后重试）。',
@@ -2428,6 +2440,48 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             value.aiTouchOnly ? '状态变化只用预置台词（状态切换太快，AI 来不及说完）' : '状态变化也会请 AI 说一句'),
         ),
       ),
+      // 长状态 AI 演绎节奏（ADR-026）：思考/等确认各自一套「延迟 / 间隔 / 次数」
+      ...(['thinking', 'waiting'] as const).map((state) => {
+        const keys = state === 'thinking'
+          ? { delay: 'thinkingAiDelay', interval: 'thinkingAiInterval', max: 'thinkingAiMax' }
+          : { delay: 'waitingAiDelay', interval: 'waitingAiInterval', max: 'waitingAiMax' }
+        const title = state === 'thinking' ? '思考' : '等确认'
+        const commit = (key: keyof PetSettingsValue, raw: string, min: number, max: number): void => {
+          const parsed = Number(raw)
+          if (!Number.isFinite(parsed)) return
+          const next = Math.round(Math.min(max, Math.max(min, parsed)))
+          if (next === value[key]) return
+          enqueueWrite(() => [{ op: 'set', path: [key], value: next }])
+        }
+        const numberInput = (
+          key: keyof PetSettingsValue,
+          label: string,
+          unit: string,
+          min: number,
+          max: number,
+        ): ReactElement => createElement('label', { key: `${key}`, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, label),
+          createElement('input', {
+            type: 'number',
+            min,
+            max,
+            step: 1,
+            defaultValue: value[key] as number,
+            style: { ...inputStyle, width: 64, padding: '4px 6px' },
+            disabled: !writable,
+            onBlur: (e: FocusEvent<HTMLInputElement>) => commit(key, e.target.value, min, max),
+          }),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, unit),
+        )
+        return createElement('div', { key: `long-ai-${state}`, style: formRowStyle },
+          createElement('label', { style: formLabelStyle }, `${title}节奏`),
+          createElement('div', { style: { ...formControlStyle, gap: 12, flexWrap: 'wrap' } },
+            numberInput(keys.delay as keyof PetSettingsValue, '延迟', '秒', 0, 120),
+            numberInput(keys.interval as keyof PetSettingsValue, '间隔', '秒', 5, 600),
+            numberInput(keys.max as keyof PetSettingsValue, '上限', '次', 1, 10),
+          ),
+        )
+      }),
       createElement('div', { style: formRowStyle },
         createElement('label', { style: formLabelStyle }, 'Provider'),
         createElement('div', { style: formControlStyle },

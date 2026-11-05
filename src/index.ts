@@ -18,6 +18,7 @@ import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-llm'
 import { PetService } from './service.ts'
+import { DEFAULT_LONG_AI } from './models.ts'
 import {
   makePetRoutes,
   petPackageRoot,
@@ -48,6 +49,10 @@ export {
 } from './models-host.ts'
 export {
   DEFAULT_MOTION_MAP,
+  DEFAULT_LONG_AI,
+  LONG_AI_LIMITS,
+  LONG_STATES,
+  isLongState,
   ANIMATION_SLOTS,
   DEFAULT_TOUCH_PARTS,
   MAX_BOXES_PER_PART,
@@ -101,6 +106,13 @@ export const Config: Schema<Config> = Schema.object({
   aiTouchOnly: Schema.boolean().default(false),
   aiProvider: Schema.string().default('deepseek-official'),
   aiModel: Schema.string().default('deepseek-flash'),
+  // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
+  thinkingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.thinking.delay),
+  thinkingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.thinking.interval),
+  thinkingAiMax: Schema.number().min(1).max(10).default(DEFAULT_LONG_AI.thinking.max),
+  waitingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.waiting.delay),
+  waitingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.waiting.interval),
+  waitingAiMax: Schema.number().min(1).max(10).default(DEFAULT_LONG_AI.waiting.max),
 })
 
 /** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）、llm（AI 回复，ADR-025）。 */
@@ -134,6 +146,12 @@ export function apply(ctx: Context, config: Config): void {
     aiTouchOnly: config.aiTouchOnly,
     aiProvider: config.aiProvider,
     aiModel: config.aiModel,
+    thinkingAiDelay: config.thinkingAiDelay,
+    thinkingAiInterval: config.thinkingAiInterval,
+    thinkingAiMax: config.thinkingAiMax,
+    waitingAiDelay: config.waitingAiDelay,
+    waitingAiInterval: config.waitingAiInterval,
+    waitingAiMax: config.waitingAiMax,
   }
   const settingsStore = new SettingsStore(baseSettings)
 

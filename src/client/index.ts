@@ -31,7 +31,8 @@ import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
 import { clientLog } from './client-log.ts'
 import {
   DEFAULT_EVENT_BINDINGS,
-  EVENT_STAGE_DELAYS,
+  isLongState,
+  type LongState,
   EXPRESSIONS,
   expressionParams,
   EXPRESSION_SWITCH_PARAMS,
@@ -312,7 +313,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let disposed = false
   pushCleanup(() => { disposed = true })
   // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
-  pushCleanup(() => { clearStages(); clearBubbleHideTimer() })
+  pushCleanup(() => { clearLongState(); clearBubbleHideTimer() })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
@@ -408,9 +409,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 当前模型 motionManager 的 motionFinish 解绑函数（模型重载/卸载时清理）。 */
   let detachMotionFinish: (() => void) | null = null
   let bubbleHideTimer: number | undefined
-  let stageTimers: number[] = []
-  let stagedState: PetState | null = null
-  let stageIndex = 0
+  /** 长状态的 AI 演绎计时器（入态延迟 + 间隔重试，ADR-026）。 */
+  let longAiTimers: number[] = []
+  /** 当前长状态（thinking/waiting）；非空时气泡常驻。 */
+  let longState: LongState | null = null
+  /** 长状态常驻气泡的底稿：入态台词，AI 演绎成功后换成 AI 那句。 */
+  let bubbleStickyText: string | null = null
   let lastState: PetState | null = null
   let demoState: PetState | null = null
   let view: PetStateView | null = null
@@ -429,6 +433,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let aiEnabled = false
   /** 仅触摸（SSE config.aiTouchOnly）：开启后状态气泡只用预置台词，AI 只在触摸时发言。 */
   let aiTouchOnly = false
+  /** 长状态 AI 演绎节奏（SSE config.*AiDelay/Interval/Max，秒/秒/次；ADR-026）。 */
+  let thinkingAiDelay = 3
+  let thinkingAiInterval = 20
+  let thinkingAiMax = 3
+  let waitingAiDelay = 4
+  let waitingAiInterval = 30
+  let waitingAiMax = 3
   /** AI 回复请求序号：只采用最后一次请求的结果，避免连点时旧回复覆盖新回复。 */
   let aiRequestSeq = 0
   /** AI 台词的最短可见时间截止点：其间状态/预置台词先排队，避免「刚到就被状态切走」。 */
@@ -561,13 +572,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (bubble) bubble.style.opacity = '0'
   }
 
-  /** 重绘当前阶段文案（阶段推进/瞬态气泡到时回落/事件绑定变化或拖拽结束后恢复）。 */
-  function showStageText(): void {
-    if (!stagedState) return
-    const line = pickEventLine(stagedState, stageIndex)
-    if (line === undefined) { hideBubble(); return }
-    // 走 showBubble：阶段推进同样要给 AI 台词让出最短可见时间
-    showBubble(line)
+  /** 重绘长状态的常驻气泡（瞬态气泡到时回落/事件绑定变化或拖拽结束后恢复）。 */
+  function showStickyText(): void {
+    if (longState === null) return
+    if (bubbleStickyText === null) { hideBubble(); return }
+    // 走 showBubble：常驻底稿同样要给 AI 台词让出最短可见时间
+    showBubble(bubbleStickyText)
   }
 
   /**
@@ -600,7 +610,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     setBubbleText(text)
     bubbleHideTimer = window.setTimeout(() => {
       bubbleHideTimer = undefined
-      if (stagedState) showStageText()
+      if (longState !== null) showStickyText()
       else if (bubble) bubble.style.opacity = '0'
     }, BUBBLE_DISPLAY_MS)
   }
@@ -617,32 +627,61 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     showBubbleNow(text)
   }
 
-  /** 退出阶段演进状态：取消全部阶段计时并复位标记。 */
-  function clearStages(): void {
-    for (const t of stageTimers) window.clearTimeout(t)
-    stageTimers = []
-    stagedState = null
-    stageIndex = 0
+  /** 退出长状态：取消演绎计时、清掉常驻底稿。 */
+  function clearLongState(): void {
+    for (const t of longAiTimers) window.clearTimeout(t)
+    longAiTimers = []
+    longState = null
+    bubbleStickyText = null
   }
 
-  /** 进入阶段演进状态：立即显示阶段 0 并按偏移调度后续阶段（spec §3）。 */
-  function enterStaged(state: PetState): void {
-    clearStages()
-    const delays = EVENT_STAGE_DELAYS[state]
-    if (!delays || delays.length === 0) return
-    stagedState = state
-    stageIndex = 0
-    showStageText()
-    for (let i = 1; i < delays.length; i++) {
-      stageTimers.push(window.setTimeout(() => {
-        stageIndex = i
-        // 拖拽中暂停气泡与动作（spec §4），阶段静默推进、松手后恢复新阶段
-        if (!dragging) {
-          showStageText()
-          playState(state)
-        }
-      }, delays[i]))
+  /** 读取长状态 AI 节奏配置（缺省/非法值保留当前值）。 */
+  function applyLongAiConfig(cfg: Partial<PetStateView['config']>): void {
+    const num = (value: unknown, fallback: number): number =>
+      typeof value === 'number' && Number.isFinite(value) ? value : fallback
+    thinkingAiDelay = num(cfg.thinkingAiDelay, thinkingAiDelay)
+    thinkingAiInterval = num(cfg.thinkingAiInterval, thinkingAiInterval)
+    thinkingAiMax = num(cfg.thinkingAiMax, thinkingAiMax)
+    waitingAiDelay = num(cfg.waitingAiDelay, waitingAiDelay)
+    waitingAiInterval = num(cfg.waitingAiInterval, waitingAiInterval)
+    waitingAiMax = num(cfg.waitingAiMax, waitingAiMax)
+  }
+
+  /** 长状态的 AI 演绎节奏（秒 → ms）；取自 SSE config，越界值按默认兜底。 */
+  function longAiCadence(state: LongState): { delay: number; interval: number; max: number } {
+    const delay = state === 'thinking' ? thinkingAiDelay : waitingAiDelay
+    const interval = state === 'thinking' ? thinkingAiInterval : waitingAiInterval
+    const max = state === 'thinking' ? thinkingAiMax : waitingAiMax
+    return {
+      delay: Math.max(0, delay),
+      interval: Math.max(1, interval),
+      max: Math.max(0, Math.round(max)),
     }
+  }
+
+  /**
+   * 进入长状态（ADR-026）：入态台词常驻，之后按设置节奏让 AI 反复演绎同一状态——
+   * 第一次等 `delay` 秒，之后每 `interval` 秒一次，最多 `max` 次；出态即停。
+   */
+  function enterLongState(state: LongState, hint: string | undefined): void {
+    clearLongState()
+    longState = state
+    bubbleStickyText = hint ?? null
+    if (bubbleStickyText === null) hideBubble()
+    else showStickyText()
+    if (!aiEnabled || aiTouchOnly) return
+    const cadence = longAiCadence(state)
+    if (cadence.max <= 0) return
+    let attempts = 0
+    const tick = (): void => {
+      if (longState !== state) return
+      attempts += 1
+      void requestAiReply({ kind: 'state', state, hint }, { sticky: true })
+      if (attempts < cadence.max) {
+        longAiTimers.push(window.setTimeout(tick, cadence.interval * 1000))
+      }
+    }
+    longAiTimers.push(window.setTimeout(tick, cadence.delay * 1000))
   }
 
   /** 按 client 坐标应用鼠标跟随（model.focus 吃 canvas 本地坐标）。 */
@@ -750,16 +789,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (state !== lastState) {
       lastState = state
       const line = pickEventLine(state, 0)
-      if (EVENT_STAGE_DELAYS[state]) {
-        enterStaged(state)
+      if (isLongState(state)) {
+        // 长状态：入态台词常驻，AI 按设置节奏反复演绎替换（ADR-026）
+        enterLongState(state, line)
       } else {
-        clearStages()
+        clearLongState()
         if (line !== undefined) showBubble(line)
         else hideBubble()
+        if (state !== 'idle') void requestAiReply({ kind: 'state', state, hint: line })
       }
-      // AI 台词与阶段台词并存：长状态（思考/等确认）先进阶段 0 的预置台词，
-      // AI 回复到了再覆盖（showAiBubble 的 1.4s 保护期内阶段推进不会抢走它）。
-      if (state !== 'idle') void requestAiReply({ kind: 'state', state, hint: line })
       playState(state)
     }
     if (debugTextEl) {
@@ -1619,7 +1657,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (eventsSignature !== eventBindingsSignature) {
       eventBindings = nextEvents
       eventBindingsSignature = eventsSignature
-      if (stagedState && !dragging) showStageText()
+      if (longState !== null && !dragging) showStickyText()
     }
     // 调试面板 + 触摸部位色块（开发者选项，互不强制绑定；编辑态强制显示，spec §2/§4）
     ensureDebugPanel(cfg.debug)
@@ -1669,6 +1707,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       : DEFAULT_BUBBLE_TEXT_COLOR
     aiEnabled = cfg.aiEnabled === true
     aiTouchOnly = cfg.aiTouchOnly === true
+    applyLongAiConfig(cfg)
     applyBubbleStyle()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -1706,8 +1745,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!down) return
     if (dragging) {
       api.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {})
-      // 拖拽中隐藏的常驻气泡恢复当前阶段文案（spec §4：拖拽中暂停、结束恢复）
-      showStageText()
+      // 拖拽中隐藏的常驻气泡恢复当前文案（spec §4：拖拽中暂停、结束恢复）
+      showStickyText()
     } else {
       handleTap(e)
     }
@@ -1738,20 +1777,28 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * AI 回复（ADR-025）：Host 生成一句台词后替换气泡；失败/超时保持预置台词不动。
    * 连点时只采用最新一次请求的结果（`aiRequestSeq`）。
    */
-  async function requestAiReply(input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<void> {
-    if (!aiEnabled) return
+  async function requestAiReply(
+    input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    options?: { sticky?: boolean },
+  ): Promise<string | null> {
+    if (!aiEnabled) return null
     // 仅触摸：状态变化只用预置台词，不打扰模型（状态切换往往只有几百毫秒）
-    if (aiTouchOnly && input.kind === 'state') return
+    if (aiTouchOnly && input.kind === 'state') return null
     const seq = ++aiRequestSeq
     const targetState = input.state
     try {
       const result = await api.interact(input)
-      if (seq !== aiRequestSeq) return
+      if (seq !== aiRequestSeq) return null
       // 状态类回复：期间状态又变了就丢弃（新状态会自己发请求），否则这句会盖在新状态的气泡上
-      if (targetState !== undefined && targetState !== lastState) return
-      if (result.ok && result.text) showAiBubble(result.text)
+      if (targetState !== undefined && targetState !== lastState) return null
+      if (!result.ok || !result.text) return null
+      // 长状态下 AI 那句成为新的常驻底稿，2.5s 后回落时显示的就是它
+      if (options?.sticky) bubbleStickyText = result.text
+      showAiBubble(result.text)
+      return result.text
     } catch {
       // 忽略：保留预置台词（无网络/模型不可用时的降级路径）
+      return null
     }
   }
 
@@ -1840,6 +1887,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           : DEFAULT_BUBBLE_TEXT_COLOR
         aiEnabled = view.config.aiEnabled === true
         aiTouchOnly = view.config.aiTouchOnly === true
+        applyLongAiConfig(view.config)
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)
 

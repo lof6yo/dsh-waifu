@@ -31,3 +31,4 @@
 | [023](023-motion-selection-merged-expression.md) | 动作组与表情合并为同一套「动作 / 表情」混选（一个动作 + 一个表情） | Accepted（「一个表情」与英文名由 ADR-024 调整） |
 | [024](024-multiple-expressions-and-labels.md) | 表情可叠加（按互斥组收敛）+ 动作组中文显示名 | Accepted |
 | [025](025-ai-reply-via-dsh-llm.md) | AI 回复：复用 DSH 的 llm 服务 + 人设文件（persona.md） | Accepted |
+| [026](026-long-state-ai-cadence.md) | 长状态取消多阶段固定台词，改由 AI 按「延迟 / 间隔 / 上限」演绎 | Accepted（取代 ADR-015 的阶段台词部分） |

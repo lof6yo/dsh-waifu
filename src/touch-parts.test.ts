@@ -69,7 +69,8 @@ describe('TouchPartsStore', () => {
     const events = store.load().models.jian?.events
     expect(events?.idle).toEqual({ motions: ['Idle'], lines: [['在的。']] })
     expect(events?.thinking?.motions).toEqual(['Thinking', 'angry'])
-    expect(events?.thinking?.lines).toEqual([['想…'], ['还在想…']])
+    // ADR-026：多阶段固定台词取消，归一化只留入态一组
+    expect(events?.thinking?.lines).toEqual([['想…']])
     expect(events && 'bogus' in events).toBe(false)
   })
 

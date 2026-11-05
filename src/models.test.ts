@@ -8,8 +8,8 @@ import {
 } from './models-host.ts'
 import {
   DEFAULT_EVENT_BINDINGS,
+  DEFAULT_LONG_AI,
   DEFAULT_MOTION_MAP,
-  EVENT_STAGE_DELAYS,
   EXPRESSIONS,
   EXPRESSION_IDS,
   EXPRESSION_SWITCH_PARAMS,
@@ -22,6 +22,7 @@ import {
   normalizeMotionSelection,
   splitMotionSelection,
   hitTestTouchParts,
+  isLongState,
   mergeEventBindings,
   normalizeEventBindings,
   normalizeTouchBox,
@@ -163,18 +164,21 @@ describe('hitTestTouchParts（按图层，parts[0] 最上层）', () => {
 })
 
 describe('EventBindings（事件绑定）', () => {
-  it('默认事件绑定覆盖 6 个事件，长状态有 3 阶段台词', () => {
+  it('默认事件绑定覆盖 6 个事件，长状态只有入态一组台词', () => {
     expect(Object.keys(DEFAULT_EVENT_BINDINGS).sort()).toEqual(
       ['delivered', 'done', 'error', 'idle', 'thinking', 'waiting'],
     )
-    expect(DEFAULT_EVENT_BINDINGS.thinking.lines.length).toBe(3)
-    expect(DEFAULT_EVENT_BINDINGS.waiting.lines.length).toBe(3)
+    expect(DEFAULT_EVENT_BINDINGS.thinking.lines.length).toBe(1)
+    expect(DEFAULT_EVENT_BINDINGS.waiting.lines.length).toBe(1)
     expect(DEFAULT_EVENT_BINDINGS.idle.lines.length).toBe(1)
-    expect(EVENT_STAGE_DELAYS.thinking).toEqual([0, 15000, 40000])
-    expect(EVENT_STAGE_DELAYS.waiting).toEqual([0, 30000, 90000])
+    expect(isLongState('thinking')).toBe(true)
+    expect(isLongState('waiting')).toBe(true)
+    expect(isLongState('done')).toBe(false)
+    expect(DEFAULT_LONG_AI.thinking).toEqual({ delay: 3, interval: 20, max: 3 })
+    expect(DEFAULT_LONG_AI.waiting).toEqual({ delay: 4, interval: 30, max: 3 })
   })
 
-  it('normalizeEventBindings 只保留合法事件/清洗台词/最多 3 阶段', () => {
+  it('normalizeEventBindings 只保留合法事件/清洗台词/只留入态一组', () => {
     const events = normalizeEventBindings({
       idle: { motions: ['Idle', 'Idle', ''], lines: [[' 在的。 ', '在的。', '   ']] },
       thinking: { motions: [], lines: [['a'], ['b'], ['c'], ['d']] },
@@ -182,7 +186,7 @@ describe('EventBindings（事件绑定）', () => {
     })
     expect(events.idle?.motions).toEqual(['Idle'])
     expect(events.idle?.lines).toEqual([['在的。']])
-    expect(events.thinking?.lines).toEqual([['a'], ['b'], ['c']])
+    expect(events.thinking?.lines).toEqual([['a']])
     expect(events && 'bogus' in events).toBe(false)
   })
 

@@ -28,6 +28,12 @@ const BASE_SETTINGS: PetSettings = {
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
+  thinkingAiDelay: 3,
+  thinkingAiInterval: 20,
+  thinkingAiMax: 3,
+  waitingAiDelay: 4,
+  waitingAiInterval: 30,
+  waitingAiMax: 3,
 }
 
 function makeHarness(overrides: Partial<PetSettings> = {}) {
@@ -82,7 +88,7 @@ describe('PetService 状态机', () => {
     expect(view.config.events.done.motions).toEqual(['star'])
     // 默认台词池（无固定人设，中性口吻；长状态 3 阶段）
     expect(view.config.events.idle.lines.length).toBe(1)
-    expect(view.config.events.thinking.lines.length).toBe(3)
+    expect(view.config.events.thinking.lines.length).toBe(1)
     expect(view.config.events.error.lines[0].length).toBeGreaterThan(0)
   })
 

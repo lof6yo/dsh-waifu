@@ -25,6 +25,12 @@ const BASE: PetSettings = {
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
+  thinkingAiDelay: 3,
+  thinkingAiInterval: 20,
+  thinkingAiMax: 3,
+  waitingAiDelay: 4,
+  waitingAiInterval: 30,
+  waitingAiMax: 3,
 }
 
 let home: string
@@ -112,6 +118,23 @@ describe('SettingsStore', () => {
     expect(store.get().aiTouchOnly).toBe(true)
     store.applyOps([{ op: 'set', path: ['aiTouchOnly'], value: 'yes' }])
     expect(store.get().aiTouchOnly).toBe(false)
+  })
+
+  it('长状态 AI 节奏：默认值、可写、越界夹到区间（ADR-026）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().thinkingAiDelay).toBe(3)
+    expect(store.get().thinkingAiInterval).toBe(20)
+    expect(store.get().waitingAiMax).toBe(3)
+    store.applyOps([
+      { op: 'set', path: ['thinkingAiDelay'], value: 999 },
+      { op: 'set', path: ['waitingAiInterval'], value: 1 },
+      { op: 'set', path: ['waitingAiMax'], value: 7 },
+    ])
+    expect(store.get().thinkingAiDelay).toBe(120)
+    expect(store.get().waitingAiInterval).toBe(5)
+    expect(store.get().waitingAiMax).toBe(7)
+    store.applyOps([{ op: 'set', path: ['thinkingAiMax'], value: 'many' }])
+    expect(store.get().thinkingAiMax).toBe(3)
   })
 
   it('applyOps 写回并返回最新视图', () => {
