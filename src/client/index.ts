@@ -413,6 +413,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let expressionLevels: Record<string, number> = {}
   let tempExpression = ''
   let tempExpressionUntil = 0
+  /** 调试面板「表情预览」强制显示的表情（null = 不干预）。 */
+  let debugExpression: string | null = null
   /** 表达式开关参数当前混合值（每帧向目标逼近 → 淡入淡出）。 */
   const expressionMix = new Map<string, number>()
   /** 连续参数当前混合值。 */
@@ -709,7 +711,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (debugTextEl) {
       debugTextEl.textContent =
         `agent: ${next?.agent ?? '-'}  pet: ${state}  v${next?.version ?? '-'}\n` +
-        `parts: ${touchParts.length}\n` +
+        `parts: ${touchParts.length}  expr: ${desiredExpression()}\n` +
         `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
         `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}`
     }
@@ -1460,6 +1462,33 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugMotionSelect = motionSelect
       debugEl.appendChild(motionRow)
 
+      // 表情预览：点选即常驻（再点同一项取消）
+      const exprLabel = sectionLabel('表情预览')
+      debugEl.appendChild(exprLabel)
+      const exprRow = document.createElement('div')
+      exprRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px'
+      const exprButtons: { id: string; btn: HTMLButtonElement }[] = []
+      const paintExprButtons = (): void => {
+        for (const { id, btn } of exprButtons) {
+          const active = (debugExpression ?? 'none') === id
+          btn.style.background = active ? 'rgba(120,170,255,.38)' : 'rgba(128,128,128,.1)'
+          btn.style.borderColor = active ? 'rgba(120,170,255,.55)' : 'rgba(128,128,128,.25)'
+        }
+      }
+      for (const expression of EXPRESSIONS) {
+        const btn = document.createElement('button')
+        btn.textContent = expression.name
+        btn.style.cssText = 'padding:3px 0;border-radius:6px;border:1px solid rgba(128,128,128,.25);background:rgba(128,128,128,.1);color:#dbe2ef;font-size:11px;font-family:inherit;cursor:pointer;outline:none'
+        btn.onclick = () => {
+          debugExpression = debugExpression === expression.id ? null : expression.id
+          paintExprButtons()
+        }
+        exprButtons.push({ id: expression.id, btn })
+        exprRow.appendChild(btn)
+      }
+      paintExprButtons()
+      debugEl.appendChild(exprRow)
+
       // 状态信息：与上方区域分隔
       debugTextEl = document.createElement('div')
       debugTextEl.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
@@ -1489,6 +1518,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** 当前应显示的表情 id：触摸临时表情 > 当前事件绑定 > 基础表情（spec §5）。 */
   function desiredExpression(): string {
+    if (debugExpression) return normalizeExpressionId(debugExpression)
     if (tempExpression) {
       if (Date.now() < tempExpressionUntil) return tempExpression
       tempExpression = ''
