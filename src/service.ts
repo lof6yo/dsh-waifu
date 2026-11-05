@@ -59,6 +59,9 @@ export interface PetStateView {
     /** AI 回复开关（ADR-025）。 */
     aiEnabled: boolean
     aiTouchOnly: boolean
+    /** AI 回复用的 provider 路由与模型 id（设置页下拉选中的值，快照透传给宠物半边）。 */
+    aiProvider: string
+    aiModel: string
     /** 六个事件的绑定（动画组候选 + 台词池；内置/自定义默认 → 用户覆盖）。 */
     events: EventBindings
     /** 当前模型生效的触摸部位（用户自定义优先，其次内置默认；spec §4）。 */
@@ -207,6 +210,8 @@ export class PetService {
         bubbleTextColor: settings.bubbleTextColor,
         aiEnabled: settings.aiEnabled,
         aiTouchOnly: settings.aiTouchOnly,
+        aiProvider: settings.aiProvider,
+        aiModel: settings.aiModel,
         events: this.effectiveEvents(settings.model),
         touchParts: this.touchPartsFor(settings.model),
       },
