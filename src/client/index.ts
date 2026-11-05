@@ -33,6 +33,7 @@ import {
   DEFAULT_EVENT_BINDINGS,
   EVENT_STAGE_DELAYS,
   EXPRESSIONS,
+  expressionParams,
   EXPRESSION_SWITCH_PARAMS,
   normalizeExpressionId,
   splitMotionSelection,
@@ -408,8 +409,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
   let canvasPadXPct = DEFAULT_CANVAS_PAD_X
   let canvasPadYPct = DEFAULT_CANVAS_PAD_Y
-  // 表情：挂在事件绑定/触摸部位上（motions 混选里的表情 id）+ 触摸临时表情（spec §5）
-  let tempExpression = ''
+  // 表情：挂在事件绑定/触摸部位上（motions 混选里的表情 id，可叠加）+ 触摸临时表情（spec §5）
+  let tempExpressions: string[] = []
   let tempExpressionUntil = 0
   /** 调试面板「表情预览」强制显示的表情（null = 不干预）。 */
   let debugExpression: string | null = null
@@ -708,7 +709,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (debugTextEl) {
       debugTextEl.textContent =
         `agent: ${next?.agent ?? '-'}  pet: ${state}  v${next?.version ?? '-'}\n` +
-        `parts: ${touchParts.length}  expr: ${desiredExpression()}\n` +
+        `parts: ${touchParts.length}  expr: ${desiredExpressions().join('+') || 'none'}\n` +
         `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
         `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}`
     }
@@ -1513,15 +1514,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 当前应显示的表情 id：调试预览 > 触摸临时表情 > 当前事件绑定（spec §5）。 */
-  function desiredExpression(): string {
-    if (debugExpression) return normalizeExpressionId(debugExpression)
-    if (tempExpression) {
-      if (Date.now() < tempExpressionUntil) return tempExpression
-      tempExpression = ''
+  /** 当前应显示的表情 id 列表：调试预览 > 触摸临时表情 > 当前事件绑定（spec §5）。 */
+  function desiredExpressions(): string[] {
+    if (debugExpression) {
+      const id = normalizeExpressionId(debugExpression)
+      return id === 'none' ? [] : [id]
     }
-    const bound = lastState ? splitMotionSelection(eventBindings[lastState]?.motions ?? []).expression : 'none'
-    return normalizeExpressionId(bound)
+    if (tempExpressions.length > 0) {
+      if (Date.now() < tempExpressionUntil) return tempExpressions
+      tempExpressions = []
+    }
+    if (!lastState) return []
+    return splitMotionSelection(eventBindings[lastState]?.motions ?? []).expressions
   }
 
   /**
@@ -1535,8 +1539,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const set = coreModel?.setParameterValueById
     if (typeof set !== 'function') return
     const fade = Math.min(1, Math.max(0.02, dt * 1000 / EXPRESSION_FADE_MS))
-    const def = EXPRESSIONS.find((expression) => expression.id === desiredExpression())
-    const targets = def?.params ?? {}
+    const targets = expressionParams(desiredExpressions())
     for (const param of EXPRESSION_SWITCH_PARAMS) {
       const target = targets[param] ?? 0
       const current = expressionMix.get(param) ?? 0
@@ -1701,10 +1704,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           showBubble(line)
         }
       }
-      // 动作组 / 表情：部位混选里最多各 1 项；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
+      // 动作组 / 表情：部位混选里 1 个动作组 + 若干表情；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
       const selection = splitMotionSelection(part.motions)
-      if (selection.expression !== 'none') {
-        tempExpression = selection.expression
+      if (selection.expressions.length > 0) {
+        tempExpressions = selection.expressions
         tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
       }
       // 动作：有动作组才播（空 = 只出气泡，spec §4）

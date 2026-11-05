@@ -14,7 +14,10 @@ import {
   EXPRESSION_IDS,
   EXPRESSION_SWITCH_PARAMS,
   isExpressionId,
+  expressionLabel,
+  expressionParams,
   joinMotionSelection,
+  motionLabel,
   normalizeExpressionId,
   normalizeMotionSelection,
   splitMotionSelection,
@@ -239,14 +242,36 @@ describe('表情（expressions）', () => {
     expect(EXPRESSION_IDS).not.toContain('none')
   })
 
-  it('混选拆解：最多 1 个动作组 + 1 个表情，顺序固定', () => {
-    expect(splitMotionSelection(['Tilt', 'angry'])).toEqual({ motion: 'Tilt', expression: 'angry' })
-    expect(splitMotionSelection(['angry', 'Tilt'])).toEqual({ motion: 'Tilt', expression: 'angry' })
-    expect(splitMotionSelection(['Tilt', 'Sway', 'angry', 'blush'])).toEqual({ motion: 'Tilt', expression: 'blush' })
-    expect(splitMotionSelection([])).toEqual({ motion: '', expression: 'none' })
-    expect(joinMotionSelection('Sway', 'none')).toEqual(['Sway'])
-    expect(joinMotionSelection('', 'heart')).toEqual(['heart'])
-    expect(joinMotionSelection('', 'none')).toEqual([])
+  it('混选拆解：1 个动作组 + 若干表情（互斥组内二选一）', () => {
+    expect(splitMotionSelection(['Tilt', 'angry'])).toEqual({ motion: 'Tilt', expressions: ['angry'] })
+    expect(splitMotionSelection(['angry', 'Tilt'])).toEqual({ motion: 'Tilt', expressions: ['angry'] })
+    // 不同互斥组的表情可以叠加（皮肤 + 眼）
+    expect(splitMotionSelection(['Tilt', 'Sway', 'angry', 'blush'])).toEqual({
+      motion: 'Tilt',
+      expressions: ['angry', 'blush'],
+    })
+    // 同一互斥组内后选的替换先选的
+    expect(splitMotionSelection(['star', 'blush', 'heart'])).toEqual({ motion: '', expressions: ['blush', 'heart'] })
+    expect(splitMotionSelection([])).toEqual({ motion: '', expressions: [] })
+    expect(joinMotionSelection('Sway', [])).toEqual(['Sway'])
+    expect(joinMotionSelection('', ['heart'])).toEqual(['heart'])
+    expect(joinMotionSelection('', [])).toEqual([])
+  })
+
+  it('expressionParams 合并多个表情的参数（眼 + 皮肤各自生效）', () => {
+    expect(expressionParams(['blush', 'cry'])).toEqual({ ParamSwitch2: 1, ParamSwitch9: 1 })
+    expect(expressionParams(['angry', 'dim', 'blush'])).toEqual({
+      ParamSwitch2: 1, ParamSwitch4: 1, ParamSwitch21: 1,
+    })
+    expect(expressionParams([])).toEqual({})
+    expect(expressionParams(['none'])).toEqual({})
+  })
+
+  it('动作组/表情都有中文显示名（未知 id 回退原名）', () => {
+    expect(motionLabel('ShakeHead')).toBe('摇头')
+    expect(motionLabel('Custom')).toBe('Custom')
+    expect(expressionLabel('blush')).toBe('脸红')
+    expect(expressionLabel('nope')).toBe('nope')
   })
 
   it('normalizeMotionSelection 收敛旧数组（多余项/重复项被裁掉）', () => {

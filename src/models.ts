@@ -65,22 +65,51 @@ export interface ExpressionDef {
   name: string
   /** 参数 → 目标值（未列出的开关按 0 处理，即关闭）。 */
   params: Record<string, number>
+  /**
+   * 互斥组：同一组里只能同时开一个（例如眼部表情）。
+   * 缺省 = 可以任意叠加（脸红、生气这类互不冲突的开关）。
+   */
+  exclusive?: string
 }
 
 /** 全部内置表情（设置页下拉、事件绑定、触摸部位共用；`none` 表示恢复无表情）。 */
 export const EXPRESSIONS: readonly ExpressionDef[] = [
   { id: 'none', name: '无', params: {} },
-  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 } },
+  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin' },
   { id: 'angry', name: '生气', params: { ParamSwitch4: 1 } },
-  { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 } },
-  { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 } },
-  { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 } },
-  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 } },
-  { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 } },
-  { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 } },
-  { id: 'blood', name: '血', params: { ParamSwitch3: 1 } },
+  { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 }, exclusive: 'eye' },
+  { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 }, exclusive: 'eye' },
+  { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 }, exclusive: 'eye' },
+  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 }, exclusive: 'eye' },
+  { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 }, exclusive: 'eye' },
+  { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 }, exclusive: 'skin' },
+  { id: 'blood', name: '血', params: { ParamSwitch3: 1 }, exclusive: 'skin' },
   { id: 'dim', name: '高光消失', params: { ParamSwitch21: 1 } },
 ]
+
+/** 动作组的显示名（下拉与卡片摘要用；未收录的自定义动作组回退成原名）。 */
+export const MOTION_LABELS: Readonly<Record<string, string>> = {
+  Idle: '待机',
+  Nod: '点头',
+  ShakeHead: '摇头',
+  Tilt: '歪头',
+  Sway: '左右晃',
+}
+
+/** 动作组的显示名（未知动作组回退原 id）。 */
+export function motionLabel(id: string): string {
+  return MOTION_LABELS[id] ?? id
+}
+
+/** 表情的互斥组（没有则返回空串 = 可自由叠加）。 */
+export function expressionExclusiveGroup(id: string): string {
+  return EXPRESSIONS.find((expression) => expression.id === id)?.exclusive ?? ''
+}
+
+/** 表情的显示名（未知 id 回退原值）。 */
+export function expressionLabel(id: string): string {
+  return EXPRESSIONS.find((expression) => expression.id === id)?.name ?? id
+}
 
 /** 表情会触及的全部开关参数（未选中的一律淡出到 0，避免多个表情叠着）。 */
 export const EXPRESSION_SWITCH_PARAMS: readonly string[] = [
@@ -106,45 +135,75 @@ export function isExpressionId(value: string): boolean {
 }
 
 /**
- * 「动作组 / 表情」混选：事件绑定与触摸部位共用一套列表（ADR-023）。
- * 语义 = 最多 1 个动作组 + 最多 1 个表情，同时触发；两项都可留空。
+ * 「动作组 / 表情」混选：事件绑定与触摸部位共用一套列表（ADR-023 / ADR-024）。
+ * 语义 = 最多 1 个动作组 + 若干表情，同时触发；两项都可留空。
+ * 表情之间只有互斥组（眼部 / 皮肤）内才二选一，其余可以叠：脸红 + 眼泪、生气 + 星星眼……
  */
 export interface MotionSelection {
   /** 动作组名（空 = 不播动作）。 */
   motion: string
-  /** 表情 id（`none` = 不改表情）。 */
-  expression: string
+  /** 表情 id 列表（空 = 不改表情）；顺序 = 选择顺序。 */
+  expressions: string[]
 }
 
-/** 拆解混选数组；重复项取最后一个，未知表情名按动作组处理。 */
+/**
+ * 拆解混选数组：第一个非表情名当动作组，其余都当表情；
+ * 同一互斥组里后出现的替换先出现的，重复项只留最后一个。
+ */
 export function splitMotionSelection(list: readonly unknown[]): MotionSelection {
   let motion = ''
-  let expression = 'none'
+  const expressions: string[] = []
   for (const raw of list) {
     if (typeof raw !== 'string') continue
     const id = raw.trim()
     if (!id) continue
-    if (isExpressionId(id)) expression = id
-    else if (!motion) motion = id
+    if (!isExpressionId(id)) {
+      if (!motion) motion = id
+      continue
+    }
+    const group = expressionExclusiveGroup(id)
+    for (let i = expressions.length - 1; i >= 0; i -= 1) {
+      const other = expressions[i]
+      if (other === id) {
+        expressions.splice(i, 1)
+        continue
+      }
+      if (group && expressionExclusiveGroup(other) === group) expressions.splice(i, 1)
+    }
+    expressions.push(id)
   }
-  return { motion, expression }
+  return { motion, expressions }
 }
 
-/** 由动作组 + 表情拼出混选数组（顺序固定：动作组在前，空项省略）。 */
-export function joinMotionSelection(motion: string, expression: string): string[] {
+/** 由动作组 + 表情列表拼出混选数组（顺序固定：动作组在前，空项省略）。 */
+export function joinMotionSelection(motion: string, expressions: readonly string[]): string[] {
   const out: string[] = []
   const name = typeof motion === 'string' ? motion.trim() : ''
   if (name) out.push(name)
-  const expr = normalizeExpressionId(expression)
-  if (expr !== 'none') out.push(expr)
+  for (const raw of expressions) {
+    if (typeof raw !== 'string') continue
+    const expr = normalizeExpressionId(raw)
+    if (expr !== 'none' && !out.includes(expr)) out.push(expr)
+  }
   return out
 }
 
-/** 归一化混选数组（各自最多 1 项、顺序固定；非数组返回空）。 */
+/** 归一化混选数组（动作组最多 1 项、表情按互斥组收敛；非数组返回空）。 */
 export function normalizeMotionSelection(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
-  const { motion, expression } = splitMotionSelection(raw)
-  return joinMotionSelection(motion, expression)
+  const { motion, expressions } = splitMotionSelection(raw)
+  return joinMotionSelection(motion, expressions)
+}
+
+/** 表情列表 → 需要写 1 的参数集合（多个表情叠加时取并集）。 */
+export function expressionParams(ids: readonly string[]): Record<string, number> {
+  const params: Record<string, number> = {}
+  for (const id of ids) {
+    const def = EXPRESSIONS.find((expression) => expression.id === id)
+    if (!def) continue
+    for (const [param, value] of Object.entries(def.params)) params[param] = value
+  }
+  return params
 }
 
 /** 宠物事件键（与状态动画槽位同构：空闲/思考/出错/完成/交付/等审批）。 */

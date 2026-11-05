@@ -28,4 +28,5 @@
 | [020](020-motion-set-reverted-to-idle.md) | 动作集回退为只有 Idle，其余动作待重新设计 | Superseded（ADR-021） |
 | [021](021-basic-motion-set-nod-shake-tilt-sway-hop.md) | 基础动作组：点头 / 摇头 / 歪头 / 左右晃 | Accepted（取代 ADR-020 的「只留 Idle」） |
 | [022](022-expressions.md) | 表情系统：参数开关（脸黑/脸红/生气/星星眼/白眼/泪花/爱心眼/眼泪/血/高光消失）+ 连续参数强度滑杆 | Superseded（ADR-023 的入口与强度滑杆部分） |
-| [023](023-motion-selection-merged-expression.md) | 动作组与表情合并为同一套「动作 / 表情」混选（一个动作 + 一个表情） | Accepted |
+| [023](023-motion-selection-merged-expression.md) | 动作组与表情合并为同一套「动作 / 表情」混选（一个动作 + 一个表情） | Accepted（「一个表情」与英文名由 ADR-024 调整） |
+| [024](024-multiple-expressions-and-labels.md) | 表情可叠加（按互斥组收敛）+ 动作组中文显示名 | Accepted |

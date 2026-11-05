@@ -30,7 +30,9 @@ import {
   MAX_LINES_PER_POOL,
   PET_EVENTS,
   EXPRESSIONS,
+  expressionLabel,
   isExpressionId,
+  motionLabel,
   normalizeMotionSelection,
   splitMotionSelection,
   mergeEventBindings,
@@ -634,8 +636,10 @@ const stickyRowStyle: CSSProperties = {
 interface ThemeSelectOption {
   id: string
   name: string
-  /** 分组名：有值时下拉列表里按组显示小标题（组内单选，见 ThemeMultiSelect.singlePerGroup）。 */
+  /** 分组名：有值时下拉列表里按组显示小标题。 */
   group?: string
+  /** 互斥键：同键的选项只能选一个（动作组共用 `motion`；表情按模型的互斥组区分）。 */
+  exclusive?: string
 }
 
 const MAX_FPS_OPTIONS: ThemeSelectOption[] = [
@@ -651,8 +655,9 @@ function normalizeMaxFps(raw: unknown): number {
 }
 
 /**
- * 「动作 / 表情」混选选项（ADR-023）：动作组与表情各成一组，组内单选。
- * extra 是当前值里可能出现、但模型没解析到的旧名字（保证 tag 能显示）。
+ * 「动作 / 表情」混选选项（ADR-023 / ADR-024）：动作组与表情各成一组。
+ * 动作组组内互斥；表情只在模型定义的互斥组（眼部 / 皮肤）内互斥，其余可叠加。
+ * current 里可能出现模型没解析到的旧动作组名字（保证 tag 能显示）。
  */
 function motionSelectionOptions(motionGroups: readonly string[], current: readonly string[] = []): ThemeSelectOption[] {
   const motions = [...new Set([
@@ -660,21 +665,24 @@ function motionSelectionOptions(motionGroups: readonly string[], current: readon
     ...current.filter((id) => !isExpressionId(id)),
   ])]
   return [
-    ...motions.map((id) => ({ id, name: id, group: '动作' })),
+    ...motions.map((id) => ({ id, name: motionLabel(id), group: '动作', exclusive: 'motion' })),
     ...EXPRESSIONS
       .filter((expression) => expression.id !== 'none')
-      .map((expression) => ({ id: expression.id, name: expression.name, group: '表情' })),
+      .map((expression) => ({
+        id: expression.id,
+        name: expression.name,
+        group: '表情',
+        exclusive: expression.exclusive,
+      })),
   ]
 }
 
-/** 混选标签文案（卡片摘要用）：动作组 / 表情各取一个。 */
+/** 混选标签文案（卡片摘要用）：动作组 + 表情（可多个）。 */
 function motionSelectionLabel(selection: readonly string[]): string {
-  const { motion, expression } = splitMotionSelection(selection)
+  const { motion, expressions } = splitMotionSelection(selection)
   const parts: string[] = []
-  if (motion) parts.push(motion)
-  if (expression !== 'none') {
-    parts.push(EXPRESSIONS.find((item) => item.id === expression)?.name ?? expression)
-  }
+  if (motion) parts.push(motionLabel(motion))
+  for (const expression of expressions) parts.push(expressionLabel(expression))
   return parts.join(' + ')
 }
 
@@ -875,16 +883,17 @@ interface ThemeMultiSelectProps {
   options: ThemeSelectOption[]
   disabled?: boolean
   placeholder?: string
-  /** 组内单选：点同组另一项时替换掉原来的（动作组 / 表情各只留 1 项）。 */
-  singlePerGroup?: boolean
+  /** 互斥：同 `exclusive` 键的选项只能选一个（动作组共用 `motion`；表情按模型互斥组）。 */
+  exclusive?: boolean
   onChange: (next: string[]) => void
 }
 
 /** 多选下拉：选中项以 tag 展示在主按钮内；点击下拉项切换选中，保持打开以支持连续多选。 */
 function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
-  const { value, options, disabled, placeholder, singlePerGroup, onChange } = props
+  const { value, options, disabled, placeholder, exclusive, onChange } = props
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -898,6 +907,18 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
       document.removeEventListener('pointerdown', onDoc)
       document.removeEventListener('keydown', onKey)
     }
+  }, [open])
+
+  // 打开时把已选项滚进可视区：否则再打开列表总停在顶部，已选项藏在下面像「勾错/丢选项」
+  useEffect(() => {
+    if (!open) return
+    const list = listRef.current
+    const item = list?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!list || !item) return
+    const top = item.offsetTop - 8
+    const bottom = top + item.offsetHeight + 8
+    if (top < list.scrollTop) list.scrollTop = top
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
   }, [open])
 
   const nameOf = (id: string) => options.find((o) => o.id === id)?.name ?? id
@@ -915,13 +936,15 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
       onChange(value.filter((id) => id !== option.id))
       return
     }
-    if (!singlePerGroup) {
+    if (!exclusive || !option.exclusive) {
       onChange([...value, option.id])
       return
     }
-    // 组内单选：先剔除同组旧选项（无 group 时整组视为一组）
-    const sameGroup = blocks.find((block) => block.items.some((item) => item.id === option.id))
-    const keep = value.filter((id) => !(sameGroup?.items.some((item) => item.id === id) ?? false))
+    // 互斥：先剔除同互斥键的旧选项，再追加当前项（动作组 / 眼部 / 皮肤各留一个）
+    const keep = value.filter((id) => {
+      const other = options.find((item) => item.id === id)
+      return other?.exclusive !== option.exclusive
+    })
     onChange([...keep, option.id])
   }
 
@@ -974,6 +997,7 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
       createElement('span', { style: { color: C.textSecondary, fontSize: 10, flexShrink: 0 } }, open ? '▴' : '▾'),
     ),
     open && createElement('div', {
+      ref: listRef,
       role: 'listbox',
       'aria-multiselectable': true,
       style: {
@@ -1683,7 +1707,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           createElement(ThemeMultiSelect, {
             value: binding.motions,
             options,
-            singlePerGroup: true,
+            exclusive: true,
             disabled: readOnly,
             placeholder: '不选 = 只出气泡',
             onChange: (next) => {
@@ -1888,7 +1912,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           createElement(ThemeMultiSelect, {
             value: part.motions,
             options: motionSelectionOptions(groups, part.motions),
-            singlePerGroup: true,
+            exclusive: true,
             disabled: readOnly,
             placeholder: '不选 = 只出气泡',
             onChange: (next: string[]) => setPartMotions(part.id, next),
