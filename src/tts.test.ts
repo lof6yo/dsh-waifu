@@ -83,6 +83,30 @@ describe('OpenRouterTtsEngine', () => {
     await expect(engine.synthesize('你好', VOICE)).rejects.toThrow('tts-key-missing')
   }))
 
+  it('带音色样本时请求体里出现 input_references，且缓存键随样本变化', withTempHome(async (home) => {
+    const bodies: any[] = []
+    const fetcher = (async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')))
+      return new Response(Buffer.from('ID3fake-mp3'), {
+        status: 200,
+        headers: { 'content-type': 'audio/mpeg' },
+      })
+    }) as unknown as typeof fetch
+    const engine = new OpenRouterTtsEngine(async () => 'sk-test', home, fetcher)
+    const sampleA = 'data:audio/mpeg;base64,AAAA'
+    const sampleB = 'data:audio/mpeg;base64,BBBB'
+    await engine.synthesize('你好呀。', { ...VOICE, reference: sampleA })
+    expect(bodies[0].input_references).toEqual([{ type: 'input_audio', input_audio: { data: sampleA } }])
+    // 换样本后不能命中上一条样本的缓存
+    const second = await engine.synthesize('你好呀。', { ...VOICE, reference: sampleB })
+    expect(second.cached).toBe(false)
+    expect(bodies[1].input_references[0].input_audio.data).toBe(sampleB)
+    // 不带样本的请求体里没有这个字段
+    await engine.synthesize('换一句。', VOICE)
+    expect(bodies[2].input_references).toBeUndefined()
+    expect(ttsCacheKey('你好呀。', VOICE)).not.toBe(ttsCacheKey('你好呀。', { ...VOICE, reference: sampleA }))
+  }))
+
   it('非 200 时把供应商原因带出来', withTempHome(async (home) => {
     const fetcher = (async () => new Response(JSON.stringify({ error: { message: 'bad voice' } }), {
       status: 400,
