@@ -55,6 +55,8 @@ export interface PetSettings {
   bubbleTextColor: string
   /** AI 回复总开关（ADR-025）：开启后触摸/状态回复改由 `ctx.llm` 生成。 */
   aiEnabled: boolean
+  /** 仅触摸：状态变化只用预置台词，AI 只在触摸部位时发言（ADR-025）。 */
+  aiTouchOnly: boolean
   /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider，如 `deepseek-official`）。 */
   aiProvider: string
   /** AI 回复使用的模型 id（provider 下可用模型）。 */
@@ -79,7 +81,7 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 建议通过设置页「桌宠配置」修改；直接编辑保存后刷新页面生效。
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
-//        aiEnabled / aiProvider / aiModel`
+//        aiEnabled / aiTouchOnly / aiProvider / aiModel`
 
 /**
  * 设置文件结构版本：
@@ -171,6 +173,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     bubbleBgOpacity: opacity(record.bubbleBgOpacity, base.bubbleBgOpacity),
     bubbleTextColor: color(record.bubbleTextColor, base.bubbleTextColor),
     aiEnabled: bool('aiEnabled'),
+    aiTouchOnly: bool('aiTouchOnly'),
     aiProvider: pickString(record.aiProvider) ?? base.aiProvider,
     aiModel: pickString(record.aiModel) ?? base.aiModel,
   }

@@ -22,6 +22,7 @@ const BASE: PetSettings = {
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
   aiEnabled: false,
+  aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
 }
@@ -102,6 +103,15 @@ describe('SettingsStore', () => {
     expect(store.path).toBe(join(home, 'waifu', SETTINGS_FILENAME))
     expect(store.get()).toEqual(BASE)
     expect(readFileSync(store.path, 'utf8')).toContain('桌宠设置文件')
+  })
+
+  it('aiTouchOnly 默认关、可写、非法值回落 false', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().aiTouchOnly).toBe(false)
+    store.applyOps([{ op: 'set', path: ['aiTouchOnly'], value: true }])
+    expect(store.get().aiTouchOnly).toBe(true)
+    store.applyOps([{ op: 'set', path: ['aiTouchOnly'], value: 'yes' }])
+    expect(store.get().aiTouchOnly).toBe(false)
   })
 
   it('applyOps 写回并返回最新视图', () => {

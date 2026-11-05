@@ -25,6 +25,7 @@ const BASE_SETTINGS: PetSettings = {
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
   aiEnabled: false,
+  aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
 }

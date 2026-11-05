@@ -75,6 +75,8 @@ export interface PetSettingsValue {
   showTapZones: boolean
   /** AI 回复总开关（ADR-025）。 */
   aiEnabled: boolean
+  /** 仅触摸：状态变化只走预置台词，AI 只在触摸时发言。 */
+  aiTouchOnly: boolean
   /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider）。 */
   aiProvider: string
   /** AI 回复使用的模型 id。 */
@@ -123,6 +125,7 @@ const DEFAULT_VALUE: PetSettingsValue = {
   debug: false,
   showTapZones: false,
   aiEnabled: false,
+  aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
 }
@@ -2411,6 +2414,20 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       }),
     }),
     !!value.aiEnabled && createElement('div', null,
+      createElement('div', { style: formRowStyle },
+        createElement('label', { style: formLabelStyle }, '仅触摸'),
+        createElement('div', { style: formControlStyle },
+          createElement(ThemeSwitch, {
+            checked: !!value.aiTouchOnly,
+            disabled: !writable,
+            onChange: (next) => {
+              enqueueWrite(() => [{ op: 'set', path: ['aiTouchOnly'], value: next }])
+            },
+          }),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
+            value.aiTouchOnly ? '状态变化只用预置台词（状态切换太快，AI 来不及说完）' : '状态变化也会请 AI 说一句'),
+        ),
+      ),
       createElement('div', { style: formRowStyle },
         createElement('label', { style: formLabelStyle }, 'Provider'),
         createElement('div', { style: formControlStyle },

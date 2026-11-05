@@ -55,6 +55,8 @@ const DRAG_THRESHOLD = 6
 const TAP_DEBOUNCE_MS = 80
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
+/** AI 台词最短可见时长：状态切换再快，也要让这句露一脸（ADR-025 补丁）。 */
+const AI_BUBBLE_HOLD_MS = 1400
 /**
  * 默认渲染帧率上限（spec §2/§7）：未封顶时 PIXI ticker 可达 120–140fps，
  * 长时间挂页会持续占满 GPU/主线程；桌宠动画默认 30fps 足够，用户可在设置中改档。
@@ -425,8 +427,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   const expressionMix = new Map<string, number>()
   /** AI 回复开关（SSE config.aiEnabled；ADR-025）：开启后触摸/状态台词改由 Host 调 LLM 生成。 */
   let aiEnabled = false
+  /** 仅触摸（SSE config.aiTouchOnly）：开启后状态气泡只用预置台词，AI 只在触摸时发言。 */
+  let aiTouchOnly = false
   /** AI 回复请求序号：只采用最后一次请求的结果，避免连点时旧回复覆盖新回复。 */
   let aiRequestSeq = 0
+  /** AI 台词的最短可见时间截止点：其间状态/预置台词先排队，避免「刚到就被状态切走」。 */
+  let aiTextUntil = 0
+  /** 被 AI 台词短暂压住的预置台词（等 AI 台词显示够久再换上）。 */
+  let pendingBubbleText: string | null = null
+  let pendingBubbleTimer: number | undefined
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
   let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
@@ -557,7 +566,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!stagedState) return
     const line = pickEventLine(stagedState, stageIndex)
     if (line === undefined) { hideBubble(); return }
-    setBubbleText(line)
+    // 走 showBubble：阶段推进同样要给 AI 台词让出最短可见时间
+    showBubble(line)
   }
 
   /**
@@ -566,6 +576,26 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    */
   function showBubble(text: string): void {
     if (!bubble) return
+    // AI 台词刚上来、还没看够就被状态切换顶掉（状态变化比模型出字快）：先排队，
+    // 等它的最短可见时间结束后再换；排队期间再有预置台词就只留最后一条。
+    const now = Date.now()
+    if (now < aiTextUntil) {
+      pendingBubbleText = text
+      if (pendingBubbleTimer !== undefined) return
+      pendingBubbleTimer = window.setTimeout(() => {
+        pendingBubbleTimer = undefined
+        const next = pendingBubbleText
+        pendingBubbleText = null
+        if (next !== null) showBubble(next)
+      }, aiTextUntil - now)
+      return
+    }
+    showBubbleNow(text)
+  }
+
+  /** 立刻替换气泡文案（不经 AI 排队），到时隐藏并回落到阶段文案。 */
+  function showBubbleNow(text: string): void {
+    if (!bubble) return
     clearBubbleHideTimer()
     setBubbleText(text)
     bubbleHideTimer = window.setTimeout(() => {
@@ -573,6 +603,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (stagedState) showStageText()
       else if (bubble) bubble.style.opacity = '0'
     }, BUBBLE_DISPLAY_MS)
+  }
+
+  /** AI 台词上屏：比预置台词多留一点时间，并在这段时间内挡住后面的状态切换。 */
+  function showAiBubble(text: string): void {
+    if (!bubble) return
+    aiTextUntil = Date.now() + AI_BUBBLE_HOLD_MS
+    if (pendingBubbleTimer !== undefined) {
+      window.clearTimeout(pendingBubbleTimer)
+      pendingBubbleTimer = undefined
+    }
+    pendingBubbleText = null
+    showBubbleNow(text)
   }
 
   /** 退出阶段演进状态：取消全部阶段计时并复位标记。 */
@@ -1624,6 +1666,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       ? cfg.bubbleTextColor
       : DEFAULT_BUBBLE_TEXT_COLOR
     aiEnabled = cfg.aiEnabled === true
+    aiTouchOnly = cfg.aiTouchOnly === true
     applyBubbleStyle()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -1695,11 +1738,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    */
   async function requestAiReply(input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<void> {
     if (!aiEnabled) return
+    // 仅触摸：状态变化只用预置台词，不打扰模型（状态切换往往只有几百毫秒）
+    if (aiTouchOnly && input.kind === 'state') return
     const seq = ++aiRequestSeq
+    const targetState = input.state
     try {
       const result = await api.interact(input)
       if (seq !== aiRequestSeq) return
-      if (result.ok && result.text) showBubble(result.text)
+      // 状态类回复：期间状态又变了就丢弃（新状态会自己发请求），否则这句会盖在新状态的气泡上
+      if (targetState !== undefined && targetState !== lastState) return
+      if (result.ok && result.text) showAiBubble(result.text)
     } catch {
       // 忽略：保留预置台词（无网络/模型不可用时的降级路径）
     }
@@ -1789,6 +1837,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           ? view.config.bubbleTextColor
           : DEFAULT_BUBBLE_TEXT_COLOR
         aiEnabled = view.config.aiEnabled === true
+        aiTouchOnly = view.config.aiTouchOnly === true
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)
 

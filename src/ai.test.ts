@@ -53,11 +53,13 @@ describe('sanitizeLine', () => {
 })
 
 describe('buildSceneMessage', () => {
-  it('触摸情景包含部位名与参考台词', () => {
+  it('触摸情景包含部位名与参考台词，并要求即兴演绎而非改写', () => {
     const message = buildSceneMessage({ kind: 'tap', part: '胸', hint: '呀！那里不能戳啦…' })
     expect(message).toContain('胸')
     expect(message).toContain('呀！那里不能戳啦…')
     expect(message).toContain('一句话')
+    expect(message).toContain('别照搬')
+    expect(message).not.toContain('换个说法')
   })
 
   it('状态情景按状态给出不同描述', () => {

@@ -108,8 +108,9 @@ export function buildSceneMessage(context: ReplyContext): string {
               : state === 'delivered' ? '主人刚交付了成果'
                 : '主人在看着你'
     }）`
-  const hint = context.hint ? `你原本会说的台词是：「${context.hint}」，可以换个说法。` : ''
-  return `（${where}。${hint}）请用一句话回应。`
+  // 参考台词只给方向，明确禁止「换一种说法」式的改写：要的是即兴演绎，不是 paraphrasing
+  const hint = context.hint ? `你下意识想说的是「${context.hint}」，但别照搬，也不必复述。` : ''
+  return `（${where}。${hint}）按你的人设即兴演一下这一刻的反应，一句话。`
 }
 
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */
@@ -143,7 +144,8 @@ export async function generateReply(
       model: options.model,
       system: `${options.persona}
 
-输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。`,
+输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
+不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`,
       messages: [{ role: 'user', content: [{ type: 'text', text: buildSceneMessage(options.context) }] }],
       temperature: 1,
       maxTokens: 80,

@@ -98,6 +98,7 @@ export const Config: Schema<Config> = Schema.object({
   bubbleBgOpacity: Schema.number().min(0).max(100).default(92),
   bubbleTextColor: Schema.string().default('#222222'),
   aiEnabled: Schema.boolean().default(false),
+  aiTouchOnly: Schema.boolean().default(false),
   aiProvider: Schema.string().default('deepseek-official'),
   aiModel: Schema.string().default('deepseek-flash'),
 })
@@ -130,6 +131,7 @@ export function apply(ctx: Context, config: Config): void {
     bubbleBgOpacity: config.bubbleBgOpacity,
     bubbleTextColor: config.bubbleTextColor,
     aiEnabled: config.aiEnabled,
+    aiTouchOnly: config.aiTouchOnly,
     aiProvider: config.aiProvider,
     aiModel: config.aiModel,
   }
