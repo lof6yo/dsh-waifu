@@ -1652,7 +1652,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const expanded = expandedPartId === part.id
     const isTopLayer = index === 0
     const isBottomLayer = index === touchDraft.length - 1
-    const layerLabel = `#${index + 1}${isTopLayer ? ' 顶层' : ''}${isBottomLayer && !isTopLayer ? ' 底层' : ''}`
+    const layerLabel = `#${index + 1}`
     const groups = [...motionGroups, ...part.motions.filter((motion) => !motionGroups.includes(motion))]
     const dirty = dirtyPartIds.has(part.id)
     const toggleExpanded = (): void => {
@@ -1671,7 +1671,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           onClick: toggleExpanded,
         }, '▸'),
         createElement('span', {
-          title: isTopLayer ? '最上层（box 重叠时优先）' : (isBottomLayer ? '最底层' : '图层'),
+          title: isTopLayer ? `图层 #${index + 1}（最上层，box 重叠时优先）` : `图层 #${index + 1}`,
           style: { ...chipStyle, color: isTopLayer ? C.brand : C.textSecondary },
         }, layerLabel),
         createElement('input', {
@@ -2162,7 +2162,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   children.push(createElement('div', { key: 'touch-parts', style: sectionStyle },
     createElement(SectionHeader, {
       title: '触摸部位（当前模型）',
-      description: '预览只控制角色上的 box 叠加/强制可见，不影响编辑与保存。',
+      description: createElement('div', null,
+        '部位列表从上到下 = 从顶层到底层（#1 最上层），box 重叠时上层部位优先；用卡片上的 ↑ / ↓ 调整。',
+        createElement('br'),
+        '预览只控制角色上的 box 叠加/强制可见，不影响编辑与保存。'),
       action: createElement('button', {
         type: 'button',
         className: 'dsh-btn dsh-btn-secondary',
