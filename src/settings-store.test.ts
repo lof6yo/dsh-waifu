@@ -38,8 +38,8 @@ const BASE: PetSettings = {
   waitingAiMax: 3,
   ttsEnabled: true,
   ttsEngine: 'openrouter',
-  ttsModel: 'fish-audio/drama-3',
-  ttsVoice: '',
+  ttsModel: 'microsoft/mai-voice-2.1-flash',
+  ttsVoice: 'zh-CN-Mei:MAI-Voice-2.1-Flash',
   ttsInstructions: 'test',
   lipsyncEnabled: true,
   lipsyncGain: 100,
@@ -294,8 +294,8 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
   it('默认值与可写字段', () => {
     const base = normalizeSettings({}, BASE)
     expect(base.ttsEnabled).toBe(true)
-    expect(base.ttsModel).toBe('fish-audio/drama-3')
-    expect(base.ttsVoice).toBe('')
+    expect(base.ttsModel).toBe('microsoft/mai-voice-2.1-flash')
+    expect(base.ttsVoice).toBe('zh-CN-Mei:MAI-Voice-2.1-Flash')
     expect(base.lipsyncEnabled).toBe(true)
     expect(base.lipsyncGain).toBe(100)
     const custom = normalizeSettings({ ttsModel: 'x/y', ttsVoice: 'voice-1', lipsyncGain: 240 }, BASE)
@@ -314,5 +314,26 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
     const value = normalizeSettings({ ttsVoice: '   ', ttsInstructions: '' }, BASE)
     expect(value.ttsVoice).toBe('')
     expect(value.ttsInstructions).toBe('')
+  })
+
+  it('v4 及更早的「随机音色模型 + 空音色」迁移到音色固定的默认模型', () => {
+    const legacy = normalizeSettings({ version: 4, ttsModel: 'fish-audio/drama-3', ttsVoice: '' }, BASE)
+    expect(legacy.ttsModel).toBe(BASE.ttsModel)
+    expect(legacy.ttsVoice).toBe(BASE.ttsVoice)
+  })
+
+  it('已选过音色或别的固定音色模型时原样保留', () => {
+    const pinned = normalizeSettings({ version: 4, ttsModel: 'fish-audio/drama-3', ttsVoice: 'alloy' }, BASE)
+    expect(pinned.ttsModel).toBe('fish-audio/drama-3')
+    expect(pinned.ttsVoice).toBe('alloy')
+    const own = normalizeSettings({ version: 4, ttsModel: 'hexgrad/kokoro-82m', ttsVoice: '' }, BASE)
+    expect(own.ttsModel).toBe('hexgrad/kokoro-82m')
+    expect(own.ttsVoice).toBe('')
+  })
+
+  it('已是新版本的文件不再迁移（用户自己切回 Drama 3 时保持原样）', () => {
+    const current = normalizeSettings({ version: 5, ttsModel: 'fish-audio/drama-3', ttsVoice: '' }, BASE)
+    expect(current.ttsModel).toBe('fish-audio/drama-3')
+    expect(current.ttsVoice).toBe('')
   })
 })

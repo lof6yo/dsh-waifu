@@ -38,10 +38,86 @@ export const DEFAULT_AI_HISTORY = 10
 export const DEFAULT_TTS_ENABLED = true
 /** 引擎 id（目前只有 openrouter；留给将来直连 ElevenLabs / MiniMax 的实现）。 */
 export const DEFAULT_TTS_ENGINE = 'openrouter'
-/** 默认 TTS 模型：Fish Audio Drama 3（支持方括号演绎指令，中文自然）。 */
-export const DEFAULT_TTS_MODEL = 'fish-audio/drama-3'
-/** 默认音色（空 = 用模型默认音色）。 */
-export const DEFAULT_TTS_VOICE = ''
+/** 候选音色：`id` 直接透传给 `/audio/speech` 的 `voice` 字段。 */
+export interface TtsVoiceOption {
+  id: string
+  label: string
+}
+
+/** 设置页可选的语音模型（ADR-033 修订）。 */
+export interface TtsModelOption {
+  id: string
+  label: string
+  /** 模型自带的固定音色；空数组表示该模型每次合成都会随机挑一个音色。 */
+  voices: TtsVoiceOption[]
+  /** 是否每次随机音色（例如 Drama 3 这种「表演模型」）。 */
+  randomVoice?: boolean
+}
+
+/**
+ * 语音模型目录：Host 校验与设置页下拉共用同一份。
+ * 选型依据（2026-11 实测）：只列「音色可固定」的模型；Drama 3 没有 `supported_voices`，
+ * 每次请求都会换人声，所以单独列出来并标注「音色每次随机」。
+ */
+export const TTS_MODELS: TtsModelOption[] = [
+  {
+    id: 'microsoft/mai-voice-2.1-flash',
+    label: '微软 MAI-Voice 2.1 Flash（音色固定）',
+    voices: [
+      { id: 'zh-CN-Mei:MAI-Voice-2.1-Flash', label: 'Mei（中文·女）' },
+      { id: 'zh-CN-Lan:MAI-Voice-2.1-Flash', label: 'Lan（中文·女）' },
+      { id: 'zh-CN-Wei:MAI-Voice-2.1-Flash', label: 'Wei（中文·男）' },
+      { id: 'zh-CN-Bo:MAI-Voice-2.1-Flash', label: 'Bo（中文·男）' },
+      { id: 'en-US-Iris:MAI-Voice-2.1-Flash', label: 'Iris（英文·女）' },
+    ],
+  },
+  {
+    id: 'qwen/qwen-audio-3.0-tts-plus',
+    label: '通义千问 TTS Plus（音色固定）',
+    voices: [
+      { id: 'longanlingxin', label: '龙安灵心（中文·女）' },
+      { id: 'longanlufeng', label: '龙安陆风（中文·男）' },
+    ],
+  },
+  {
+    id: 'hexgrad/kokoro-82m',
+    label: 'Kokoro 82M（最便宜，音色固定）',
+    voices: [
+      { id: 'zf_xiaoxiao', label: '晓晓（中文·女）' },
+      { id: 'zf_xiaoyi', label: '晓伊（中文·女）' },
+      { id: 'zf_xiaobei', label: '晓北（中文·女）' },
+      { id: 'zm_yunxi', label: '云希（中文·男）' },
+      { id: 'af_heart', label: 'Heart（英文·女）' },
+    ],
+  },
+  {
+    id: 'fish-audio/drama-3',
+    label: 'Fish Audio Drama 3（表演力强，音色每次随机）',
+    voices: [],
+    randomVoice: true,
+  },
+]
+
+/** 默认 TTS 模型：微软 MAI-Voice 2.1 Flash —— 音色可固定，中文自然。 */
+export const DEFAULT_TTS_MODEL = 'microsoft/mai-voice-2.1-flash'
+/** 默认音色（空 = 用模型默认音色；随机音色的模型必须留空）。 */
+export const DEFAULT_TTS_VOICE = 'zh-CN-Mei:MAI-Voice-2.1-Flash'
+
+/** 按 id 查模型选项。 */
+export function ttsModelOption(id: string): TtsModelOption | undefined {
+  return TTS_MODELS.find((item) => item.id === id)
+}
+
+/** 该模型是否每次随机音色。 */
+export function ttsModelRandomVoice(id: string): boolean {
+  return ttsModelOption(id)?.randomVoice === true
+}
+
+/** 模型的首个音色（随机音色模型返回空串）。 */
+export function ttsDefaultVoice(model: string): string {
+  const option = ttsModelOption(model)
+  return option && !option.randomVoice ? (option.voices[0]?.id ?? '') : ''
+}
 /** 演绎指令：Fish Audio 会把它拼进文本开头当作语气提示。 */
 export const DEFAULT_TTS_INSTRUCTIONS = '年轻女性，语气自然，带点得意和小脾气'
 /** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */

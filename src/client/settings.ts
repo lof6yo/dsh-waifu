@@ -47,6 +47,9 @@ import {
   normalizeHistoryCount,
   normalizeLipsyncGain,
   DEFAULT_INTERACTION_MODE,
+  TTS_MODELS,
+  ttsDefaultVoice,
+  ttsModelOption,
   type InteractionMode,
 } from '../defaults.ts'
 import { clientLog } from './client-log.ts'
@@ -2767,6 +2770,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
 
   // 7. 语音（ADR-033）：OpenRouter 的 /api/v1/audio/speech；模型/音色/演绎指令都留成设置项，
   // 将来接 ElevenLabs/MiniMax 的真流式实现时只需加引擎，不动这页。
+  // 模型与音色都走目录下拉：Drama 3 这类没有 `supported_voices` 的模型每句都会换人声，
+  // 只能用「音色可固定」的模型才稳定（ADR-033 修订）。
+  const voiceModel = ttsModelOption(value.ttsModel)
+  const randomVoice = voiceModel?.randomVoice === true
+  const voiceOptions = voiceModel?.voices ?? []
   children.push(createElement('div', { key: 'voice', style: sectionStyle },
     createElement(SectionHeader, {
       title: '语音',
@@ -2783,35 +2791,53 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       createElement('div', { style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '语音模型'),
         createElement('div', { style: formControlInlineStyle },
-          createElement('input', {
-            type: 'text',
-            defaultValue: value.ttsModel,
+          createElement('select', {
+            value: value.ttsModel,
             disabled: !writable,
-            placeholder: 'fish-audio/drama-3',
-            style: { ...inputStyle, width: 220 },
-            onBlur: (e: FocusEvent<HTMLInputElement>) => {
-              const next = e.target.value.trim()
-              if (!next || next === value.ttsModel) return
-              enqueueWrite(() => [{ op: 'set', path: ['ttsModel'], value: next }])
+            style: { ...selectStyle, width: 260 },
+            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+              const next = e.target.value
+              if (next === value.ttsModel) return
+              // 换模型时音色跟着换成该模型的首个音色（随机音色模型则清空）
+              const voice = ttsDefaultVoice(next)
+              enqueueWrite(() => [
+                { op: 'set', path: ['ttsModel'], value: next },
+                { op: 'set', path: ['ttsVoice'], value: voice },
+              ])
             },
-          }),
+          },
+          // 目录外的旧模型 id 也要能显示出来，否则下拉会静默跳到第一项
+          (ttsModelOption(value.ttsModel) ? [] : [value.ttsModel])
+            .concat(TTS_MODELS.map((item) => item.id))
+            .map((id) => createElement('option', { key: id, value: id },
+              ttsModelOption(id)?.label ?? `自定义：${id}`)),
+          ),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '音色（空 = 模型默认）'),
-        createElement('div', { style: formControlInlineStyle },
-          createElement('input', {
-            type: 'text',
-            defaultValue: value.ttsVoice,
-            disabled: !writable,
-            placeholder: '留空用默认音色',
-            style: { ...inputStyle, width: 220 },
-            onBlur: (e: FocusEvent<HTMLInputElement>) => {
-              const next = e.target.value.trim()
+        createElement('span', { style: formLabelInlineStyle }, '音色'),
+        createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
+          createElement('select', {
+            value: value.ttsVoice,
+            disabled: !writable || randomVoice,
+            style: { ...selectStyle, width: 260 },
+            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+              const next = e.target.value
               if (next === value.ttsVoice) return
               enqueueWrite(() => [{ op: 'set', path: ['ttsVoice'], value: next }])
             },
-          }),
+          },
+          (voiceOptions.length > 0 ? voiceOptions : [{ id: '', label: '模型默认音色' }])
+            .concat(
+              // 存档里的音色不在目录里时也要列出来，否则下拉会显示成第一项
+              value.ttsVoice && !voiceOptions.some((item) => item.id === value.ttsVoice)
+                ? [{ id: value.ttsVoice, label: `自定义：${value.ttsVoice}` }]
+                : [],
+            )
+            .map((item) => createElement('option', { key: item.id, value: item.id }, item.label)),
+          ),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
+            randomVoice ? '该模型没有固定音色，每句都会换人声' : '固定音色，改完点「试听一句」确认'),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },

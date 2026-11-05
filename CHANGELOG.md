@@ -13,6 +13,7 @@
 ### Added
 
 - **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`，默认 `fish-audio/drama-3`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、演绎指令、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
+- **语音模型/音色改成下拉，音色稳定**（ADR-033 修订）：新增 `TTS_MODELS` 目录（微软 MAI-Voice 2.1 Flash / 通义千问 TTS Plus / Kokoro 82M / Fish Audio Drama 3），默认换成音色可固定的 `microsoft/mai-voice-2.1-flash` + `zh-CN-Mei`；`fish-audio/drama-3` 没有 `supported_voices`、每次合成都会换人声，只作为「音色每次随机」的选项保留。设置文件版本升到 5，旧文件里「Drama 3 + 空音色」自动迁移到新默认；换模型时音色自动跟到该模型的首个音色
 - 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
 
 - **AI 请求注入时间**：当前情景带上「现在是 X月X日 周X HH:MM」，注入历史每条带 `[HH:MM]`（跨天 `[M/D HH:MM]`）时间戳，模型可判断两次互动隔了多久（ADR-030 修订）

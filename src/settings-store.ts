@@ -18,6 +18,7 @@ import {
   AI_HISTORY_LIMITS,
   normalizeInteractionMode,
   normalizeLipsyncGain,
+  ttsModelRandomVoice,
   type InteractionMode,
 } from './defaults.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
@@ -127,11 +128,34 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
  * - 2 起 homeRight/homeBottom 语义 = 显示区中心点距右/距下（px）
  * - 3 起 homeRight/homeBottom 改为**视口宽/高的百分比**（0–100）；bubbleOffsetY 改为负值向下
  * - 4 起去掉基础表情与连续表情强度（`expression` / `expr*`），表情改为挂在事件/触摸部位上（ADR-023）
+ * - 5 起默认语音模型换成音色可固定的 MAI-Voice 2.1 Flash（Drama 3 每句都换人声，ADR-033 修订）
  */
-const SETTINGS_SCHEMA_VERSION = 4
+const SETTINGS_SCHEMA_VERSION = 5
 
 /** home 改成视口百分比的版本（3）；更早的文件 home 语义不同，直接回退 base。 */
 const HOME_PERCENT_VERSION = 3
+
+/** 语音默认模型换成「音色固定」的版本（5）。 */
+const TTS_VOICE_FIX_VERSION = 5
+
+/**
+ * 旧文件里「随机音色模型 + 空音色」的组合会让人声每句都变，迁移到 base（= 音色固定的默认模型）。
+ * 其它情况（已选音色 / 已选别的模型）原样保留。
+ */
+function migrateTtsVoice(
+  version: number,
+  rawModel: unknown,
+  rawVoice: unknown,
+  base: PetSettings,
+): { model: string; voice: string } {
+  const model = pickString(rawModel) ?? base.ttsModel
+  // 音色允许空串（空 = 模型默认音色），所以不走 pickString
+  const voice = typeof rawVoice === 'string' ? rawVoice.trim().slice(0, 64) : base.ttsVoice
+  if (version < TTS_VOICE_FIX_VERSION && voice.length === 0 && ttsModelRandomVoice(model)) {
+    return { model: base.ttsModel, voice: base.ttsVoice }
+  }
+  return { model, voice }
+}
 
 function serializeSettings(value: PetSettings): string {
   return `${SETTINGS_HEADER}\n${JSON.stringify({ ...value, version: SETTINGS_SCHEMA_VERSION }, null, 2)}\n`
@@ -182,6 +206,9 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
   const legacyHome = version < HOME_PERCENT_VERSION
   const offsetYRaw = record.bubbleOffsetY
   const offsetY = version < HOME_PERCENT_VERSION && typeof offsetYRaw === 'number' ? -offsetYRaw : offsetYRaw
+  // v5 起默认语音模型换成「音色可固定」的 MAI-Voice：旧文件里若还是「随机音色模型 + 没选音色」
+  // 就自动迁移过去，否则每句话的人声都不一样（ADR-033 修订）。
+  const voiceFix = migrateTtsVoice(version, record.ttsModel, record.ttsVoice, base)
   return {
     enabled: bool('enabled'),
     size: clampSize(record.size) ?? base.size,
@@ -215,9 +242,9 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     waitingAiMax: clampInt(record.waitingAiMax, base.waitingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
     ttsEnabled: bool('ttsEnabled'),
     ttsEngine: pickString(record.ttsEngine) ?? base.ttsEngine,
-    ttsModel: pickString(record.ttsModel) ?? base.ttsModel,
+    ttsModel: voiceFix.model,
     // 音色与演绎指令允许空串（空 = 模型默认音色 / 不加语气提示），所以不走 pickString
-    ttsVoice: typeof record.ttsVoice === 'string' ? record.ttsVoice.trim().slice(0, 64) : base.ttsVoice,
+    ttsVoice: voiceFix.voice,
     ttsInstructions:
       typeof record.ttsInstructions === 'string' ? record.ttsInstructions.trim().slice(0, 200) : base.ttsInstructions,
     lipsyncEnabled: bool('lipsyncEnabled'),

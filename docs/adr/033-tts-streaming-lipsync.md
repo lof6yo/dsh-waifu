@@ -71,3 +71,21 @@
   `lipsyncEnabled` / `lipsyncGain`），Host 变更需重启 dsh-web 才生效；
 - 真流式（PCM 边收边播）留给将来的引擎实现：`TtsEngine` 接口不变，客户端只需支持
   「一段音频分多个 chunk 到达」。
+
+## 修订：音色必须可固定（2026-11-05）
+
+初版默认 `fish-audio/drama-3` + 空音色。实测发现 Drama 3 在 OpenRouter 上没有 `supported_voices`
+（`/api/v1/models/fish-audio/drama-3-20261013/endpoints` 返回 `supported_voices: null`），
+每次请求都会挑新的人声——同一句话连发两次，音色完全不同。
+
+决策：
+
+- 新增 `TTS_MODELS` 目录（`src/defaults.ts`），只收「音色可固定」的模型：微软 MAI-Voice 2.1 Flash
+  （`zh-CN-Mei` / `zh-CN-Lan` / `zh-CN-Wei` / `zh-CN-Bo` / `en-US-Iris`）、通义千问 TTS Plus
+  （`longanlingxin` / `longanlufeng`）、Kokoro 82M（`zf_xiaoxiao` 等）。Drama 3 保留但标注
+  `randomVoice: true`，选中时音色下拉禁用并提示「每句都会换人声」。
+- 默认改成 `microsoft/mai-voice-2.1-flash` + `zh-CN-Mei:MAI-Voice-2.1-Flash`。
+- 设置页模型/音色从文本框改成下拉；换模型时音色自动跟到该模型首个音色；存档里的目录外
+  模型/音色仍作为「自定义」项显示，不会被静默改写。
+- `SETTINGS_SCHEMA_VERSION` 4 → 5：旧文件若为「随机音色模型 + 空音色」，加载时迁移到新默认
+  （其余情况原样保留）。
