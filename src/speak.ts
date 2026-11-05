@@ -53,27 +53,36 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
   let buffer = ''
   let total = ''
   let result = ''
-  let pumping = false
+  /**
+   * 串行下发链：所有「把音频发出去」的动作都挂在这条链上，
+   * 于是同一时刻只会有一个 drain 在跑，不需要 `pumping` 标志位那种
+   * 「已经在跑就直接返回」的写法——那种写法会让调用方的
+   * `while (pumpIndex < nextIndex) await pump()` 变成空转的微任务死循环，
+   * 把事件循环饿死（v0.4.3 的事故：DSH 所有请求一起卡住）。
+   */
+  let chain: Promise<void> = Promise.resolve()
 
-  /** 按序把已就绪的音频发出去（后段先好也要等前段）。 */
-  const pump = async (): Promise<void> => {
-    if (pumping) return
-    pumping = true
-    try {
-      while (true) {
-        const task = tasks.get(pumpIndex)
-        if (!task) break
-        const audio = await task
-        tasks.delete(pumpIndex)
-        if (audio && !signal?.aborted) {
-          audioCount += 1
-          emit('audio', { index: pumpIndex, mime: audio.mime, data: audio.audio.toString('base64') })
-        }
-        pumpIndex += 1
+  /** 按序把已就绪的音频发出去（后段先好也要等前段）；本函数自身不会再被重入。 */
+  const drain = async (): Promise<void> => {
+    while (true) {
+      const task = tasks.get(pumpIndex)
+      if (!task) return
+      const index = pumpIndex
+      tasks.delete(index)
+      const audio = await task
+      if (audio && !signal?.aborted) {
+        audioCount += 1
+        emit('audio', { index, mime: audio.mime, data: audio.audio.toString('base64') })
       }
-    } finally {
-      pumping = false
+      // 只有真正处理完这一段才前进，避免「索引前进但任务还在」的错位
+      pumpIndex = index + 1
     }
+  }
+
+  /** 排队一次 drain；返回的是这条链的尾部，调用方可按需 await。 */
+  const kick = (): Promise<void> => {
+    chain = chain.then(drain, drain)
+    return chain
   }
 
   /** 把缓冲区里已完整的段落切出去（最后一段可能还没说完，留到下次）。 */
@@ -93,7 +102,7 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       // 先登记任务再启动，避免 pump 抢跑时任务还没进 Map
       const task = synthesize(piece).catch(() => null)
       tasks.set(index, task)
-      void pump()
+      void kick()
     }
   }
 
@@ -117,7 +126,7 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     if (chunk.type === 'error') {
       // 出错也要把已经攒下的半句说出来，别让气泡空着
       flush(true)
-      await pump()
+      await kick()
       emit('error', { error: chunk.error })
       emit('done', { text: result || total })
       return { text: result || total, clauses: nextIndex, audio: audioCount }
@@ -125,8 +134,15 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
   }
 
   flush(true)
-  await pump()
-  while (pumpIndex < nextIndex) await pump()
+  // 收尾：段数可能在 drain 期间继续增加，所以循环到索引 drained 完为止；
+  // 每轮都真正 await 一次 drain（不会空转）
+  while (pumpIndex < nextIndex) {
+    if (!tasks.has(pumpIndex)) {
+      pumpIndex += 1
+      continue
+    }
+    await kick()
+  }
   emit('done', { text: result || total })
   return { text: result || total, clauses: nextIndex, audio: audioCount }
 }

@@ -380,7 +380,16 @@ export function makePetRoutes(deps: {
           })
           res.on('error', () => {})
           const controller = new AbortController()
-          const close = () => { controller.abort(); try { res.end() } catch { /* 已关闭 */ } }
+          // 看门狗：无论管线卡在哪一步，90s 后一定收尾，绝不把连接一直挂着
+          const watchdog = setTimeout(() => {
+            emit('error', { error: 'speak-timeout' })
+            close()
+          }, 90_000)
+          function close(): void {
+            clearTimeout(watchdog)
+            controller.abort()
+            try { res.end() } catch { /* 已关闭 */ }
+          }
           req.on('close', close)
           res.on('close', close)
           onStream?.(close)

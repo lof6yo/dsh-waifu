@@ -74,6 +74,29 @@ describe('runSpeakPipeline', () => {
     expect(events.at(-1)?.event).toBe('done')
   })
 
+
+  it('合成慢时不空转：定时器不会被微任务饿死', async () => {
+    const { emit } = collector()
+    const order: string[] = []
+    const timer = setTimeout(() => { order.push('timer') }, 0)
+    await runSpeakPipeline({
+      chunks: fromChunks([
+        { type: 'delta', text: '第一段。' },
+        { type: 'delta', text: '第二段。' },
+        { type: 'done', text: '第一段。第二段。' },
+      ]),
+      // 每段都慢 60ms：旧实现会在收尾的 while 里空转，把定时器拖到最后
+      synthesize: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        return audioOf('x')
+      },
+      emit,
+    })
+    order.push('end')
+    clearTimeout(timer)
+    expect(order).toEqual(['timer', 'end'])
+  })
+
   it('LLM 报错时仍把已攒的文本说出来，再报错收尾', async () => {
     const { events, emit } = collector()
     const result = await runSpeakPipeline({
