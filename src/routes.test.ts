@@ -65,7 +65,14 @@ const BASE_SETTINGS: PetSettings = {
   aiModel: 'deepseek-flash',
 }
 
-function makeRoutes(ai?: { reply: (input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }) => Promise<{ ok: boolean; text?: string; error?: string }> }) {
+function makeRoutes(
+  ai?: { reply: (input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }) => Promise<{ ok: boolean; text?: string; error?: string }> },
+  aiSettings?: {
+    options: () => Promise<{ providers: { id: string; name: string }[]; models: Record<string, { id: string; name: string }[]> }>
+    readPersona: () => { text: string; path: string }
+    writePersona: (text: string) => { text: string; path: string }
+  },
+) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-route-'))
   mkdirSync(join(dir, 'assets', 'vendor'), { recursive: true })
   mkdirSync(join(dir, 'assets', 'models', 'jian'), { recursive: true })
@@ -95,7 +102,7 @@ function makeRoutes(ai?: { reply: (input: { kind: 'tap' | 'state'; part?: string
     write: vi.fn(async () => {}),
   }
   const openStreams: Array<() => void> = []
-  const routes = makePetRoutes({ service, packageRoot: dir, settings, ai, onStream: (close) => { openStreams.push(close) } })
+  const routes = makePetRoutes({ service, packageRoot: dir, settings, ai, aiSettings, onStream: (close) => { openStreams.push(close) } })
   const route = (path: string) => routes.find((r) => r.path === path)
   const cleanup = () => { delete process.env.DSH_HOME; rmSync(dir, { recursive: true, force: true }) }
   return { route, routes, settings, service, emit, openStreams, dir, cleanup }
@@ -135,9 +142,54 @@ describe('makePetRoutes API 路由', () => {
     cleanup()
   })
 
-  it('未接线 AI 时不注册 /interact', () => {
+  it('未接线 AI 时不注册 /interact、/ai-options 与 /persona', () => {
     const { route, cleanup } = makeRoutes()
     expect(route(`${PET_API_PREFIX}/interact`)).toBeUndefined()
+    expect(route(`${PET_API_PREFIX}/ai-options`)).toBeUndefined()
+    expect(route(`${PET_API_PREFIX}/persona`)).toBeUndefined()
+    cleanup()
+  })
+
+  it('GET /ai-options 返回 provider 与模型目录', async () => {
+    const aiSettings = {
+      options: async () => ({
+        providers: [{ id: 'deepseek-official', name: 'DeepSeek' }],
+        models: { 'deepseek-official': [{ id: 'deepseek-flash', name: 'DeepSeek Flash' }] },
+      }),
+      readPersona: () => ({ text: '', path: '' }),
+      writePersona: (text: string) => ({ text, path: '' }),
+    }
+    const { route, cleanup } = makeRoutes(undefined, aiSettings)
+    const res = fakeRes()
+    route(`${PET_API_PREFIX}/ai-options`)!.handler(fakeReq('GET'), res as never)
+    await flush()
+    expect(res.state.status).toBe(200)
+    const body = JSON.parse(res.state.body.toString('utf8'))
+    expect(body.providers).toEqual([{ id: 'deepseek-official', name: 'DeepSeek' }])
+    expect(body.models['deepseek-official']).toEqual([{ id: 'deepseek-flash', name: 'DeepSeek Flash' }])
+    cleanup()
+  })
+
+  it('GET /persona 读人设、POST /persona 写人设', async () => {
+    const writePersona = vi.fn((text: string) => ({ text, path: '/home/waifu/persona.md' }))
+    const aiSettings = {
+      options: async () => ({ providers: [], models: {} }),
+      readPersona: () => ({ text: '你是「简」', path: '/home/waifu/persona.md' }),
+      writePersona,
+    }
+    const { route, cleanup } = makeRoutes(undefined, aiSettings)
+
+    const readRes = fakeRes()
+    route(`${PET_API_PREFIX}/persona`)!.handler(fakeReq('GET'), readRes as never)
+    await flush()
+    expect(readRes.state.status).toBe(200)
+    expect(JSON.parse(readRes.state.body.toString('utf8')).text).toBe('你是「简」')
+
+    const writeRes = fakeRes()
+    await route(`${PET_API_PREFIX}/persona`)!.handler(fakeReq('POST', JSON.stringify({ text: '新的人设' })), writeRes as never)
+    expect(writePersona).toHaveBeenCalledWith('新的人设')
+    expect(writeRes.state.status).toBe(200)
+    expect(JSON.parse(writeRes.state.body.toString('utf8')).path).toBe('/home/waifu/persona.md')
     cleanup()
   })
 

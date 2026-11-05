@@ -18,8 +18,14 @@ import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-llm'
 import { PetService } from './service.ts'
-import { makePetRoutes, petPackageRoot, type InteractRoutesApi, type SettingsRoutesApi } from './routes.ts'
-import { generateReply, loadPersona } from './ai.ts'
+import {
+  makePetRoutes,
+  petPackageRoot,
+  type AiRoutesApi,
+  type InteractRoutesApi,
+  type SettingsRoutesApi,
+} from './routes.ts'
+import { generateReply, loadPersona, personaPath, savePersona } from './ai.ts'
 import {
   defaultModelId,
   listBuiltinPresets,
@@ -162,6 +168,29 @@ export function apply(ctx: Context, config: Config): void {
     },
   }
 
+  // AI 设置（ADR-025）：provider / 模型候选直接取 DSH 的 llm 目录；人设读 $DSH_HOME/waifu/persona.md
+  const aiSettingsApi: AiRoutesApi = {
+    options: async () => {
+      const providers = ctx.llm.listProviders().map((p) => ({ id: p.id, name: p.name }))
+      const models: Record<string, { id: string; name: string }[]> = {}
+      for (const provider of providers) {
+        try {
+          models[provider.id] = (await ctx.llm.listModels(provider.id))
+            .map((m) => ({ id: m.id, name: m.name }))
+        } catch {
+          // 适配器不提供目录：留空，设置页回落成手填
+          models[provider.id] = []
+        }
+      }
+      return { providers, models }
+    },
+    readPersona: () => {
+      const home = dirname(settingsStore.path)
+      return { text: loadPersona(home), path: personaPath(home) }
+    },
+    writePersona: (text) => savePersona(dirname(settingsStore.path), text),
+  }
+
   // 路由随插件生命周期注册/清理。插件卸载时同时关闭全部活跃 SSE 流（onStream），
   // 避免旧流在路由注销后空转心跳。
   ctx.effect(() => {
@@ -171,6 +200,7 @@ export function apply(ctx: Context, config: Config): void {
       packageRoot: petPackageRoot(import.meta.url),
       settings: settingsApi,
       ai: aiApi,
+      aiSettings: aiSettingsApi,
       onStream: (close) => { openStreams.add(close) },
     })
     const disposers = routes.map((route) => ctx.webServer.register(route))

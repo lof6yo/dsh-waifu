@@ -91,6 +91,12 @@ interface SettingsView {
   path?: string
 }
 
+/** GET /api/dsh-waifu/ai-options（Host 侧 DSH llm 目录，ADR-025）。 */
+interface AiOptionsView {
+  providers: { id: string; name: string }[]
+  models: Record<string, { id: string; name: string }[]>
+}
+
 interface SettingsState {
   status: 'loading' | 'ready' | 'unavailable'
   value?: PetSettingsValue
@@ -359,6 +365,8 @@ async function resolveSelectedModelUrl(model: string): Promise<string | null> {
 const SETTINGS_API = '/api/dsh-waifu/settings'
 const STATE_API = '/api/dsh-waifu/state'
 const TOUCH_PARTS_API = '/api/dsh-waifu/touch-parts'
+const AI_OPTIONS_API = '/api/dsh-waifu/ai-options'
+const PERSONA_API = '/api/dsh-waifu/persona'
 
 /* ---- 设计 token（DSH Theme 变量；深/浅色自动适配） ---- */
 const C = {
@@ -565,6 +573,14 @@ const inputStyle: CSSProperties = {
   minWidth: 0,
   flex: 1,
   outline: 'none',
+}
+
+/** 原生下拉：和输入框同尺寸（provider / 模型选择用）。 */
+const selectStyle: CSSProperties = {
+  ...inputStyle,
+  appearance: 'none',
+  paddingRight: 8,
+  cursor: 'pointer',
 }
 /** 台词输入框：固定高度（不随行数伸缩、不可拖拽），超出滚动。 */
 const textareaStyle: CSSProperties = {
@@ -1178,6 +1194,51 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
 
   // ---- 事件绑定 + 触摸部位（同一模型、同一份草稿、同一保存队列） ----
   const [modelDraft, setModelDraft] = useState('')
+  const [aiOptions, setAiOptions] = useState<AiOptionsView | null>(null)
+  const [personaDraft, setPersonaDraft] = useState<string | null>(null)
+  const [personaStatus, setPersonaStatus] = useState<string | null>(null)
+  const [personaSaving, setPersonaSaving] = useState(false)
+
+  // AI 回复（ADR-025）：provider/model 候选取 Host 的 llm 目录；人设文件按需读取
+  useEffect(() => {
+    let cancelled = false
+    void fetch(`${AI_OPTIONS_API}`)
+      .then((res) => (res.ok ? (res.json() as Promise<AiOptionsView>) : null))
+      .then((view) => { if (!cancelled) setAiOptions(view) })
+      .catch(() => { if (!cancelled) setAiOptions(null) })
+    return () => { cancelled = true }
+  }, [])
+  const aiEnabled = value.aiEnabled
+  useEffect(() => {
+    if (!aiEnabled) return
+    let cancelled = false
+    void fetch(`${PERSONA_API}`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ text?: string }>) : null))
+      .then((view) => {
+        if (cancelled || typeof view?.text !== 'string') return
+        setPersonaDraft(view.text)
+      })
+      .catch(() => { if (!cancelled) setPersonaStatus('人设读取失败') })
+    return () => { cancelled = true }
+  }, [aiEnabled])
+
+  /** 保存人设到 $DSH_HOME/waifu/persona.md。 */
+  const savePersona = (): void => {
+    if (personaDraft === null || personaSaving) return
+    setPersonaSaving(true)
+    setPersonaStatus(null)
+    void fetch(`${PERSONA_API}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: personaDraft }),
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<{ path?: string }>) : null))
+      .then((view) => {
+        setPersonaStatus(view === null ? '保存失败' : '已保存，下一次触摸生效')
+      })
+      .catch(() => setPersonaStatus('保存失败'))
+      .finally(() => setPersonaSaving(false))
+  }
   const modelDraftRef = useRef('')
   const [touchDraft, setTouchDraft] = useState<TouchPart[]>([])
   const touchDraftRef = useRef<TouchPart[]>([])
@@ -2325,6 +2386,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     }, '+ 新建部位'),
   ))
 
+  // AI 回复候选：来自 Host 的 llm 目录；目录为空时回落成手填输入框
+  const providerChoices = aiOptions === null
+    ? []
+    : (aiOptions.providers.some((provider) => provider.id === value.aiProvider)
+      ? aiOptions.providers
+      : [{ id: value.aiProvider, name: value.aiProvider }, ...aiOptions.providers])
+  const modelChoices = aiOptions?.models?.[value.aiProvider] ?? []
+  const modelOptions = modelChoices.some((model) => model.id === value.aiModel)
+    ? modelChoices
+    : [{ id: value.aiModel, name: value.aiModel }, ...modelChoices]
+
   // 6. AI 回复（ADR-025）：复用 DSH 已配置的 provider/model；人设读 $DSH_HOME/waifu/persona.md
   children.push(createElement('div', { key: 'ai-reply', style: sectionStyle },
     createElement(SectionHeader, {
@@ -2339,40 +2411,87 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       }),
     }),
     !!value.aiEnabled && createElement('div', null,
-      createElement('div', { style: rowStyle },
-        createElement('label', { style: labelStyle }, 'Provider'),
-        createElement('input', {
-          key: `ai-provider-${value.aiProvider}`,
-          type: 'text',
-          defaultValue: value.aiProvider,
-          style: inputStyle,
-          disabled: !writable,
-          placeholder: 'deepseek-official',
-          onBlur: (e: FocusEvent<HTMLInputElement>) => {
-            const next = e.target.value.trim()
-            if (next && next !== value.aiProvider) enqueueWrite(() => [{ op: 'set', path: ['aiProvider'], value: next }])
-          },
-        }),
+      createElement('div', { style: formRowStyle },
+        createElement('label', { style: formLabelStyle }, 'Provider'),
+        createElement('div', { style: formControlStyle },
+          providerChoices.length > 0
+            ? createElement('select', {
+              key: `ai-provider-${value.aiProvider}-${providerChoices.length}`,
+              value: value.aiProvider,
+              style: selectStyle,
+              disabled: !writable,
+              onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+                const next = e.target.value
+                if (!next || next === value.aiProvider) return
+                const firstModel = aiOptions?.models?.[next]?.[0]?.id
+                enqueueWrite(() => (firstModel
+                  ? [{ op: 'set', path: ['aiProvider'], value: next }, { op: 'set', path: ['aiModel'], value: firstModel }]
+                  : [{ op: 'set', path: ['aiProvider'], value: next }]))
+              },
+            }, providerChoices.map((provider) => createElement('option', { key: provider.id, value: provider.id }, provider.name)))
+            : createElement('input', {
+              type: 'text',
+              defaultValue: value.aiProvider,
+              style: inputStyle,
+              disabled: !writable,
+              placeholder: 'deepseek-official',
+              onBlur: (e: FocusEvent<HTMLInputElement>) => {
+                const next = e.target.value.trim()
+                if (next && next !== value.aiProvider) enqueueWrite(() => [{ op: 'set', path: ['aiProvider'], value: next }])
+              },
+            }),
+        ),
       ),
-      createElement('div', { style: rowStyle },
-        createElement('label', { style: labelStyle }, '模型'),
-        createElement('input', {
-          key: `ai-model-${value.aiModel}`,
-          type: 'text',
-          defaultValue: value.aiModel,
-          style: inputStyle,
-          disabled: !writable,
-          placeholder: 'deepseek-flash',
-          onBlur: (e: FocusEvent<HTMLInputElement>) => {
-            const next = e.target.value.trim()
-            if (next && next !== value.aiModel) enqueueWrite(() => [{ op: 'set', path: ['aiModel'], value: next }])
-          },
-        }),
+      createElement('div', { style: formRowStyle },
+        createElement('label', { style: formLabelStyle }, '模型'),
+        createElement('div', { style: formControlStyle },
+          modelOptions.length > 0
+            ? createElement('select', {
+              key: `ai-model-${value.aiModel}-${modelOptions.length}`,
+              value: value.aiModel,
+              style: selectStyle,
+              disabled: !writable,
+              onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+                const next = e.target.value
+                if (next && next !== value.aiModel) enqueueWrite(() => [{ op: 'set', path: ['aiModel'], value: next }])
+              },
+            }, modelOptions.map((model) => createElement('option', { key: model.id, value: model.id }, model.name)))
+            : createElement('input', {
+              type: 'text',
+              defaultValue: value.aiModel,
+              style: inputStyle,
+              disabled: !writable,
+              placeholder: 'deepseek-flash',
+              onBlur: (e: FocusEvent<HTMLInputElement>) => {
+                const next = e.target.value.trim()
+                if (next && next !== value.aiModel) enqueueWrite(() => [{ op: 'set', path: ['aiModel'], value: next }])
+              },
+            }),
+        ),
       ),
-      createElement('div', { style: { ...noticeMutedStyle, marginTop: 8 } },
-        '人设文件：',
-        createElement('code', { style: { fontSize: 11 } }, '$DSH_HOME/waifu/persona.md'),
-        '（首次开启自动生成模板，直接编辑即可换语气）。',
+      createElement('div', { style: formRowStartStyle },
+        createElement('label', { style: formLabelStartStyle }, '人设'),
+        createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
+          createElement('textarea', {
+            key: 'ai-persona',
+            rows: 8,
+            value: personaDraft ?? '',
+            style: { ...textareaStyle, height: 148, minHeight: 148, maxHeight: 148, lineHeight: 1.5, flex: 'none', width: '100%' },
+            disabled: !writable || personaDraft === null,
+            placeholder: personaDraft === null ? '读取中…' : '写下「简」的人设与说话风格',
+            onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setPersonaDraft(e.target.value),
+          }),
+          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm, marginTop: 8 } },
+            createElement('button', {
+              type: 'button',
+              style: { ...buttonPrimaryStyle, opacity: personaSaving ? 0.6 : 1 },
+              disabled: !writable || personaSaving || personaDraft === null,
+              onClick: () => savePersona(),
+            }, personaSaving ? '保存中…' : '保存人设'),
+            createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } },
+              personaStatus ?? '保存后立即写入 persona.md，下一次触摸生效'),
+          ),
+        ),
       ),
     ),
   ))

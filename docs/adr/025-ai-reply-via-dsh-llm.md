@@ -20,10 +20,15 @@
 
 1. **走 Host，不走浏览器**：客户端只 POST `/api/dsh-waifu/interact`（"戳了哪里 / 变成什么状态"），
    Host 调 LLM 后把一句文本回传。理由：API Key 不能进浏览器；而且这样客户端在模型未加载时也能用。
-2. **复用 DSH 已配置的模型**：设置项 `aiProvider` / `aiModel` 默认 `deepseek-official` / `deepseek-flash`，
-   用户可改；`inject` 增加 `llm`。
-3. **人设文件**：`$DSH_HOME/waifu/persona.md`，首次使用自动落盘默认模板（点 1：短句口语、不要旁白、不自称 AI）。
-   放文件而不是设置页文本框：人设是长文本，值得单独版本管理、手改更方便。
+2. **复用 DSH 已配置的模型**：设置项 `aiProvider` / `aiModel` 默认 `deepseek-official` / `deepseek-flash`；
+   `inject` 增加 `llm`。设置页把这两个**做成下拉**：候选由 `GET /api/dsh-waifu/ai-options` 现取
+   （Host 侧 `ctx.llm.listProviders()` + `listModels(provider)`，逐 provider 容错），避免手填拼错模型 id；
+   某个 provider 不提供目录（`listModels` 返回空或抛错）时该行回落成手填输入框。
+3. **人设文件 + 设置页编辑**：内容落盘 `$DSH_HOME/waifu/persona.md`，首次使用自动写默认模板
+   （短句口语、不要旁白、不自称 AI）。设置页提供文本框直接改并「保存人设」
+   （`GET/POST /api/dsh-waifu/persona`，上限 8000 字、空白回落默认）。
+   早期版本只提示路径、要求手改文件；用户反馈不便，故加成可编辑（文件仍是唯一事实来源，
+   也仍可直接用编辑器改，两条路等价）。
 4. **一句一台词**：`maxTokens: 80`、`stop: ['\n']`、`temperature: 1`；
    `sanitizeLine()` 取第一行、去引号、超过 60 字截断（气泡宽度有限，spec §4）。
 5. **预置台词做兜底**：客户端先显示预置台词（体验上零延迟），AI 台词到了再替换；
@@ -37,4 +42,5 @@
 - 插件多一个运行时依赖（`llm` 服务），在没有任何 LLM provider 的 DSH 里 `inject` 会让插件加载失败；
   这是可接受的取舍（DSH 默认就带 deepseek provider）。若要更保守，可改为 `ctx.get('llm')` 探测式接线。
 - 每次触摸都会消耗 token（一句 ≤80 token），默认 `aiEnabled: false`，由用户显式开启。
-- 台词质量取决于人设文件；调语气 = 改 `persona.md`，不需要改代码。
+- 台词质量取决于人设文件；调语气 = 改 `persona.md`（设置页文本框或编辑器皆可），不需要改代码。
+- `/ai-options` 与 `/persona` 未接线时不注册（与 `/interact` 相同），旧版 Host 不会暴露半成品接口。

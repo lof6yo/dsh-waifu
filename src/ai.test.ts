@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   DEFAULT_PERSONA,
+  MAX_PERSONA_CHARS,
   MAX_REPLY_CHARS,
   PERSONA_FILENAME,
   buildSceneMessage,
   generateReply,
   loadPersona,
+  personaPath,
   sanitizeLine,
+  savePersona,
   type WaifuLlm,
   type WaifuLlmRequest,
 } from './ai.ts'
@@ -101,5 +104,25 @@ describe('generateReply', () => {
     expect(await generateReply(broken, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })).toBeNull()
     const empty = fakeLlm(['   '])
     expect(await generateReply(empty, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'state', state: 'idle' } })).toBeNull()
+  })
+})
+
+describe('savePersona', () => {
+  it('写入人设文件并返回内容与路径', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
+    const result = savePersona(dir, '  你是「简」，说话带刺但心软。  ')
+    expect(result.text).toBe('你是「简」，说话带刺但心软。')
+    expect(result.path).toBe(personaPath(dir))
+    expect(readFileSync(join(dir, PERSONA_FILENAME), 'utf8')).toBe(result.text)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('空白内容回落默认人设、超长内容截断', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
+    expect(savePersona(dir, '   ').text).toBe(DEFAULT_PERSONA)
+    const long = '人'.repeat(MAX_PERSONA_CHARS + 50)
+    expect(savePersona(dir, long).text.length).toBe(MAX_PERSONA_CHARS)
+    expect(loadPersona(dir).length).toBe(MAX_PERSONA_CHARS)
+    rmSync(dir, { recursive: true, force: true })
   })
 })

@@ -108,8 +108,8 @@ dsh plugin --profile <profile> remove dsh-waifu
 ### AI 回复
 
 - 开关在设置页「AI 回复」分组；开启后触摸部位 / 事件状态的台词交给 DSH 已配置的模型现场生成（复用 provider 与账号，不需要另外填 Key）
-- `Provider` / `模型` 默认 `deepseek-official` / `deepseek-flash`，可改成 DSH 里配置过的其他路由
-- 人设是 `$DSH_HOME/waifu/persona.md`：首次开启自动生成模板（短句、口语、不要旁白），直接编辑即可换语气；改完刷新页面生效
+- `Provider` / `模型` 是**下拉选择**：候选取自 DSH 已注册的 LLM provider 与模型目录（`GET /api/dsh-waifu/ai-options`）；某个 provider 不提供模型清单时回落成手填输入框
+- 人设直接在设置页的文本框里改，点「保存人设」写入 `$DSH_HOME/waifu/persona.md`（首次开启自动生成模板：短句、口语、不要旁白），下一次触摸即生效
 - 容错：先显示预置台词，AI 台词到了再替换；模型不可用 / 超时 / 返回空 → 保持预置台词
 
 ### 开发者选项

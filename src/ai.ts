@@ -61,9 +61,27 @@ export interface ReplyContext {
   hint?: string
 }
 
+/** 人设文件的人设长度上限（字符）：够写一大段设定，也挡住误粘贴的超大文本。 */
+export const MAX_PERSONA_CHARS = 8_000
+
+/** 人设文件绝对路径（`$DSH_HOME/waifu/persona.md`）。 */
+export function personaPath(homeDir: string): string {
+  return join(homeDir, PERSONA_FILENAME)
+}
+
+/** 写入人设文件（设置页保存用）；超长截断，空白落盘默认人设。 */
+export function savePersona(homeDir: string, text: string): { text: string; path: string } {
+  const file = personaPath(homeDir)
+  const next = text.trim().slice(0, MAX_PERSONA_CHARS)
+  const value = next || DEFAULT_PERSONA
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, value, 'utf8')
+  return { text: value, path: file }
+}
+
 /** 读取人设文件；缺失时写入默认人设。读取失败回落到内置默认值。 */
 export function loadPersona(homeDir: string): string {
-  const file = join(homeDir, PERSONA_FILENAME)
+  const file = personaPath(homeDir)
   try {
     if (existsSync(file)) {
       const text = readFileSync(file, 'utf8').trim()

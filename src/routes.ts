@@ -221,6 +221,16 @@ function serveFile(req: IncomingMessage, res: ServerResponse, file: string): Pro
   })
 }
 
+/** AI 设置 API（ADR-025）：provider/模型候选（来自 DSH 的 llm 目录）与人设文件读写。 */
+export interface AiRoutesApi {
+  /** 已注册的 provider 与其模型目录（模型目录可能为空：适配器不提供清单）。 */
+  options(): Promise<{ providers: { id: string; name: string }[]; models: Record<string, { id: string; name: string }[]> }>
+  /** 读人设文件（缺失时自动写入默认）。 */
+  readPersona(): { text: string; path: string }
+  /** 写人设文件（超长截断；空白回退默认人设）。 */
+  writePersona(text: string): { text: string; path: string }
+}
+
 /** AI 回复 API（ADR-025）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
 export interface InteractRoutesApi {
   reply(input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<{
@@ -237,10 +247,12 @@ export function makePetRoutes(deps: {
   settings: SettingsRoutesApi
   /** AI 回复（可选：未接线时不注册 /interact）。 */
   ai?: InteractRoutesApi
+  /** AI 设置（可选：未接线时不注册 /ai-options 与 /persona）。 */
+  aiSettings?: AiRoutesApi
   /** SSE 活跃流注册钩子：插件卸载时由调用方逐一 close（ADR-006）。 */
   onStream?: (close: () => void) => void
 }): WebRoute[] {
-  const { service, packageRoot, settings, ai, onStream } = deps
+  const { service, packageRoot, settings, ai, aiSettings, onStream } = deps
   const apiRoutes: WebRoute[] = [
     sseStateRoute(`${PET_API_PREFIX}/events`, service, onStream),
     getRoute(`${PET_API_PREFIX}/state`, async () => service.snapshot()),
@@ -296,6 +308,15 @@ export function makePetRoutes(deps: {
       return Promise.resolve({ ok: true, display: service.setDisplay(patch) })
     }),
     postRoute(`${PET_API_PREFIX}/reset-display`, () => Promise.resolve({ ok: true, display: service.resetDisplay() })),
+    // AI 设置（ADR-025）：provider/模型候选 + 人设文件读写（设置页下拉与文本框用）
+    ...(aiSettings ? [
+      getRoute(`${PET_API_PREFIX}/ai-options`, () => aiSettings.options()),
+      getPostRoute(
+        `${PET_API_PREFIX}/persona`,
+        () => aiSettings.readPersona(),
+        (body) => aiSettings.writePersona(typeof body.text === 'string' ? body.text : ''),
+      ),
+    ] : []),
     // AI 回复（ADR-025）：客户端上报「戳了哪里 / 变成什么状态」，Host 用 ctx.llm 生成一句台词
     ...(ai ? [postRoute(`${PET_API_PREFIX}/interact`, (body) => {
       const kind = body.kind === 'state' ? 'state' as const : 'tap' as const
