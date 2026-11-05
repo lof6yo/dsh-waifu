@@ -18,60 +18,61 @@
       },
       "cubism": 4,
       "status": "bundled",
-      // 简的动作组（assets/models/jian/motions/ 由 scripts/gen-jian-motions.mjs 生成；ADR-018）
+      // 简的动作组（assets/models/jian/motions/ 只有自建 Idle；ADR-017/020）
+      // 其余事件默认不播动作（只出气泡），可在设置页「事件绑定」里手动挂 Idle。
       // 六个事件都挂了对应状态动作；不想要动作可在设置页「事件绑定」里清空（只出气泡）。
       "animationMap": {
         "idle": ["Idle"],
-        "thinking": ["Thinking"],
-        "error": ["Error"],
-        "done": ["Done"],
-        "waiting": ["Waiting"],
-        "delivered": ["Done"]
+        "thinking": [],
+        "error": [],
+        "done": [],
+        "waiting": [],
+        "delivered": []
       },
       // 默认触摸部位（按「简」实际渲染构图调好的取值，用户可在设置页覆盖/增删）。
       // 数组顺序 = 图层顺序（第 0 项最上层）：脸 > 头发 > 胸 > 臀 > 腰 > 大腿 > 手 > 小腿 > 脚（spec §4）。
-      // 每个部位都带触摸反馈动作组（随机播一个）与示例台词（随机一条）；留空则只播动作/不出气泡。
+      // 每个部位带示例台词（随机一条）；动作为空则只出气泡。
       "touchParts": [
         {
           "id": "face",
           "name": "脸",
           "boxes": [{ "left": 0.38, "top": 0.11, "right": 0.6, "bottom": 0.2 }],
-          "motions": ["TapFace"],
+          "motions": [],
           "lines": ["别捏脸啦～", "脸要被你捏变形了…", "呀…别戳脸！"]
         },
         {
           "id": "head",
           "name": "头发",
           "boxes": [{ "left": 0.34, "top": 0.06, "right": 0.66, "bottom": 0.2 }],
-          "motions": ["TapHead"],
+          "motions": [],
           "lines": ["摸头…好舒服…", "头发被弄乱啦～", "再、再摸一下也不是不行…"]
         },
         {
           "id": "chest",
           "name": "胸",
           "boxes": [{ "left": 0.26, "top": 0.22, "right": 0.64, "bottom": 0.32 }],
-          "motions": ["TapChest"],
+          "motions": [],
           "lines": ["呀！那里不能戳啦…", "衣服要乱了…", "喂，往哪里看呢。"]
         },
         {
           "id": "hip",
           "name": "臀",
           "boxes": [{ "left": 0.27, "top": 0.39, "right": 0.68, "bottom": 0.48 }],
-          "motions": ["TapHip"],
+          "motions": [],
           "lines": ["笨、笨蛋！", "那里绝对不行！", "再这样我要生气了哦。"]
         },
         {
           "id": "waist",
           "name": "腰",
           "boxes": [{ "left": 0.31, "top": 0.32, "right": 0.6, "bottom": 0.39 }],
-          "motions": ["TapWaist"],
+          "motions": [],
           "lines": ["腰、腰很怕痒的…别戳啦！", "哈哈…别闹了，站不稳了。", "再摸我就躲到屏幕外面去。"]
         },
         {
           "id": "thigh",
           "name": "大腿",
           "boxes": [{ "left": 0.28, "top": 0.48, "right": 0.68, "bottom": 0.65 }],
-          "motions": ["TapLeg"],
+          "motions": [],
           "lines": ["大腿不是给你捏的！", "再摸…就踢你了哦。", "唔…那里也不行啦。"]
         },
         {
@@ -81,21 +82,21 @@
             { "left": 0.1, "top": 0.2, "right": 0.28, "bottom": 0.26 },
             { "left": 0.65, "top": 0.45, "right": 0.78, "bottom": 0.53 }
           ],
-          "motions": ["TapHand"],
+          "motions": [],
           "lines": ["要牵手？……那就一下。", "手有点凉，可别嫌弃。", "别乱捏我的手指啦。"]
         },
         {
           "id": "calf",
           "name": "小腿",
           "boxes": [{ "left": 0.32, "top": 0.65, "right": 0.65, "bottom": 0.84 }],
-          "motions": ["TapLeg"],
+          "motions": [],
           "lines": ["小腿可是有肌肉的，别小看。", "痒……别挠那里！", "再摸就站不住了啦。"]
         },
         {
           "id": "foot",
           "name": "脚",
           "boxes": [{ "left": 0.36, "top": 0.84, "right": 0.59, "bottom": 0.96 }],
-          "motions": ["TapLeg"],
+          "motions": [],
           "lines": ["脚、脚不许碰！", "真的怕痒……快住手。", "喂，那是最不该碰的地方吧。"]
         }
       ]

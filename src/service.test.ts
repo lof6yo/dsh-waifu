@@ -74,8 +74,8 @@ describe('PetService 状态机', () => {
     expect(view.config.maxFps).toBe(30)
     expect(view.config.model).toBe('jian')
     expect(view.config.events.idle.motions).toEqual(['Idle'])
-    expect(view.config.events.thinking.motions).toEqual(['Thinking'])
-    expect(view.config.events.done.motions).toEqual(['Done'])
+    expect(view.config.events.thinking.motions).toEqual([])
+    expect(view.config.events.done.motions).toEqual([])
     // 默认台词池（无固定人设，中性口吻；长状态 3 阶段）
     expect(view.config.events.idle.lines.length).toBe(1)
     expect(view.config.events.thinking.lines.length).toBe(3)
@@ -95,9 +95,9 @@ describe('PetService 状态机', () => {
         expect(box.top).toBeLessThan(box.bottom)
       }
     }
-    // 默认挂触摸反馈动作组（脸→TapFace、头发→TapHead），用户可在设置页改
-    expect(parts[0].motions).toEqual(['TapFace'])
-    expect(parts[1].motions).toEqual(['TapHead'])
+    // 默认不挂动作组（只出气泡），用户可在设置页挂 Idle
+    expect(parts[0].motions).toEqual([])
+    expect(parts[1].motions).toEqual([])
   })
 
   it('用户保存触摸部位后覆盖内置默认', () => {
@@ -115,7 +115,7 @@ describe('PetService 状态机', () => {
 
   it('保存事件绑定覆盖层后 snapshot.config.events 立即生效（整事件替换）', () => {
     const { service } = makeHarness()
-    expect(service.snapshot().config.events.thinking.motions).toEqual(['Thinking'])
+    expect(service.snapshot().config.events.thinking.motions).toEqual([])
     service.saveTouchParts('jian', [], {
       thinking: { motions: ['TapHead', 'Idle'], lines: [['自己想的台词']] },
     })
