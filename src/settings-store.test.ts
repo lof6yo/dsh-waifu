@@ -26,6 +26,7 @@ const BASE: PetSettings = {
   aiEnabled: false,
   aiTouchOnly: false,
   aiTakeover: false,
+  interactionMode: 'touch-first',
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,
@@ -122,6 +123,17 @@ describe('SettingsStore', () => {
     expect(store.get().aiTakeover).toBe(true)
     store.applyOps([{ op: 'set', path: ['aiTakeover'], value: 'yes' }])
     expect(store.get().aiTakeover).toBe(false)
+  })
+
+  it('interactionMode 默认触摸优先、可写、非法值回落默认（ADR-032）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().interactionMode).toBe('touch-first')
+    store.applyOps([{ op: 'set', path: ['interactionMode'], value: 'event-first' }])
+    expect(store.get().interactionMode).toBe('event-first')
+    store.applyOps([{ op: 'set', path: ['interactionMode'], value: 'mutual' }])
+    expect(store.get().interactionMode).toBe('mutual')
+    store.applyOps([{ op: 'set', path: ['interactionMode'], value: 'nonsense' }])
+    expect(store.get().interactionMode).toBe('touch-first')
   })
 
   it('aiTouchOnly 默认关、可写、非法值回落 false', () => {

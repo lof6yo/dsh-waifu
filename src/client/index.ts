@@ -56,6 +56,9 @@ import {
   DEFAULT_HOME_BOTTOM,
   DEFAULT_HOME_RIGHT,
   DEFAULT_MAX_FPS,
+  DEFAULT_INTERACTION_MODE,
+  normalizeInteractionMode,
+  type InteractionMode,
 } from '../defaults.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
 import { homePercentFromPos, onCaptureHome, onRecenter } from './pet-commands.ts'
@@ -127,6 +130,8 @@ const TOUCHBOX_PALETTE = [
 /** 表情淡入淡出时长（ms）：切换表情时开关参数按该时长线性逼近目标值。 */
 const EXPRESSION_FADE_MS = 280
 /** 触摸部位表情的临时保持时长（ms）：到点自动回到当前事件绑定的表情。 */
+/** 触摸互动的「保持窗口」：这段时间内触摸拥有气泡与动作（ADR-032）。 */
+const TAP_INTERACTION_HOLD_MS = 2600
 const EXPRESSION_TEMP_MS = 2200
 
 /** 归一化配置帧率档（非法值回落默认 30）。 */
@@ -305,7 +310,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let disposed = false
   pushCleanup(() => { disposed = true })
   // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
-  pushCleanup(() => { clearLongState(); clearBubbleHideTimer() })
+  pushCleanup(() => { clearLongState(); clearTapHold(); clearBubbleHideTimer() })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
@@ -456,6 +461,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 长状态的「延迟」失效——入态立刻请求一句，之后仍按间隔/上限反复演绎。
    */
   let aiTakeover = false
+  /** 打断优先级（ADR-032）：触摸互动与状态事件抢气泡/动作/AI 演绎时的规则。 */
+  let interactionMode: InteractionMode = DEFAULT_INTERACTION_MODE
+  /** 触摸互动保持窗口的截止时间戳；窗口内状态事件按优先级决定是否接管。 */
+  let tapHoldUntil = 0
+  let tapResumeTimer: number | undefined
   /** 长状态 AI 演绎节奏（SSE config.*AiDelay/Interval/Max，秒/秒/次；ADR-026）。 */
   let thinkingAiDelay = 3
   let thinkingAiInterval = 20
@@ -710,6 +720,41 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     bubbleStickyText = null
   }
 
+  /** 触摸是否还处于「保持窗口」内（窗口内由 interactionMode 决定谁优先）。 */
+  function tapActive(): boolean {
+    return Date.now() < tapHoldUntil
+  }
+
+  /** 结束触摸保持窗口（事件优先/互相打断里由状态变化调用）。 */
+  function clearTapHold(): void {
+    tapHoldUntil = 0
+    if (tapResumeTimer !== undefined) {
+      window.clearTimeout(tapResumeTimer)
+      tapResumeTimer = undefined
+    }
+  }
+
+  /**
+   * 触摸接管（ADR-032）：进入保持窗口；非「事件优先」时立刻停掉长状态的演绎计时与
+   * 常驻底稿，让触摸台词/AI 台词拥有气泡；窗口结束后若长状态仍在，再把演绎交还。
+   */
+  function beginTapHold(): void {
+    tapHoldUntil = Date.now() + TAP_INTERACTION_HOLD_MS
+    if (tapResumeTimer !== undefined) window.clearTimeout(tapResumeTimer)
+    if (interactionMode !== 'event-first' && longState !== null) {
+      for (const t of longAiTimers) window.clearTimeout(t)
+      longAiTimers = []
+      bubbleStickyText = null
+    }
+    tapResumeTimer = window.setTimeout(() => {
+      tapResumeTimer = undefined
+      if (interactionMode === 'event-first') return
+      if (longState !== null && longState === lastState) {
+        enterLongState(longState, pickEventLine(longState, 0))
+      }
+    }, TAP_INTERACTION_HOLD_MS)
+  }
+
   /** 读取长状态 AI 节奏配置（缺省/非法值保留当前值）。 */
   function applyLongAiConfig(cfg: Partial<PetStateView['config']>): void {
     const num = (value: unknown, fallback: number): number =>
@@ -872,22 +917,34 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (state !== lastState) {
       lastState = state
       refreshExpressionTargets()
+      // 打断优先级（ADR-032）：互相打断 = 状态一变立刻收回触摸窗口；触摸优先 = 窗口内
+      // 事件不抢气泡/动作/AI 演绎，只在窗口结束后把控制权交还；事件优先 = 照旧。
+      if (interactionMode === 'mutual') clearTapHold()
+      const touchHolding = interactionMode === 'touch-first' && tapActive()
       const line = pickEventLine(state, 0)
       if (isLongState(state)) {
-        // 长状态：入态台词常驻，AI 按设置节奏反复演绎替换（ADR-026）
-        enterLongState(state, line)
+        if (touchHolding) {
+          // 触摸优先：先记住长状态，入态台词与演绎推迟到窗口结束（beginTapHold 的收尾）
+          clearLongState()
+          longState = state
+        } else {
+          // 长状态：入态台词常驻，AI 按设置节奏反复演绎替换（ADR-026）
+          enterLongState(state, line)
+        }
       } else {
         clearLongState()
         // 全 AI 接管：预置对白不显示，气泡留给模型（失败也不回落到固定台词）
         const takeover = aiTakeover && aiEnabled
-        if (takeover) hideBubble()
+        if (touchHolding) {
+          // 触摸优先：短状态不抢正在显示的触摸台词，也不另发一次状态请求
+        } else if (takeover) hideBubble()
         else if (line !== undefined) showBubble(line)
         else hideBubble()
-        if (state !== 'idle') {
+        if (state !== 'idle' && !touchHolding) {
           void requestAiReply({ kind: 'state', state, hint: takeover ? undefined : line })
         }
       }
-      playState(state)
+      if (!touchHolding) playState(state)
     }
     if (debugTextEl) {
       debugTextEl.textContent =
@@ -1890,6 +1947,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     aiEnabled = cfg.aiEnabled === true
     aiTouchOnly = cfg.aiTouchOnly === true
     aiTakeover = cfg.aiTakeover === true
+    interactionMode = normalizeInteractionMode(cfg.interactionMode, interactionMode)
     applyLongAiConfig(cfg)
     applyBubbleMaxConfig(cfg)
     applyBubbleStyle()
@@ -1968,6 +2026,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!aiEnabled) return null
     // 仅触摸：状态变化只用预置台词，不打扰模型（状态切换往往只有几百毫秒）
     if (aiTouchOnly && input.kind === 'state') return null
+    // 触摸优先/互相打断：触摸保持窗口内不让状态类演绎抢气泡（ADR-032）
+    if (input.kind === 'state' && interactionMode !== 'event-first' && tapActive()) return null
     const seq = ++aiRequestSeq
     const targetState = input.state
     try {
@@ -2005,6 +2065,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 命中最小 box 优先。
       const part = hitTestTouchParts(editState?.parts ?? touchParts, ratio.nx, ratio.ny)
       if (!part) return
+      // 触摸接管窗口（ADR-032）：先占住气泡/动作，再决定台词与 AI
+      beginTapHold()
       // 台词：该部位自定义台词（part.lines）非空时随机选一条，并避开该部位上一条
       // （按 part.id 记录，部位间互不干扰）；未配置台词 → 不显示气泡，只播部位动作（spec §4）。
       let spoken: string | undefined
@@ -2075,6 +2137,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         aiEnabled = view.config.aiEnabled === true
         aiTouchOnly = view.config.aiTouchOnly === true
         aiTakeover = view.config.aiTakeover === true
+        interactionMode = normalizeInteractionMode(view.config.interactionMode, interactionMode)
         applyLongAiConfig(view.config)
         applyBubbleMaxConfig(view.config)
       }

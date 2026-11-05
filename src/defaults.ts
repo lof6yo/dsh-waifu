@@ -43,6 +43,21 @@ export function normalizeHistoryCount(value: unknown, fallback: number): number 
 }
 
 /**
+ * 打断优先级（ADR-032）：状态事件与触摸互动抢占同一套「气泡 + 动作 + AI 演绎」通道时的规则。
+ * - `mutual`：互相打断——触摸立刻接管，状态一变也立刻收回；
+ * - `touch-first`：触摸优先——触摸期间状态事件不改气泡、不恢复演绎（默认）；
+ * - `event-first`：事件优先——长状态演绎不被触摸打断，触摸只播动作/表情与 AI 台词。
+ */
+export const INTERACTION_MODES = ['mutual', 'touch-first', 'event-first'] as const
+export type InteractionMode = (typeof INTERACTION_MODES)[number]
+export const DEFAULT_INTERACTION_MODE: InteractionMode = 'touch-first'
+
+/** 归一化打断优先级：未知值回退默认。 */
+export function normalizeInteractionMode(value: unknown, fallback: InteractionMode): InteractionMode {
+  return INTERACTION_MODES.includes(value as InteractionMode) ? (value as InteractionMode) : fallback
+}
+
+/**
  * 标量设置默认值（除 `model`：模型 id 由内置 preset 目录动态决定）。
  * 与 `Config` schema 的 `.default()`、设置页 `DEFAULT_VALUE` 保持逐项一致。
  */
@@ -70,4 +85,5 @@ export const DEFAULT_SETTINGS = {
   aiProvider: DEFAULT_AI_PROVIDER,
   aiModel: DEFAULT_AI_MODEL,
   aiHistoryCount: DEFAULT_AI_HISTORY,
+  interactionMode: DEFAULT_INTERACTION_MODE,
 } as const

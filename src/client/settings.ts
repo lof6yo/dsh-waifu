@@ -44,6 +44,8 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_SETTINGS,
   normalizeHistoryCount,
+  DEFAULT_INTERACTION_MODE,
+  type InteractionMode,
 } from '../defaults.ts'
 import { clientLog } from './client-log.ts'
 import { emitCaptureHome, emitRecenter } from './pet-commands.ts'
@@ -92,6 +94,8 @@ export interface PetSettingsValue {
   aiProvider: string
   /** AI 回复使用的模型 id。 */
   aiModel: string
+  /** 打断优先级（ADR-032）：触摸互动与状态事件谁先占气泡/动作/AI 演绎。 */
+  interactionMode: InteractionMode
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10，ADR-030）。 */
   aiHistoryCount: number
   /** 长状态「思考」AI 演绎节奏：入态延迟（秒）/ 间隔（秒）/ 每次入态上限（ADR-026）。 */
@@ -2426,6 +2430,31 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ? createElement('span', { style: statusTextStyle, color: C.textSecondary }, motionGroupsHint)
         : undefined,
     }),
+    // 打断优先级（ADR-032）：触摸互动与状态事件抢同一条「气泡 + 动作 + AI 演绎」通道
+    createElement('div', { key: 'interaction-mode', style: formRowInlineStyle },
+      createElement('span', { style: formLabelInlineStyle }, '打断优先级'),
+      createElement('div', { style: formControlInlineStyle },
+        createElement('select', {
+          style: selectStyle,
+          value: value.interactionMode,
+          disabled: !writable,
+          onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+            const next = e.target.value as InteractionMode
+            enqueueWrite(() => [{ op: 'set', path: ['interactionMode'], value: next }])
+          },
+        },
+          createElement('option', { value: 'touch-first' }, '触摸优先'),
+          createElement('option', { value: 'mutual' }, '互相打断'),
+          createElement('option', { value: 'event-first' }, '事件优先'),
+        ),
+        createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginLeft: 8 } },
+          value.interactionMode === 'event-first'
+            ? '触摸不打断长状态演绎（只播自己的动作 / 表情与台词）'
+            : value.interactionMode === 'mutual'
+              ? '触摸立刻接管，状态一变也立刻收回'
+              : '触摸立刻接管，长状态演绎等触摸结束后再继续'),
+      ),
+    ),
     ...EVENT_ORDER.map((event) => renderEventCard(event)),
   ))
 

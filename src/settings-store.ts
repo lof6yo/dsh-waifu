@@ -14,7 +14,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { petHomeDir, fileStamp } from './home.ts'
 import { clampInt } from './clamp.ts'
-import { AI_HISTORY_LIMITS } from './defaults.ts'
+import {
+  AI_HISTORY_LIMITS,
+  normalizeInteractionMode,
+  type InteractionMode,
+} from './defaults.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { stripJsonComments } from './jsonc.ts'
 import { LONG_AI_LIMITS } from './models.ts'
@@ -70,6 +74,8 @@ export interface PetSettings {
   aiModel: string
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
   aiHistoryCount: number
+  /** 打断优先级：触摸互动与状态事件谁先占气泡/动作/AI 演绎（ADR-032）。 */
+  interactionMode: InteractionMode
   /** 长状态「思考」的 AI 演绎节奏：入态后延迟多久开始（秒，0–120）。 */
   thinkingAiDelay: number
   /** 「思考」的演绎间隔（秒，5–600）。 */
@@ -183,6 +189,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     aiProvider: pickString(record.aiProvider) ?? base.aiProvider,
     aiModel: pickString(record.aiModel) ?? base.aiModel,
     aiHistoryCount: clampInt(record.aiHistoryCount, base.aiHistoryCount, AI_HISTORY_LIMITS.min, AI_HISTORY_LIMITS.max),
+    interactionMode: normalizeInteractionMode(record.interactionMode, base.interactionMode),
     thinkingAiDelay: clampInt(record.thinkingAiDelay, base.thinkingAiDelay, LONG_AI_LIMITS.delay.min, LONG_AI_LIMITS.delay.max),
     thinkingAiInterval: clampInt(record.thinkingAiInterval, base.thinkingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
     thinkingAiMax: clampInt(record.thinkingAiMax, base.thinkingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
