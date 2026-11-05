@@ -2392,7 +2392,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           createElement('span', { style: { ...formLabelInlineStyle, flex: '0 0 auto' } }, `${bubbleBgColor} / ${bubbleTextColor}`),
         ),
       ),
-      createElement('div', { style: { ...formRowInlineStyle, marginBottom: 0 } },
+      createElement('div', { style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '最长显示（秒，0 = 不限）'),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
@@ -2408,6 +2408,31 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['bubbleMaxSeconds'], value: next }])
             },
           }),
+        ),
+      ),
+      // 打断优先级（ADR-032）：触摸互动与状态事件抢同一条「气泡 + 动作 + AI 演绎」通道
+      createElement('div', { key: 'interaction-mode', style: { ...formRowInlineStyle, marginBottom: 0 } },
+        createElement('span', { style: formLabelInlineStyle }, '打断优先级'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('select', {
+            style: selectStyle,
+            value: value.interactionMode,
+            disabled: !writable,
+            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+              const next = e.target.value as InteractionMode
+              enqueueWrite(() => [{ op: 'set', path: ['interactionMode'], value: next }])
+            },
+          },
+            createElement('option', { value: 'touch-first' }, '触摸优先'),
+            createElement('option', { value: 'mutual' }, '互相打断'),
+            createElement('option', { value: 'event-first' }, '事件优先'),
+          ),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginLeft: 8 } },
+            value.interactionMode === 'event-first'
+              ? '触摸不打断长状态演绎（只播自己的动作 / 表情与台词）'
+              : value.interactionMode === 'mutual'
+                ? '触摸立刻接管，状态一变也立刻收回'
+                : '触摸立刻接管，长状态演绎等触摸结束后再继续'),
         ),
       ),
     ),
@@ -2430,31 +2455,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ? createElement('span', { style: statusTextStyle, color: C.textSecondary }, motionGroupsHint)
         : undefined,
     }),
-    // 打断优先级（ADR-032）：触摸互动与状态事件抢同一条「气泡 + 动作 + AI 演绎」通道
-    createElement('div', { key: 'interaction-mode', style: formRowInlineStyle },
-      createElement('span', { style: formLabelInlineStyle }, '打断优先级'),
-      createElement('div', { style: formControlInlineStyle },
-        createElement('select', {
-          style: selectStyle,
-          value: value.interactionMode,
-          disabled: !writable,
-          onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-            const next = e.target.value as InteractionMode
-            enqueueWrite(() => [{ op: 'set', path: ['interactionMode'], value: next }])
-          },
-        },
-          createElement('option', { value: 'touch-first' }, '触摸优先'),
-          createElement('option', { value: 'mutual' }, '互相打断'),
-          createElement('option', { value: 'event-first' }, '事件优先'),
-        ),
-        createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginLeft: 8 } },
-          value.interactionMode === 'event-first'
-            ? '触摸不打断长状态演绎（只播自己的动作 / 表情与台词）'
-            : value.interactionMode === 'mutual'
-              ? '触摸立刻接管，状态一变也立刻收回'
-              : '触摸立刻接管，长状态演绎等触摸结束后再继续'),
-      ),
-    ),
     ...EVENT_ORDER.map((event) => renderEventCard(event)),
   ))
 

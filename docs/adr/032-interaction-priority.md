@@ -12,7 +12,7 @@
 
 ## 决策
 
-新增设置项 `interactionMode`（设置页「事件绑定」分组首行「打断优先级」，默认 `touch-first`）：
+新增设置项 `interactionMode`（设置页「对白气泡」卡片最后一行「打断优先级」，默认 `touch-first`）：
 
 | 取值 | 行为 |
 | --- | --- |
