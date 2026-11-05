@@ -20,6 +20,22 @@ import type {} from '@deepseek-ai/dsh-llm'
 import { PetService } from './service.ts'
 import { DEFAULT_LONG_AI } from './models.ts'
 import {
+  DEFAULT_AI_MODEL,
+  DEFAULT_AI_PROVIDER,
+  DEFAULT_BUBBLE_BG_COLOR,
+  DEFAULT_BUBBLE_BG_OPACITY,
+  DEFAULT_BUBBLE_MAX_SECONDS,
+  DEFAULT_BUBBLE_OFFSET_X,
+  DEFAULT_BUBBLE_OFFSET_Y,
+  DEFAULT_BUBBLE_TEXT_COLOR,
+  DEFAULT_CANVAS_PAD_X,
+  DEFAULT_CANVAS_PAD_Y,
+  DEFAULT_HOME_BOTTOM,
+  DEFAULT_HOME_RIGHT,
+  DEFAULT_MAX_FPS,
+  DEFAULT_SETTINGS,
+} from './defaults.ts'
+import {
   makePetRoutes,
   petPackageRoot,
   type AiRoutesApi,
@@ -40,13 +56,8 @@ import { TouchPartsStore } from './touch-parts.ts'
 export { PetService } from './service.ts'
 export type { PetState, PetStateView } from './service.ts'
 export { makePetRoutes, petPackageRoot, PET_API_PREFIX, PET_ASSET_PREFIX } from './routes.ts'
-export {
-  listBuiltinPresets,
-  resolveModelUrl,
-  resolveMotionMap,
-  resolveDefaultTouchParts,
-  defaultModelId,
-} from './models-host.ts'
+// 再导出（复用上面的 import，避免同一模块被 import + export-from 各写一遍）
+export { listBuiltinPresets, resolveModelUrl, resolveMotionMap, resolveDefaultTouchParts, defaultModelId }
 export {
   DEFAULT_MOTION_MAP,
   DEFAULT_LONG_AI,
@@ -82,32 +93,32 @@ export interface Config extends Omit<PetSettings, 'maxFps'> {
 }
 
 export const Config: Schema<Config> = Schema.object({
-  enabled: Schema.boolean().default(true),
-  size: Schema.number().min(40).max(400).default(240),
+  enabled: Schema.boolean().default(DEFAULT_SETTINGS.enabled),
+  size: Schema.number().min(40).max(400).default(DEFAULT_SETTINGS.size),
   maxFps: Schema.union([
     Schema.const(30),
     Schema.const(60),
     Schema.const(0),
-  ]).default(30),
+  ]).default(DEFAULT_MAX_FPS),
   model: Schema.string().default(defaultModelId()),
-  developerMode: Schema.boolean().default(true),
-  debug: Schema.boolean().default(false),
-  showTapZones: Schema.boolean().default(false),
-  canvasPadX: Schema.number().min(0).max(300).default(125),
-  canvasPadY: Schema.number().min(0).max(300).default(50),
-  homeRight: Schema.number().min(0).max(100).default(15),
-  homeBottom: Schema.number().min(0).max(100).default(24),
-  bubbleOffsetX: Schema.number().min(-1000).max(1000).default(0),
-  bubbleOffsetY: Schema.number().min(-1000).max(1000).default(-15),
-  bubbleBgColor: Schema.string().default('#ffffff'),
-  bubbleBgOpacity: Schema.number().min(0).max(100).default(92),
+  developerMode: Schema.boolean().default(DEFAULT_SETTINGS.developerMode),
+  debug: Schema.boolean().default(DEFAULT_SETTINGS.debug),
+  showTapZones: Schema.boolean().default(DEFAULT_SETTINGS.showTapZones),
+  canvasPadX: Schema.number().min(0).max(300).default(DEFAULT_CANVAS_PAD_X),
+  canvasPadY: Schema.number().min(0).max(300).default(DEFAULT_CANVAS_PAD_Y),
+  homeRight: Schema.number().min(0).max(100).default(DEFAULT_HOME_RIGHT),
+  homeBottom: Schema.number().min(0).max(100).default(DEFAULT_HOME_BOTTOM),
+  bubbleOffsetX: Schema.number().min(-1000).max(1000).default(DEFAULT_BUBBLE_OFFSET_X),
+  bubbleOffsetY: Schema.number().min(-1000).max(1000).default(DEFAULT_BUBBLE_OFFSET_Y),
+  bubbleBgColor: Schema.string().default(DEFAULT_BUBBLE_BG_COLOR),
+  bubbleBgOpacity: Schema.number().min(0).max(100).default(DEFAULT_BUBBLE_BG_OPACITY),
   /** 气泡最长连续可见秒数（0 = 不限）；默认 30。 */
-  bubbleMaxSeconds: Schema.number().min(0).max(600).default(30),
-  bubbleTextColor: Schema.string().default('#222222'),
-  aiEnabled: Schema.boolean().default(true),
-  aiTouchOnly: Schema.boolean().default(false),
-  aiProvider: Schema.string().default('deepseek-official'),
-  aiModel: Schema.string().default('deepseek-flash'),
+  bubbleMaxSeconds: Schema.number().min(0).max(600).default(DEFAULT_BUBBLE_MAX_SECONDS),
+  bubbleTextColor: Schema.string().default(DEFAULT_BUBBLE_TEXT_COLOR),
+  aiEnabled: Schema.boolean().default(DEFAULT_SETTINGS.aiEnabled),
+  aiTouchOnly: Schema.boolean().default(DEFAULT_SETTINGS.aiTouchOnly),
+  aiProvider: Schema.string().default(DEFAULT_AI_PROVIDER),
+  aiModel: Schema.string().default(DEFAULT_AI_MODEL),
   // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
   thinkingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.thinking.delay),
   thinkingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.thinking.interval),

@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { petHomeDir, fileStamp } from './home.ts'
 import type { EventBindings, TouchPart } from './models.ts'
 import { normalizeEventBindings, normalizeTouchParts } from './models.ts'
 import { stripJsonComments } from './jsonc.ts'
@@ -28,11 +28,6 @@ export interface TouchPartsFileView {
   models: Record<string, TouchPartsModelEntry>
   error: string | null
   path: string
-}
-
-/** DSH home 目录（与 persist.ts / settings-store.ts 同一规则）。 */
-function petHomeDir(): string {
-  return process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
 
 /** 文件头注释：每次写回时保留，提示用户这是插件私有配置。 */
@@ -90,6 +85,8 @@ export class TouchPartsStore {
   readonly path: string
   private lastGood: Record<string, TouchPartsModelEntry> = {}
   private lastError: string | null = null
+  /** 上次解析对应的文件时间戳（`mtimeMs:size`）：文件没变就复用，snapshot 每次推送都要读它。 */
+  private lastStamp: string | null = null
 
   constructor(path?: string) {
     this.path = path ?? join(petHomeDir(), 'waifu', TOUCH_PARTS_FILENAME)
@@ -105,8 +102,12 @@ export class TouchPartsStore {
     }
   }
 
-  /** 现读并解析；失败时沿用上一份好结果并给出错误消息。 */
+  /** 现读并解析；失败时沿用上一份好结果并给出错误消息（文件没变则复用上次结果）。 */
   load(): TouchPartsFileView {
+    const stamp = fileStamp(this.path)
+    if (stamp !== null && stamp === this.lastStamp) {
+      return { models: this.lastGood, error: this.lastError, path: this.path }
+    }
     let text: string
     try {
       text = readFileSync(this.path, 'utf8')
@@ -128,6 +129,7 @@ export class TouchPartsStore {
     }
     this.lastGood = normalizeModelMap(rawModels)
     this.lastError = null
+    this.lastStamp = stamp
     return { models: this.lastGood, error: this.lastError, path: this.path }
   }
 
@@ -157,6 +159,7 @@ export class TouchPartsStore {
       writeFileSync(this.path, serializeTouchParts(next), 'utf8')
       this.lastGood = next
       this.lastError = null
+      this.lastStamp = null
     } catch (error) {
       this.lastError = `写入失败 ${this.path}：${error instanceof Error ? error.message : String(error)}`
     }

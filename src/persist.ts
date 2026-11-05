@@ -6,7 +6,9 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { DEFAULT_DISPLAY } from './defaults.ts'
+import { petHomeDir } from './home.ts'
+import { clampNumber } from './clamp.ts'
 
 export interface PetDisplay {
   right: number
@@ -14,7 +16,7 @@ export interface PetDisplay {
   size: number
 }
 
-export const DEFAULT_DISPLAY: PetDisplay = { right: 24, bottom: 20, size: 240 }
+export { DEFAULT_DISPLAY } from './defaults.ts'
 
 const DISPLAY_MIN = 40
 const DISPLAY_MAX = 400
@@ -25,15 +27,14 @@ const DISPLAY_MAX = 400
 const INSET_MIN = -4000
 const INSET_MAX = 8000
 
-function clamp(value: number, min: number, max: number): number {
-  if (Number.isFinite(value)) return Math.min(max, Math.max(min, value))
-  return min
+/** 尺寸归一化：非法值回退最小尺寸（与 clamp.ts 统一规则）。 */
+function clampSize(value: number): number {
+  return clampNumber(value, DISPLAY_MIN, DISPLAY_MIN, DISPLAY_MAX)
 }
 
 /** 位置偏移归一化：非法值回 0（而不是最小负边界）。 */
 function clampInset(value: number): number {
-  if (Number.isFinite(value)) return Math.min(INSET_MAX, Math.max(INSET_MIN, value))
-  return 0
+  return clampNumber(value, 0, INSET_MIN, INSET_MAX)
 }
 
 /** 归一化显示配置到合法边界（持久化读取与 API 写入共用同一权威规则）。 */
@@ -41,12 +42,8 @@ export function normalizeDisplay(display: PetDisplay): PetDisplay {
   return {
     right: clampInset(display.right),
     bottom: clampInset(display.bottom),
-    size: clamp(display.size, DISPLAY_MIN, DISPLAY_MAX),
+    size: clampSize(display.size),
   }
-}
-
-function petHomeDir(): string {
-  return process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
 
 function petFile(): string {

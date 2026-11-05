@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **浮层不再按显示器刷新率空转**（ADR-029）：命中层与触摸叠加层合并成一条 rAF，按 `maxFps` 限频；每帧只算一次模型包围盒，用取整签名判断这一帧是否真的需要写 DOM —— 角色静止、调试面板关闭时几乎零写入，无浮层时直接停掉循环。
+- **不再每帧强制回流**：`petLayer` 矩形、调试面板尺寸、画布矩形分别缓存（`layerRect()` / `panelSizeCache` / `canvasRectCache`），只在 resize / 改尺寸 / 换模型 / 移位时由 `invalidateLayout()` 失效；命中格记住上次写入值，只写变化的格子。
+- **表情参数只在未收敛时写**：目标值在状态变化、触摸、调试面板切换时刷新，10 个 `ParamSwitch*` 全部到位后跳过整帧写入。
+- **`applyBubbleStyle` 加样式签名短路**：SSE 每条消息都会调它，值没变不写 style。
+- **Host 配置读取带缓存**：`settings.jsonc` / `touch-parts.jsonc` 以 `mtimeMs:size` 判缓存，`snapshot()` 从每次 3 次读盘 + JSONC 解析降到 0–1 次。
+
+### Changed
+
+- **默认值收敛到单一来源**（`src/defaults.ts`）：Config schema、设置页兜底、客户端渲染兜底、`waifu.json` 默认位置全部引用同一份常量，`defaults.test.ts` 校验一致；数值边界统一走 `src/clamp.ts`，插件私有路径统一走 `src/home.ts`。
+- 删除死代码：`shuffled`、`toggleEventMotion`、`modelDraft`、`saveError`，以及 `src/index.ts` 里同一模块的重复再导出。
+
 ### Fixed
 
 - AI 回复不再传 `stop` 选项：`llm-pi-ai` 会以 `UNSUPPORTED_OPTION` 拒收整个请求，导致 OpenRouter 等 provider 一秒内返回空文本。

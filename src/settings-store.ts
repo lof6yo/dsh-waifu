@@ -12,7 +12,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { petHomeDir, fileStamp } from './home.ts'
+import { clampInt } from './clamp.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { stripJsonComments } from './jsonc.ts'
 import { LONG_AI_LIMITS } from './models.ts'
@@ -86,11 +87,6 @@ export interface PetSettingsView {
   writable: boolean
 }
 
-/** DSH home 目录（与 persist.ts / touch-parts.ts 同一规则）。 */
-function petHomeDir(): string {
-  return process.env.DSH_HOME ?? join(homedir(), '.dsh')
-}
-
 const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注释）。
 // 路径：$DSH_HOME/waifu/settings.jsonc
 // 建议通过设置页「桌宠配置」修改；直接编辑保存后刷新页面生效。
@@ -116,9 +112,10 @@ function serializeSettings(value: PetSettings): string {
 const MAX_FPS_OPTIONS = [30, 60, 0] as const
 
 function clampSize(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null
   const n = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(n)) return null
-  return Math.round(Math.min(400, Math.max(40, n)))
+  return clampInt(n, 40, 40, 400)
 }
 
 function pickString(value: unknown): string | null {
@@ -137,41 +134,17 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
   }
   const maxFpsRaw = typeof record.maxFps === 'number' ? record.maxFps : base.maxFps
   const maxFps = (MAX_FPS_OPTIONS as readonly number[]).includes(maxFpsRaw) ? maxFpsRaw : base.maxFps
-  const clampPad = (value: unknown, fallback: number): number => {
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n)) return fallback
-    return Math.round(Math.min(300, Math.max(0, n)))
-  }
-  const clampHome = (value: unknown, fallback: number): number => {
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n)) return fallback
-    return Math.round(Math.min(100, Math.max(0, n)))
-  }
-  const clampOffset = (value: unknown, fallback: number): number => {
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n)) return fallback
-    return Math.round(Math.min(1000, Math.max(-1000, n)))
-  }
+  // 数值边界统一走 clamp.ts（此前这里手写了 6 份几乎相同的 clamp）
+  const clampPad = (value: unknown, fallback: number): number => clampInt(value, fallback, 0, 300)
+  const clampHome = (value: unknown, fallback: number): number => clampInt(value, fallback, 0, 100)
+  const clampOffset = (value: unknown, fallback: number): number => clampInt(value, fallback, -1000, 1000)
   const color = (value: unknown, fallback: string): string => {
     const text = typeof value === 'string' ? value.trim() : ''
     return /^#[0-9a-f]{6}$/i.test(text) ? text.toLowerCase() : fallback
   }
-  const clampInt = (value: unknown, fallback: number, min: number, max: number): number => {
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n)) return fallback
-    return Math.round(Math.min(max, Math.max(min, n)))
-  }
   /** 气泡最长显示秒数：0–600，0 = 不限。 */
-  const clampBubbleMax = (value: unknown, fallback: number): number => {
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n)) return fallback
-    return Math.round(Math.min(600, Math.max(0, n)))
-  }
-  const opacity = (value: unknown, fallback: number): number => {
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n)) return fallback
-    return Math.round(Math.min(100, Math.max(0, n)))
-  }
+  const clampBubbleMax = (value: unknown, fallback: number): number => clampInt(value, fallback, 0, 600)
+  const opacity = (value: unknown, fallback: number): number => clampInt(value, fallback, 0, 100)
   // 旧版本迁移：
   // - v1（无 version）：home 语义是「画布右下角距右/距下」；
   // - v2：home 是 px 的「中心点距右/距下」；
@@ -221,6 +194,8 @@ export class SettingsStore {
   private readonly base: PetSettings
   private lastGood: PetSettings
   private lastError: string | null = null
+  /** 上次解析对应的文件时间戳（`mtimeMs:size`）：文件没变就直接复用，不再读盘 + 解析。 */
+  private lastStamp: string | null = null
 
   constructor(base: PetSettings, path?: string) {
     this.base = { ...base }
@@ -239,8 +214,10 @@ export class SettingsStore {
     }
   }
 
-  /** 现读设置（文件损坏时沿用上一份好结果，错误写进 view）。 */
+  /** 现读设置（文件损坏时沿用上一份好结果，错误写进 view；文件没变则复用上次解析）。 */
   get(): PetSettings {
+    const stamp = fileStamp(this.path)
+    if (stamp !== null && stamp === this.lastStamp) return { ...this.lastGood }
     let text: string
     try {
       text = readFileSync(this.path, 'utf8')
@@ -257,6 +234,7 @@ export class SettingsStore {
     }
     this.lastGood = normalizeSettings(parsed, this.base)
     this.lastError = null
+    this.lastStamp = stamp
     return { ...this.lastGood }
   }
 
@@ -288,6 +266,8 @@ export class SettingsStore {
     try {
       writeFileSync(this.path, serializeSettings(this.lastGood), 'utf8')
       this.lastError = null
+      // 自己写完立刻失效：下次 get() 按新时间戳重新解析（size 可能不变，mtime 会变）
+      this.lastStamp = null
     } catch (error) {
       this.lastError = `写入失败 ${this.path}：${error instanceof Error ? error.message : String(error)}`
     }

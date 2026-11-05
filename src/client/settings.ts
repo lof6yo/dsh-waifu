@@ -37,6 +37,8 @@ import {
   mergeEventBindings,
   normalizeEventBindings,
 } from '../models.ts'
+import { DEFAULT_LONG_AI } from '../models.ts'
+import { DEFAULT_MODEL_ID, DEFAULT_SETTINGS } from '../defaults.ts'
 import { clientLog } from './client-log.ts'
 import { emitCaptureHome, emitRecenter } from './pet-commands.ts'
 import { emitTouchEdit } from './touch-edit.ts'
@@ -116,34 +118,16 @@ interface SettingsState {
   error?: string | null
 }
 
+/** 设置项兜底值：标量统一取自 defaults.ts（单一来源），只有模型 id 与长状态节奏就地取默认。 */
 const DEFAULT_VALUE: PetSettingsValue = {
-  enabled: true,
-  size: 240,
-  maxFps: 30,
-  canvasPadX: 125,
-  canvasPadY: 50,
-  homeRight: 15,
-  homeBottom: 24,
-  bubbleOffsetX: 0,
-  bubbleOffsetY: -15,
-  bubbleBgColor: '#ffffff',
-  bubbleBgOpacity: 92,
-  bubbleTextColor: '#222222',
-  bubbleMaxSeconds: 30,
-  model: 'jian',
-  developerMode: true,
-  debug: false,
-  showTapZones: false,
-  aiEnabled: true,
-  aiTouchOnly: false,
-  aiProvider: 'deepseek-official',
-  aiModel: 'deepseek-flash',
-  thinkingAiDelay: 5,
-  thinkingAiInterval: 10,
-  thinkingAiMax: 3,
-  waitingAiDelay: 5,
-  waitingAiInterval: 30,
-  waitingAiMax: 3,
+  ...DEFAULT_SETTINGS,
+  model: DEFAULT_MODEL_ID,
+  thinkingAiDelay: DEFAULT_LONG_AI.thinking.delay,
+  thinkingAiInterval: DEFAULT_LONG_AI.thinking.interval,
+  thinkingAiMax: DEFAULT_LONG_AI.thinking.max,
+  waitingAiDelay: DEFAULT_LONG_AI.waiting.delay,
+  waitingAiInterval: DEFAULT_LONG_AI.waiting.interval,
+  waitingAiMax: DEFAULT_LONG_AI.waiting.max,
 }
 
 /** 事件卡片展示顺序（空闲/思考中/出错/完成/交付/等审批）。 */
@@ -1260,7 +1244,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   }
 
   // ---- 事件绑定 + 触摸部位（同一模型、同一份草稿、同一保存队列） ----
-  const [modelDraft, setModelDraft] = useState('')
   const [aiOptions, setAiOptions] = useState<AiOptionsView | null>(null)
   const [personaDraft, setPersonaDraft] = useState<string | null>(null)
   const [personaStatus, setPersonaStatus] = useState<string | null>(null)
@@ -1350,7 +1333,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const dirtyEventKeysRef = useRef<Set<PetEventKey>>(new Set())
   const eventsDirty = dirtyEventKeys.size > 0
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
-  const [saveError, setSaveError] = useState<string | null>(null)
   /** 触摸部位分组级「已保存」提示（结构变更保存时，约 3 秒）。 */
   const [touchSavedFlash, setTouchSavedFlash] = useState<string | null>(null)
   /** 部位卡片就地「已保存 HH:MM:SS」提示（仅触发保存的那张卡片，约 3 秒）。 */
@@ -1482,7 +1464,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       const seq = ++saveSeq.current
       if (!quiet) {
         setSaveState('saving')
-        setSaveError(null)
       }
       const result = await saveTouchPartsToHost(model, parts, events)
       // 过期响应（已有更新请求/已切模型）只记录日志，不把旧模型状态显示到新模型上
@@ -1492,7 +1473,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         if (!quiet && isCurrent) {
           saveSourceRef.current = null
           setSaveState('error')
-          setSaveError('保存失败（Host 不可达）')
         }
         return
       }
@@ -1501,7 +1481,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         if (!quiet && isCurrent) {
           saveSourceRef.current = null
           setSaveState('error')
-          setSaveError(`保存失败：${result.error ?? '未知错误'}`)
         }
         return
       }
@@ -1523,7 +1502,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         flashSavedEvent(source.event, savedTime)
       }
       setSaveState('idle')
-      setSaveError(null)
     })
   }
 
@@ -1563,7 +1541,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     if (dirtyPartId) markPartDirty(dirtyPartId)
     editVersionRef.current += 1
     setSaveState('idle')
-    setSaveError(null)
     const highlightId = highlight === undefined ? expandedPartRef.current : highlight
     if (highlight !== undefined) setExpandedPart(highlight)
     // 预览开关只控制宠物上的 box 叠加/强制可见，编辑本身不自动开启预览
@@ -1577,7 +1554,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     if (dirtyEvent) markEventDirty(dirtyEvent)
     editVersionRef.current += 1
     setSaveState('idle')
-    setSaveError(null)
   }
 
   // 切换选中模型：若有未保存改动先补存（防丢），退出预览，再重新 GET 新模型部位 + 事件绑定
@@ -1599,7 +1575,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     setLoadError(null)
     setExpandedPart(null)
     setSaveState('idle')
-    setSaveError(null)
     clearAllDirty()
     setTouchSavedFlash(null)
     setSavedPartFlash(null)
@@ -1634,7 +1609,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         return
       }
       modelDraftRef.current = view.model
-      setModelDraft(view.model)
       const parts = cloneTouchParts(Array.isArray(view.parts) ? view.parts : [])
       touchDraftRef.current = parts
       setTouchDraft(parts)
@@ -1699,14 +1673,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   // ---- 事件绑定操作 ----
   const setEventBinding = (event: PetEventKey, binding: EventBinding): void => {
     commitEventBindings({ ...eventBindingsRef.current, [event]: binding }, event)
-  }
-
-  const toggleEventMotion = (event: PetEventKey, group: string, checked: boolean): void => {
-    const current = eventBindingsRef.current[event]
-    const motions = checked
-      ? (current.motions.includes(group) ? current.motions : [...current.motions, group])
-      : current.motions.filter((motion) => motion !== group)
-    setEventBinding(event, { ...current, motions })
   }
 
   const setEventLinePool = (event: PetEventKey, stage: number, raw: string): void => {

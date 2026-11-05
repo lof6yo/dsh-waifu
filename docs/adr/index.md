@@ -34,3 +34,4 @@
 | [026](026-long-state-ai-cadence.md) | 长状态取消多阶段固定台词，改由 AI 按「延迟 / 间隔 / 上限」演绎 | Accepted（取代 ADR-015 的阶段台词部分） |
 | [027](027-bubble-max-lifetime.md) | 所有对白加最长显示时长（默认 30s）兜底，断流/丢出态不再永久常驻 | Accepted |
 | [028](028-ai-reply-failure-reason.md) | AI 回复失败原因回传 | Accepted |
+| [029](029-hot-path-batching-and-defaults.md) | 每帧浮层合批、配置读取缓存与默认值单一来源 | Accepted |

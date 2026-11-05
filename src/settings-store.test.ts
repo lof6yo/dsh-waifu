@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SettingsStore, normalizeSettings, SETTINGS_FILENAME, type PetSettings } from './settings-store.ts'
+import { DEFAULT_SETTINGS } from './defaults.ts'
 
 const BASE: PetSettings = {
   enabled: true,
@@ -226,5 +227,24 @@ describe('SettingsStore', () => {
     const view = store.view()
     expect(view.error).toContain('解析失败')
     expect(view.value.size).toBe(200)
+  })
+})
+
+describe('SettingsStore 读取缓存（B1）', () => {
+  it('文件没变时不重复解析，文件变了立刻重读', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-cache-'))
+    try {
+    const path = join(dir, 'settings.jsonc')
+    const store = new SettingsStore({ ...BASE, ...DEFAULT_SETTINGS, model: 'jian' }, path)
+    const first = store.get()
+    expect(first.size).toBe(DEFAULT_SETTINGS.size)
+    // 外部改文件（模拟设置页之外的编辑）→ 时间戳变化后必须重读
+    writeFileSync(path, JSON.stringify({ ...DEFAULT_SETTINGS, size: 321 }), 'utf8')
+    expect(store.get().size).toBe(321)
+    // 再读一次（文件未变）走缓存，值保持一致
+    expect(store.get().size).toBe(321)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

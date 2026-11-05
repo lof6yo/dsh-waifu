@@ -44,6 +44,19 @@ import {
   type TouchBox,
   type TouchPart,
 } from '../models.ts'
+import {
+  DEFAULT_BUBBLE_BG_COLOR,
+  DEFAULT_BUBBLE_BG_OPACITY,
+  DEFAULT_BUBBLE_MAX_SECONDS,
+  DEFAULT_BUBBLE_OFFSET_X,
+  DEFAULT_BUBBLE_OFFSET_Y,
+  DEFAULT_BUBBLE_TEXT_COLOR,
+  DEFAULT_CANVAS_PAD_X,
+  DEFAULT_CANVAS_PAD_Y,
+  DEFAULT_HOME_BOTTOM,
+  DEFAULT_HOME_RIGHT,
+  DEFAULT_MAX_FPS,
+} from '../defaults.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
 import { homePercentFromPos, onCaptureHome, onRecenter } from './pet-commands.ts'
 
@@ -56,15 +69,15 @@ const DRAG_THRESHOLD = 6
 const TAP_DEBOUNCE_MS = 80
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
-/** 气泡最长连续可见时长兜底（秒）：默认 30；0 = 不限（spec §3）。 */
-const BUBBLE_MAX_DEFAULT = 30
+/** 气泡最长连续可见时长兜底（秒）：默认 30；0 = 不限（spec §3，ADR-027）。 */
+const BUBBLE_MAX_DEFAULT = DEFAULT_BUBBLE_MAX_SECONDS
 /** AI 台词最短可见时长：状态切换再快，也要让这句露一脸（ADR-025 补丁）。 */
 const AI_BUBBLE_HOLD_MS = 1400
 /**
  * 默认渲染帧率上限（spec §2/§7）：未封顶时 PIXI ticker 可达 120–140fps，
  * 长时间挂页会持续占满 GPU/主线程；桌宠动画默认 30fps 足够，用户可在设置中改档。
+ * 取值来自 defaults.ts，与 Host schema 单一来源。
  */
-const DEFAULT_MAX_FPS = 30
 
 /**
  * 画布四周留白（模型可见尺寸之外，每侧）：百分比来自 settings.canvasPadX/Y（0–300，默认 125/50），
@@ -72,20 +85,7 @@ const DEFAULT_MAX_FPS = 30
  * 留白不足会被 canvas 裁切（spec §7）。
  */
 const CANVAS_PAD_MIN = 40
-/** 留白默认百分比（每侧）：Host 默认 125/50；首帧/旧快照缺字段时兜底。 */
-const DEFAULT_CANVAS_PAD_X = 125
-const DEFAULT_CANVAS_PAD_Y = 50
-
-/** 气泡默认偏移（相对模型包围盒顶部中心）与默认配色（Host 默认 0/-10、#ffffff/92%/#222222）。 */
-const DEFAULT_BUBBLE_OFFSET_X = 0
-const DEFAULT_BUBBLE_OFFSET_Y = -15
-const DEFAULT_BUBBLE_BG_COLOR = '#ffffff'
-const DEFAULT_BUBBLE_BG_OPACITY = 92
-const DEFAULT_BUBBLE_TEXT_COLOR = '#222222'
-
-/** 默认位置（显示区中心点距右/距下，视口宽/高百分比；Host 默认 16/24，spec §2）。 */
-const DEFAULT_HOME_RIGHT = 15
-const DEFAULT_HOME_BOTTOM = 24
+// 留白/气泡/位置的兜底值统一来自 defaults.ts（与 Host schema、设置页 DEFAULT_VALUE 同源）。
 
 /** #rgb/#rrggbb + 0–100 不透明度 → CSS rgba()（非法颜色回退白色，spec §3）。 */
 function colorWithOpacity(color: string, opacityPct: number): string {
@@ -219,16 +219,6 @@ interface ModelLike {
   }
 }
 
-/** 随机打乱（返回新数组，不改入参）。 */
-function shuffled<T>(items: readonly T[]): T[] {
-  const list = [...items]
-  for (let i = list.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[list[i], list[j]] = [list[j], list[i]]
-  }
-  return list
-}
-
 /** 从台词池随机取一句；可选避开上一条（池 ≥2 时，spec §4）。 */
 function pickLine(pool: readonly string[], avoid?: string): string | undefined {
   if (pool.length === 0) return undefined
@@ -320,7 +310,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
   })
-  pushCleanup(() => { stopTouchboxLoop(); stopHitLayerLoop(); showTapZones = false; editState = null })
+  pushCleanup(() => { stopOverlayLoop(); showTapZones = false; editState = null })
   // 设置页「编辑触摸部位」事件（spec §4）：编辑态强制显示宠物并实时绘制草稿 box。
   // 退订随挂载清理，避免 StrictMode/HMR 重挂载残留监听。
   pushCleanup(onTouchEdit(handleTouchEdit))
@@ -371,13 +361,23 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let eventBindings: EventBindings = DEFAULT_EVENT_BINDINGS
   /** 事件绑定内容签名：配置变化时刷新长状态当前阶段文案（spec §3）。 */
   let eventBindingsSignature = ''
-  let touchboxRaf = 0
+  /** 统一浮层逐帧循环句柄（命中层 / 触摸色块 / 调试面板 / 气泡共用一条 rAF，spec §3/§4）。 */
+  let overlayRaf = 0
+  /** 上一次真正执行帧的时间戳：按 settings.maxFps 节流（0 = 不限），不再固定 60fps 空转。 */
+  let overlayLastAt = 0
+  /** 上一次写入命中层的包围盒签名（0.5px 粒度）：未变则整帧跳过位置写。 */
+  let overlayHitKey = ''
+  /** 上一次触摸色块绘制的签名（包围盒 + 部位/box + 高亮 + 画布尺寸）。 */
+  let overlayPaintKey = ''
+  /** petLayer 的视口 rect 缓存：气泡/面板定位用，样式变化时失效（避免每帧强制布局）。 */
+  let layerRectCache: DOMRect | null = null
+  /** 调试面板尺寸缓存：面板内容变化/窗口 resize 时失效（避免每帧读 offsetWidth/offsetHeight）。 */
+  let panelSizeCache: { width: number; height: number } | null = null
   /** 命中层容器（点击穿透，spec §4）：覆盖 canvas，子 div 按触摸部位 box 定位并接收指针事件。 */
   let hitLayer: HTMLDivElement | null = null
-  /** 命中 div ↔ 部位 box 归一化坐标的对应关系（每帧按 model.getBounds 更新 CSS 位置）。 */
-  let hitBoxEntries: Array<{ el: HTMLDivElement; box: TouchBox }> = []
-  /** 命中层逐帧位置更新循环（跟随模型动作/物理/尺寸）。 */
-  let hitLayerRaf = 0
+  /** 命中 div ↔ 部位 box 归一化坐标的对应关系（每帧按 model.getBounds 更新 CSS 位置）。
+   *  `last` 记录上一次写入的值（0.5px 粒度），值没变就不写样式，避免无谓的样式失效。 */
+  let hitBoxEntries: Array<{ el: HTMLDivElement; box: TouchBox; last: string }> = []
   /** 当前命中 box 集合签名：部位/box 变化时才重建 div，避免每帧重建。 */
   let hitBoxesSignature = ''
   let app: {
@@ -496,9 +496,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function syncPetVisibility(): void {
     if (box) box.style.display = petShown() ? '' : 'none'
     syncTicker()
-    // 隐藏时不跑命中层逐帧更新（盒容器也一起 display:none）
-    if (petShown()) startHitLayerLoop()
-    else stopHitLayerLoop()
+    // 隐藏时不跑浮层逐帧更新（盒容器也一起 display:none）
+    syncOverlayLoop()
   }
 
   /** 应用渲染帧率上限（spec §2/§7；0 = PIXI 不设上限）。 */
@@ -557,13 +556,20 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
+  /** 上一次写入气泡的样式签名：配置没变就不重复写（SSE 每条推送都会走到这里）。 */
+  let bubbleStyleKey = ''
+
   /** 应用气泡样式（背景 rgba / 文字色 / 最大宽度；不重建元素，spec §3）。 */
   function applyBubbleStyle(): void {
     if (!bubble) return
+    const maxWidth = Math.max(80, Math.min(320, window.innerWidth - 24))
+    const key = `${bubbleBgColor}|${bubbleBgOpacity}|${bubbleTextColor}|${maxWidth}`
+    if (key === bubbleStyleKey) return
+    bubbleStyleKey = key
     bubble.style.background = colorWithOpacity(bubbleBgColor, bubbleBgOpacity)
     bubble.style.color = bubbleTextColor
     // 长文本换行且不超出屏幕（左右各留 12px）
-    bubble.style.maxWidth = `${Math.max(80, Math.min(320, window.innerWidth - 24))}px`
+    bubble.style.maxWidth = `${maxWidth}px`
   }
 
   /**
@@ -572,7 +578,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * bubbleOffsetY 正值向上、负值向下），transform: translate(-50%, -100%) 由样式居中/贴底。
    * 调试面板可见时锚点上移到面板顶部再往上 6px；目标视口 y clamp 到 ≥8，避免跑出视口。
    */
-  function updateBubblePosition(): void {
+  function updateBubblePosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
     if (!bubble) return
     if (!petLayer || bubble.parentNode !== petLayer) {
       // 无模型层（静态头像降级）时退回容器上方居中
@@ -580,22 +586,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       bubble.style.top = '0px'
       return
     }
-    let bounds: { x: number; y: number; width: number; height: number } | null = null
-    try {
-      const b = model?.getBounds?.()
-      if (b && b.width > 0 && b.height > 0) bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
-    } catch { /* 无包围盒 */ }
+    const bounds = boundsArg === undefined ? modelBounds() : boundsArg
     if (!bounds) return
     const anchorX = bounds.x + bounds.width / 2 + bubbleOffsetX
     // 调试面板可见时气泡上移避让：锚点 = 面板顶部再往上 6px（spec §2）
     let anchorY = Number.isFinite(debugPanelTopLogical)
       ? debugPanelTopLogical - 6
       : bounds.y - bubbleOffsetY
-    // 气泡目标视口 y clamp 到 ≥8（用 petLayer 视口 rect 换算，面板/模型贴顶时不跑出视口）
-    try {
-      const rect = petLayer.getBoundingClientRect()
-      if (rect.top + anchorY < 8) anchorY = 8 - rect.top
-    } catch { /* 无 rect 时保持原锚点 */ }
+    // 气泡目标视口 y clamp 到 ≥8（用缓存的 petLayer 视口 rect 换算，面板/模型贴顶时不跑出视口）
+    const rect = layerRect()
+    if (rect && rect.top + anchorY < 8) anchorY = 8 - rect.top
     bubble.style.left = `${anchorX}px`
     bubble.style.top = `${anchorY}px`
   }
@@ -754,11 +754,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     longAiTimers.push(window.setTimeout(tick, cadence.delay * 1000))
   }
 
+  /** canvas 的视口 rect 缓存：pointermove 每次都要用，不能每次读布局。 */
+  let canvasRectCache: DOMRect | null = null
+
   /** 按 client 坐标应用鼠标跟随（model.focus 吃 canvas 本地坐标）。 */
   function applyFocus(clientX: number, clientY: number): void {
     if (!model || !canvas) return
-    const rect = canvas.getBoundingClientRect()
-    model.focus(clientX - rect.left, clientY - rect.top)
+    if (!canvasRectCache) {
+      try { canvasRectCache = canvas.getBoundingClientRect() } catch { return }
+    }
+    model.focus(clientX - canvasRectCache.left, clientY - canvasRectCache.top)
   }
 
   /** 解除非 idle 动作期间的 focus 抑制；若有最近指针位置则立即恢复跟随。 */
@@ -858,6 +863,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 台词/动作均来自事件绑定（config.events），无固定人设、无默认回退。
     if (state !== lastState) {
       lastState = state
+      refreshExpressionTargets()
       const line = pickEventLine(state, 0)
       if (isLongState(state)) {
         // 长状态：入态台词常驻，AI 按设置节奏反复演绎替换（ADR-026）
@@ -979,6 +985,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!box) return
     box.style.right = `${Math.round(pos.right)}px`
     box.style.bottom = `${Math.round(pos.bottom)}px`
+    invalidateLayout()
   }
 
   /** 持久化当前位置（right/bottom，px）；失败静默，下次拖动/归位会再写。 */
@@ -1012,6 +1019,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const canvasSize = modelCanvasSize(baseModelW, baseModelH, nextSize)
       try { app.renderer.resize(canvasSize.width, canvasSize.height) } catch { /* 旧渲染器 */ }
       resizeOverlay(canvasSize.width, canvasSize.height)
+      invalidateLayout()
       pos.size = nextSize
       syncDebugPanelWidth()
       if (model) fitModel(nextSize)
@@ -1052,8 +1060,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     detachMotionFinish = null
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
-    stopTouchboxLoop()
-    stopHitLayerLoop()
+    stopOverlayLoop()
     hitBoxEntries = []
     hitBoxesSignature = ''
     hitLayer = null
@@ -1073,6 +1080,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     if (petLayer && petLayer.parentNode) petLayer.parentNode.removeChild(petLayer)
     petLayer = null
+    invalidateLayout()
     // 调试面板随旧 petLayer 一起移除，复位避让状态（新层加载后若 debug 仍开会重新挂载）
     debugPanelTopLogical = Number.NaN
     removeFallback()
@@ -1183,6 +1191,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 模型画布尺寸确定后重新 clamp 中心点并应用位置（切换模型/初始加载，不写盘）
       clampPosToViewport()
       applyPosToBox()
+      // 布局缓存随新层失效（canvas/petLayer 都是新元素）
+      invalidateLayout()
       // 气泡相对模型定位（模型尺寸/位置已就绪）
       applyBubbleStyle()
       // 调试面板宽度/位置随新画布与模型更新，气泡避让已就绪
@@ -1208,9 +1218,83 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     return editState !== null || showTapZones
   }
 
-  /** 停止触摸部位叠加层重绘循环。 */
-  function stopTouchboxLoop(): void {
-    if (touchboxRaf) { window.cancelAnimationFrame(touchboxRaf); touchboxRaf = 0 }
+  /** 模型包围盒（画布逻辑 px）；无效时 null。命中/气泡/色块/面板共用，避免每帧重复取。 */
+  function modelBounds(): { x: number; y: number; width: number; height: number } | null {
+    try {
+      const b = model?.getBounds?.()
+      if (b && b.width > 0 && b.height > 0) return { x: b.x, y: b.y, width: b.width, height: b.height }
+    } catch { /* 无包围盒 */ }
+    return null
+  }
+
+  /** 包围盒签名（0.5px 粒度）：只有包围盒真的变了才重排浮层（静止时整帧跳过）。 */
+  function boundsKey(bounds: { x: number; y: number; width: number; height: number } | null): string {
+    if (!bounds) return ''
+    const q = (v: number): number => Math.round(v * 2) / 2
+    return `${q(bounds.x)},${q(bounds.y)},${q(bounds.width)},${q(bounds.height)}`
+  }
+
+  /** petLayer 的视口 rect（带缓存；位置/尺寸/模型/窗口变化时用 invalidateLayout 失效）。 */
+  function layerRect(): DOMRect | null {
+    if (!petLayer) return null
+    if (!layerRectCache) {
+      try { layerRectCache = petLayer.getBoundingClientRect() } catch { return null }
+    }
+    return layerRectCache
+  }
+
+  /** 失效布局缓存（下一次需要时重新测量一次），避免每帧强制同步布局。 */
+  function invalidateLayout(): void {
+    layerRectCache = null
+    panelSizeCache = null
+    canvasRectCache = null
+  }
+
+  /** 浮层循环的帧间隔（跟随 settings.maxFps；0 = 不限，按 rAF 自然节奏）。 */
+  function overlayFrameIntervalMs(): number {
+    if (!(maxFps > 0)) return 0
+    return Math.max(8, 1000 / maxFps)
+  }
+
+  /**
+   * 单条 rAF 驱动全部浮层跟随（spec §3/§4）：命中层、调试面板、气泡、触摸色块。
+   * - 按 settings.maxFps 节流（此前固定 60fps，不受帧率档影响）；
+   * - 包围盒未变（待机/静止）时整帧跳过样式写；
+   * - 布局读取走缓存，避免每帧 getBoundingClientRect / offsetWidth 触发同步布局。
+   */
+  function overlayTick(now: number): void {
+    if (!overlayRaf || disposed) return
+    overlayRaf = window.requestAnimationFrame(overlayTick)
+    if (now - overlayLastAt < overlayFrameIntervalMs()) return
+    overlayLastAt = now
+    const bounds = modelBounds()
+    const key = boundsKey(bounds)
+    if (key !== overlayHitKey) {
+      overlayHitKey = key
+      updateHitBoxPositions(bounds)
+    }
+    updateDebugPanelPosition(bounds)
+    updateBubblePosition(bounds)
+    if (touchboxOverlayVisible()) paintTouchBoxes(bounds, key)
+  }
+
+  /** 停止浮层循环（并复位签名，下次启动强制重算一次位置）。 */
+  function stopOverlayLoop(): void {
+    if (overlayRaf) { window.cancelAnimationFrame(overlayRaf); overlayRaf = 0 }
+    overlayLastAt = 0
+    overlayHitKey = ''
+    overlayPaintKey = ''
+  }
+
+  /** 按当前显隐状态启停浮层循环：宠物可见/编辑态才跑，隐藏或卸载即停。 */
+  function syncOverlayLoop(): void {
+    const needed = (petShown() && hitLayer !== null) || (touchboxOverlayVisible() && touchboxOverlay !== null)
+    if (!needed) { stopOverlayLoop(); return }
+    if (overlayRaf) return
+    overlayLastAt = 0
+    overlayHitKey = ''
+    overlayPaintKey = ''
+    overlayRaf = window.requestAnimationFrame(overlayTick)
   }
 
   /**
@@ -1218,27 +1302,28 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * box 归一化坐标（相对模型包围盒 0–1）换算成 canvas 像素矩形；半透明填充 + 部位名标签，
    * 不同部位按调色板循环取色，highlightPartId 高亮部位用更亮更粗的描边。
    */
-  function paintTouchBoxes(): void {
+  function paintTouchBoxes(boundsArg?: { x: number; y: number; width: number; height: number } | null, keyHint?: string): void {
     if (!touchboxOverlayVisible() || !touchboxOverlay || !canvas || !model) return
     const { width: w, height: h } = logicalCanvasSize()
     if (!(w > 0 && h > 0)) return
     resizeOverlay(w, h)
+    // 尺寸/显隐已由 resizeOverlay 与 syncTouchboxOverlay 处理；这里只保证可见（不再每帧拼 cssText）
+    if (touchboxOverlay.style.display !== 'block') touchboxOverlay.style.display = 'block'
+    const bounds = boundsArg === undefined ? modelBounds() : boundsArg
+    if (!bounds) return
+    const parts = editState?.parts ?? touchParts
+    const highlightId = editState?.highlightPartId ?? null
+    // 绘制签名：包围盒 + 部位/box + 高亮 + 画布尺寸都没变就不重绘（静止/待机零开销）
+    const paintKey = `${keyHint ?? boundsKey(bounds)}|${hitBoxesKey()}|${highlightId ?? ''}|${w}x${h}`
+    if (paintKey === overlayPaintKey) return
+    overlayPaintKey = paintKey
     const overlayScale = touchboxOverlay.width / w
-    touchboxOverlay.style.cssText = `position:absolute;left:0;top:0;width:${w}px;height:${h}px;pointer-events:none;z-index:2;display:block`
     const ctx = touchboxOverlay.getContext('2d')
     if (!ctx) return
     // 统一放大到缓冲坐标：包围盒/box 都是逻辑坐标，缩放后绘制保持清晰
     ctx.setTransform(overlayScale, 0, 0, overlayScale, 0, 0)
     ctx.clearRect(0, 0, w, h)
-    let bounds: { x: number; y: number; width: number; height: number } | null = null
-    try {
-      const b = model.getBounds?.()
-      if (b && b.width > 0 && b.height > 0) bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
-    } catch { /* 无包围盒 */ }
-    if (!bounds) return
     const { x: bx, y: by, width: bw, height: bh } = bounds
-    const parts = editState?.parts ?? touchParts
-    const highlightId = editState?.highlightPartId ?? null
     // 图层：parts[0] 最上层，绘制时从底层往上层画（数组倒序），保证上层 box 覆盖下层
     for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
       const part = parts[partIndex]
@@ -1270,23 +1355,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 启动触摸部位叠加层重绘循环（跟随模型动作/尺寸变化，spec §4）。 */
-  function startTouchboxLoop(): void {
-    stopTouchboxLoop()
-    if (!touchboxOverlayVisible() || !touchboxOverlay) return
-    const tick = () => {
-      paintTouchBoxes()
-      touchboxRaf = window.requestAnimationFrame(tick)
-    }
-    touchboxRaf = window.requestAnimationFrame(tick)
-  }
-
-  /** 同步叠加层显隐与重绘循环（编辑态强制显示；非编辑态由 showTapZones 决定，spec §2/§4）。 */
+  /** 同步叠加层显隐与重绘（编辑态强制显示；非编辑态由 showTapZones 决定，spec §2/§4）。
+   *  逐帧重绘由统一浮层循环（overlayTick）驱动，这里只管启停与首帧。 */
   function syncTouchboxOverlay(): void {
     const on = touchboxOverlayVisible()
     if (touchboxOverlay) touchboxOverlay.style.display = on ? 'block' : 'none'
-    if (on) startTouchboxLoop()
-    else stopTouchboxLoop()
+    if (on) {
+      overlayPaintKey = ''
+      paintTouchBoxes()
+    }
+    syncOverlayLoop()
   }
 
   /** 命中判定当前使用的部位列表：预览/编辑态用设置页草稿，否则用已保存部位（spec §4）。 */
@@ -1301,49 +1379,41 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     ))
   }
 
-  /** 停止命中层逐帧位置更新。 */
-  function stopHitLayerLoop(): void {
-    if (hitLayerRaf) { window.cancelAnimationFrame(hitLayerRaf); hitLayerRaf = 0 }
-  }
-
-  /** 每帧按模型当前包围盒把命中 div 换算成 CSS 像素矩形（跟随动作/物理/尺寸变化）。 */
-  function updateHitBoxPositions(): void {
+  /** 每帧按模型当前包围盒把命中 div 换算成 CSS 像素矩形（跟随动作/物理/尺寸变化）。
+   *  bounds 由统一浮层循环传入；每格记录上次写入值，值没变就不写样式。 */
+  function updateHitBoxPositions(bounds: { x: number; y: number; width: number; height: number } | null = modelBounds()): void {
     if (!hitLayer || hitBoxEntries.length === 0) return
-    let bounds: { x: number; y: number; width: number; height: number } | null = null
-    try {
-      const b = model?.getBounds?.()
-      if (b && b.width > 0 && b.height > 0) bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
-    } catch { /* 无包围盒 */ }
     if (!bounds) {
-      for (const { el } of hitBoxEntries) el.style.display = 'none'
+      for (const entry of hitBoxEntries) {
+        if (entry.last === 'hidden') continue
+        entry.last = 'hidden'
+        entry.el.style.display = 'none'
+      }
       return
     }
     const { x: bx, y: by, width: bw, height: bh } = bounds
-    for (const { el, box } of hitBoxEntries) {
+    for (const entry of hitBoxEntries) {
+      const { el, box } = entry
       const x = bx + bw * box.left
       const y = by + bh * box.top
       const w = bw * (box.right - box.left)
       const h = bh * (box.bottom - box.top)
-      if (!(w > 0 && h > 0)) { el.style.display = 'none'; continue }
+      if (!(w > 0 && h > 0)) {
+        if (entry.last !== 'hidden') {
+          entry.last = 'hidden'
+          el.style.display = 'none'
+        }
+        continue
+      }
+      const key = `${Math.round(x * 2) / 2},${Math.round(y * 2) / 2},${Math.round(w * 2) / 2},${Math.round(h * 2) / 2}`
+      if (key === entry.last) continue
+      entry.last = key
       el.style.display = ''
       el.style.left = `${x}px`
       el.style.top = `${y}px`
       el.style.width = `${Math.max(1, w)}px`
       el.style.height = `${Math.max(1, h)}px`
     }
-  }
-
-  /** 逐帧更新命中层位置（模型动作/物理每帧改变包围盒），并同步气泡跟随模型。 */
-  function startHitLayerLoop(): void {
-    stopHitLayerLoop()
-    if (!hitLayer || !petShown()) return
-    const tick = () => {
-      updateHitBoxPositions()
-      updateDebugPanelPosition()
-      updateBubblePosition()
-      hitLayerRaf = window.requestAnimationFrame(tick)
-    }
-    hitLayerRaf = window.requestAnimationFrame(tick)
   }
 
   /** 指针事件统一挂在命中 div 上（canvas 已 pointer-events:none，命中层外事件穿透下层 UI）。 */
@@ -1367,7 +1437,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       el.style.cssText = 'position:absolute;pointer-events:auto;background:transparent;touch-action:none'
       bindHitEvents(el)
       hitLayer.appendChild(el)
-      hitBoxEntries.push({ el, box })
+      hitBoxEntries.push({ el, box, last: '' })
     }
     updateHitBoxPositions()
   }
@@ -1382,7 +1452,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     } else {
       updateHitBoxPositions()
     }
-    startHitLayerLoop()
+    syncOverlayLoop()
   }
 
   /** 退出触摸部位编辑态：恢复常规显隐逻辑（尊重 enabled）；showTapZones 开启时继续显示已保存部位。 */
@@ -1542,19 +1612,21 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 再换算回 petLayer 逻辑 top = clampedTop - rect.top；水平同理。
    * 每帧由命中层 rAF 调用（跟随动作/内容高度变化），并记录逻辑顶部供气泡避让。
    */
-  function updateDebugPanelPosition(): void {
+  function updateDebugPanelPosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
     debugPanelTopLogical = Number.NaN
     if (!debugEl || !petLayer || debugEl.parentNode !== petLayer || !model) return
-    let bounds: { x: number; y: number; width: number; height: number } | null = null
-    try {
-      const b = model.getBounds?.()
-      if (b && b.width > 0 && b.height > 0) bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
-    } catch { /* 无包围盒 */ }
+    const bounds = boundsArg === undefined ? modelBounds() : boundsArg
     if (!bounds) return
-    const panelWidth = debugEl.offsetWidth
-    const panelHeight = debugEl.offsetHeight
-    if (!(panelWidth > 0 && panelHeight > 0)) return
-    const rect = petLayer.getBoundingClientRect()
+    // 面板尺寸带缓存：内容/窗口变化时由 invalidateLayout 失效，避免每帧读 offsetWidth（强制布局）
+    if (!panelSizeCache) {
+      const width = debugEl.offsetWidth
+      const height = debugEl.offsetHeight
+      if (!(width > 0 && height > 0)) return
+      panelSizeCache = { width, height }
+    }
+    const { width: panelWidth, height: panelHeight } = panelSizeCache
+    const rect = layerRect()
+    if (!rect) return
     // 垂直：贴模型顶部上方 8px；只在视口放不下时才被夹到视口顶部附近
     const maxViewportTop = Math.max(8, window.innerHeight - panelHeight - 8)
     const viewportTop = Math.min(Math.max(rect.top + bounds.y - 8 - panelHeight, 8), maxViewportTop)
@@ -1643,6 +1715,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         btn.style.cssText = 'padding:3px 0;border-radius:6px;border:1px solid rgba(128,128,128,.25);background:rgba(128,128,128,.1);color:#dbe2ef;font-size:11px;font-family:inherit;cursor:pointer;outline:none'
         btn.onclick = () => {
           debugExpression = debugExpression === expression.id ? null : expression.id
+          refreshExpressionTargets()
           paintExprButtons()
         }
         exprButtons.push({ id: expression.id, btn })
@@ -1692,6 +1765,17 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     return splitMotionSelection(eventBindings[lastState]?.motions ?? []).expressions
   }
 
+  /** 表情目标值缓存：只在表情/状态真的变化时重算（此前每帧重新映射 + 分配对象）。 */
+  let expressionTargets: Record<string, number> = {}
+  /** 目标是否已全部收敛：收敛后整帧跳过写入（动作/物理不会改这些开关参数）。 */
+  let expressionSettled = false
+
+  /** 刷新表情目标值（状态/触摸/调试预览变化时调用）。 */
+  function refreshExpressionTargets(): void {
+    expressionTargets = expressionParams(desiredExpressions())
+    expressionSettled = false
+  }
+
   /**
    * 写入表情参数：布尔开关按「当前表情」目标值 0/1，带淡入淡出。
    * 在 InternalModel.update 之前调用——动作/物理不会写这些参数，先写即生效。
@@ -1702,15 +1786,30 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   ): void {
     const set = coreModel?.setParameterValueById
     if (typeof set !== 'function') return
+    // 触摸临时表情到期：回到事件表情（顺带在帧内检查，不额外挂计时器）
+    if (tempExpressions.length > 0 && Date.now() >= tempExpressionUntil) {
+      tempExpressions = []
+      refreshExpressionTargets()
+    }
+    if (expressionSettled) return
     const fade = Math.min(1, Math.max(0.02, dt * 1000 / EXPRESSION_FADE_MS))
-    const targets = expressionParams(desiredExpressions())
+    let settled = true
     for (const param of EXPRESSION_SWITCH_PARAMS) {
-      const target = targets[param] ?? 0
+      const target = expressionTargets[param] ?? 0
       const current = expressionMix.get(param) ?? 0
-      const next = Math.abs(target - current) < 0.004 ? target : current + (target - current) * fade
+      if (Math.abs(target - current) < 0.004) {
+        if (current !== target) {
+          expressionMix.set(param, target)
+          try { set.call(coreModel, param, target, 1) } catch { /* 模型没有该参数 */ }
+        }
+        continue
+      }
+      settled = false
+      const next = current + (target - current) * fade
       expressionMix.set(param, next)
       try { set.call(coreModel, param, next, 1) } catch { /* 模型没有该参数 */ }
     }
+    expressionSettled = settled
   }
 
   /** 运行时应用配置变化（spec §2/§3/§6/§7）：开关 / 尺寸 / 帧率 / 调试 / 触摸部位 / 事件绑定 / 模型。 */
@@ -1910,6 +2009,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (selection.expressions.length > 0) {
         tempExpressions = selection.expressions
         tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
+        refreshExpressionTargets()
       }
       // 动作：有动作组才播（空 = 只出气泡，spec §4）
       if (selection.motion) void playInteractionMotion([selection.motion])
@@ -2028,6 +2128,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const onFocus = () => { hidden = false; syncTicker() }
       // 视口尺寸变化：重新 clamp 画布中心点并刷新面板/气泡（不写盘，spec §2/§4）
       const onResize = () => {
+        invalidateLayout()
         clampPosToViewport()
         applyPosToBox()
         applyBubbleStyle()

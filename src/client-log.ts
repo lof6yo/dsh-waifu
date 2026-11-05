@@ -7,21 +7,16 @@
  * @module dsh-waifu/client-log
  */
 
-import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { appendFileSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { petWaifuPath } from './home.ts'
 
 /** 日志文件上限（字节）；超过后清空重写，避免无限增长。 */
 const MAX_LOG_BYTES = 256 * 1024
 
-/** DSH home 目录（与其他插件私有文件同一规则）。 */
-function petHomeDir(): string {
-  return process.env.DSH_HOME ?? join(homedir(), '.dsh')
-}
-
 /** 日志文件绝对路径。 */
 export function clientLogPath(): string {
-  return join(petHomeDir(), 'waifu', 'client.log')
+  return petWaifuPath('client.log')
 }
 
 /** 追加一行浏览器侧诊断日志（失败静默，不影响主流程）。 */
@@ -29,7 +24,12 @@ export function appendClientLog(level: string, message: string, detail?: string)
   try {
     const file = clientLogPath()
     mkdirSync(dirname(file), { recursive: true })
-    if (existsSync(file) && statSync(file).size > MAX_LOG_BYTES) writeFileSync(file, '', 'utf8')
+    // 只在超限时截断：一次 statSync 取代 existsSync + statSync 两次系统调用
+    try {
+      if (statSync(file).size > MAX_LOG_BYTES) writeFileSync(file, '', 'utf8')
+    } catch {
+      // 文件还不存在：首次 append 会创建
+    }
     const safeLevel = String(level || 'info').slice(0, 16)
     const safeMessage = String(message ?? '').slice(0, 2000)
     const safeDetail = detail === undefined ? '' : ` | ${String(detail).slice(0, 4000)}`
