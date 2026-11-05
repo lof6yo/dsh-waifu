@@ -67,22 +67,22 @@
 			"TapChest": [
 				{
 					"File": "motions/tap-chest.motion3.json",
-					"FadeInTime": 0.15,
-					"FadeOutTime": 0.3
+					"FadeInTime": 0.35,
+					"FadeOutTime": 0.5
 				}
 			],
 			"TapWaist": [
 				{
 					"File": "motions/tap-waist.motion3.json",
-					"FadeInTime": 0.15,
-					"FadeOutTime": 0.3
+					"FadeInTime": 0.3,
+					"FadeOutTime": 0.45
 				}
 			],
 			"TapHip": [
 				{
 					"File": "motions/tap-hip.motion3.json",
-					"FadeInTime": 0.15,
-					"FadeOutTime": 0.3
+					"FadeInTime": 0.35,
+					"FadeOutTime": 0.5
 				}
 			],
 			"TapLeg": [

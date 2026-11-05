@@ -476,78 +476,89 @@ const MOTION_DEFS = [
     },
   },
   {
-    // 摸胸：上身被撞得大幅摇晃——躯干左右甩、头往后仰、眉毛压下去、张嘴。
-    // 注意：ParamBodyAngle* / Chest / Hip 系列都是物理输出参数，动作值只有部分生效，
-    // 所以摇晃幅度靠「躯干 ±8° + 头部反向 ±6° + 长节奏」叠出来，不是单靠一个参数。
+    // 摸胸：上身被撞得大幅摇晃。
+    // 平滑做法：不手点几帧再让 Catmull-Rom 连（那会在峰值处被「控制点不得超出端点」夹平，
+    // 产生平顶 + 拐点，看起来卡顿），而是直接采样「带包络的正弦」——包络 sin(πτ) 保证首尾为 0
+    // 且缓起缓收，每 0.1s 一个采样点，贝塞尔控制点几乎不受夹紧影响，曲线是数学上连续的。
+    // 躯干参数是物理输出（物理每帧会按权重覆盖），所以频率取低（1.5 个来回 / 2.6s）避免与物理刚度打架。
     group: 'TapChest',
     file: 'tap-chest.motion3.json',
-    duration: 2.5,
+    duration: 2.6,
     loop: false,
     build: () => {
-      const d = 2.5
-      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      const d = 2.6
+      const steps = 26
+      const env = (tau, pow = 0.8) => Math.pow(Math.sin(Math.PI * tau), pow)
+      const c = (id, fn) => buildCurve(id, periodic(d, steps, fn), { loop: false, duration: d })
       return [
-        c('ParamBodyAngleZ0', [[0, 0], [0.45, -8], [0.95, 7], [1.45, -6], [1.95, 4], [2.5, 0]]),
-        c('ParamBodyAngleX0', [[0, 0], [0.5, -5], [1.1, 4], [1.7, -3], [2.5, 0]]),
-        c('ParamBodyAngleY0', [[0, 0], [0.4, -4], [1.2, 2], [2.5, 0]]),
-        c('ParamAngleZ', [[0, 0], [0.4, 6], [0.95, -5], [1.5, 4], [2.5, 0]]),
-        c('ParamAngleY', [[0, 0], [0.35, 8], [1.1, 5], [2.5, 0]]),
-        c('ParamAngleX', [[0, 0], [0.4, -4], [1.2, 3], [2.5, 0]]),
-        c('ParamBrowLY', [[0, 0], [0.3, -0.7], [1.6, -0.6], [2.5, 0]]),
-        c('ParamBrowRY', [[0, 0], [0.3, -0.7], [1.6, -0.6], [2.5, 0]]),
-        c('ParamEyeLOpen', [[0, 1], [0.3, 0.55], [1.6, 0.65], [2.5, 1]]),
-        c('ParamEyeROpen', [[0, 1], [0.3, 0.55], [1.6, 0.65], [2.5, 1]]),
-        c('ParamEyeBallY', [[0, 0], [0.4, -0.3], [1.6, -0.25], [2.5, 0]]),
-        c('ParamMouthOpenY', [[0, 0], [0.35, 0.55], [1.0, 0.4], [1.9, 0.1], [2.5, 0]]),
-        c('ParamMouthForm', [[0, 0], [0.35, -0.8], [1.6, -0.65], [2.5, 0]]),
+        c('ParamBodyAngleZ0', (t) => 8 * Math.sin(TAU * 1.5 * t) * env(t)),
+        c('ParamBodyAngleX0', (t) => 4 * Math.sin(Math.PI * t) * env(t, 0.5)),
+        c('ParamBodyAngleY0', (t) => -4 * env(t, 1.2)),
+        c('ParamAngleZ', (t) => -6 * Math.sin(TAU * 1.5 * t) * env(t)),
+        c('ParamAngleY', (t) => 8 * env(t, 0.9)),
+        c('ParamAngleX', (t) => -4 * env(t, 0.7)),
+        c('ParamBrowLY', (t) => -0.7 * env(t, 0.5)),
+        c('ParamBrowRY', (t) => -0.7 * env(t, 0.5)),
+        c('ParamEyeLOpen', (t) => 1 - 0.45 * env(t, 0.5)),
+        c('ParamEyeROpen', (t) => 1 - 0.45 * env(t, 0.5)),
+        c('ParamEyeBallY', (t) => -0.3 * env(t, 0.7)),
+        c('ParamMouthOpenY', (t) => 0.55 * env(t, 0.6)),
+        c('ParamMouthForm', (t) => -0.8 * env(t, 0.5)),
       ]
     },
   },
   {
-    // 摸腰：被痒到，腰一扭一扭地躲——躯干正反交替快速扭转、屁股跟着摆、头左右闪。
+    // 摸腰：被痒到，腰一扭一扭地躲。
+    // 扭动 = 两个相位差 90° 的振荡（躯干 Z 左右扭 + X 前后压），合成 8 字形的腰；头部做反向滞后。
     group: 'TapWaist',
     file: 'tap-waist.motion3.json',
-    duration: 1.9,
+    duration: 2.1,
     loop: false,
     build: () => {
-      const d = 1.9
-      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      const d = 2.1
+      const steps = 28
+      const env = (tau, pow = 0.7) => Math.pow(Math.sin(Math.PI * tau), pow)
+      const c = (id, fn) => buildCurve(id, periodic(d, steps, fn), { loop: false, duration: d })
       return [
-        c('ParamBodyAngleZ0', [[0, 0], [0.25, -7], [0.5, 6], [0.75, -5], [1.0, 4], [1.4, -2], [1.9, 0]]),
-        c('ParamBodyAngleX0', [[0, 0], [0.25, 5], [0.5, -4], [0.75, 3], [1.0, -2], [1.9, 0]]),
-        c('ParamBodyAngleY0', [[0, 0], [0.3, 3], [0.8, -1.5], [1.4, 1], [1.9, 0]]),
-        c('ParamAngleZ', [[0, 0], [0.3, -4], [0.6, 3], [0.9, -2], [1.3, 1], [1.9, 0]]),
-        c('ParamAngleX', [[0, 0], [0.3, 4], [0.7, -3], [1.1, 2], [1.9, 0]]),
-        c('ParamEyeLSmile', [[0, 0], [0.3, 0.5], [1.2, 0.45], [1.9, 0]]),
-        c('ParamEyeRSmile', [[0, 0], [0.3, 0.5], [1.2, 0.45], [1.9, 0]]),
-        c('ParamCheekPuff', [[0, 0], [0.3, 0.5], [1.1, 0.45], [1.9, 0]]),
-        c('ParamMouthOpenY', [[0, 0], [0.3, 0.2], [1.0, 0.1], [1.9, 0]]),
-        c('ParamMouthForm', [[0, 0], [0.3, -0.4], [1.1, -0.35], [1.9, 0]]),
+        c('ParamBodyAngleZ0', (t) => 7 * Math.sin(TAU * 2.5 * t) * env(t)),
+        c('ParamBodyAngleX0', (t) => 5 * Math.sin(TAU * 2.5 * t + Math.PI / 2) * env(t)),
+        c('ParamBodyAngleY0', (t) => 2.5 * Math.sin(TAU * 5 * t) * env(t, 0.9)),
+        c('ParamAngleZ', (t) => -3.5 * Math.sin(TAU * 2.5 * t) * env(t)),
+        c('ParamAngleX', (t) => 3 * Math.sin(TAU * 2.5 * t + Math.PI / 2) * env(t)),
+        c('ParamEyeLSmile', (t) => 0.55 * env(t, 0.6)),
+        c('ParamEyeRSmile', (t) => 0.55 * env(t, 0.6)),
+        c('ParamCheekPuff', (t) => 0.5 * env(t, 0.6)),
+        c('ParamMouthOpenY', (t) => 0.2 * env(t)),
+        c('ParamMouthForm', (t) => -0.45 * env(t, 0.6)),
       ]
     },
   },
   {
-    // 摸臀：胯部被撞得左右摆——下盘晃、上身反向找平衡、回头瞪一眼。
+    // 摸臀：胯部左右摆。
+    // 摆胯 = 低频椭圆轨迹（X 左右 + Z 轻微侧倾 90° 相位差），上身与头反向抵消；
+    // 回头瞪的视线用单峰包络（保持 1 秒左右），比来回扫更像「回头」而不是「摇头」。
     group: 'TapHip',
     file: 'tap-hip.motion3.json',
-    duration: 2.2,
+    duration: 2.4,
     loop: false,
     build: () => {
-      const d = 2.2
-      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      const d = 2.4
+      const steps = 26
+      const env = (tau, pow = 0.8) => Math.pow(Math.sin(Math.PI * tau), pow)
+      const c = (id, fn) => buildCurve(id, periodic(d, steps, fn), { loop: false, duration: d })
       return [
-        c('ParamBodyAngleX0', [[0, 0], [0.45, -6], [0.95, 5], [1.5, -4], [2.0, 2], [2.2, 0]]),
-        c('ParamBodyAngleZ0', [[0, 0], [0.5, 5], [1.1, -4], [1.7, 3], [2.2, 0]]),
-        c('ParamBodyAngleY0', [[0, 0], [0.5, -2], [1.2, 1.5], [2.2, 0]]),
-        c('ParamAngleX', [[0, 0], [0.5, 5], [1.1, -4], [1.7, 3], [2.2, 0]]),
-        c('ParamAngleZ', [[0, 0], [0.5, -6], [1.1, 5], [1.7, -3], [2.2, 0]]),
-        c('ParamEyeBallX', [[0, 0], [0.5, -0.6], [1.2, 0.5], [1.7, -0.3], [2.2, 0]]),
-        c('ParamBrowLY', [[0, 0], [0.4, -0.5], [1.6, -0.45], [2.2, 0]]),
-        c('ParamBrowRY', [[0, 0], [0.4, -0.9], [1.6, -0.8], [2.2, 0]]),
-        c('ParamEyeLOpen', [[0, 1], [0.4, 0.7], [1.6, 0.75], [2.2, 1]]),
-        c('ParamEyeROpen', [[0, 1], [0.4, 0.7], [1.6, 0.75], [2.2, 1]]),
-        c('ParamMouthOpenY', [[0, 0], [0.4, 0.35], [1.0, 0.25], [1.8, 0.05], [2.2, 0]]),
-        c('ParamMouthForm', [[0, 0], [0.4, -0.7], [1.6, -0.6], [2.2, 0]]),
+        c('ParamBodyAngleX0', (t) => 6 * Math.sin(TAU * 1.25 * t) * env(t)),
+        c('ParamBodyAngleZ0', (t) => 4 * Math.sin(TAU * 1.25 * t + Math.PI / 2) * env(t)),
+        c('ParamBodyAngleY0', (t) => -1.5 * env(t, 1.2)),
+        c('ParamAngleX', (t) => -5 * Math.sin(TAU * 1.25 * t) * env(t)),
+        c('ParamAngleZ', (t) => 3.5 * Math.sin(TAU * 1.25 * t + Math.PI / 2) * env(t)),
+        c('ParamEyeBallX', (t) => -0.55 * env(t, 0.6)),
+        c('ParamBrowLY', (t) => -0.5 * env(t, 0.5)),
+        c('ParamBrowRY', (t) => -0.9 * env(t, 0.5)),
+        c('ParamEyeLOpen', (t) => 1 - 0.3 * env(t, 0.5)),
+        c('ParamEyeROpen', (t) => 1 - 0.3 * env(t, 0.5)),
+        c('ParamMouthOpenY', (t) => 0.35 * env(t, 0.6)),
+        c('ParamMouthForm', (t) => -0.7 * env(t, 0.5)),
       ]
     },
   },
