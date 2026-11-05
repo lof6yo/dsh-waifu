@@ -1284,6 +1284,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const [personaSaving, setPersonaSaving] = useState(false)
   const [ttsStatus, setTtsStatus] = useState<string | null>(null)
   const [ttsBusy, setTtsBusy] = useState(false)
+  // 音色样本（ADR-033 修订二）：Drama 3 没有固定音色，用无状态克隆把用户挑中的一条样本钉住
+  const [voiceSample, setVoiceSample] = useState<{ reference: string; bytes: number } | null>(null)
+  const [sampleCandidates, setSampleCandidates] = useState<string[]>([])
+  const [sampleBusy, setSampleBusy] = useState(false)
+  const [sampleNotice, setSampleNotice] = useState<string | null>(null)
   const [aiCheckStatus, setAiCheckStatus] = useState<{ ok: boolean; text: string } | null>(null)
   const [aiChecking, setAiChecking] = useState(false)
 
@@ -1317,6 +1322,19 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       .catch(() => { if (!cancelled) setAiOptions(null) })
     return () => { cancelled = true }
   }, [])
+  const voiceEnabled = value.ttsEnabled
+  useEffect(() => {
+    if (!voiceEnabled) return
+    let cancelled = false
+    void fetch(`${PET_API}/tts-sample`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ reference?: string; bytes?: number }>) : null))
+      .then((payload) => {
+        if (cancelled || !payload) return
+        setVoiceSample({ reference: payload.reference ?? '', bytes: payload.bytes ?? 0 })
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [voiceEnabled])
   const aiEnabled = value.aiEnabled
   useEffect(() => {
     if (!aiEnabled) return
@@ -2533,6 +2551,82 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ? modelChoices
     : [{ id: value.aiModel, name: value.aiModel }, ...modelChoices]
 
+  /** 音色样本：生成候选 → 试听 → 采用；采用后每次合成都会带上这份样本做克隆。 */
+  const playBase64 = (data: string): void => {
+    const audio = new Audio(`data:audio/mpeg;base64,${data}`)
+    void audio.play().catch(() => undefined)
+  }
+  const refreshVoiceSample = (): void => {
+    void fetch(`${PET_API}/tts-sample`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ reference?: string; bytes?: number }>) : null))
+      .then((payload) => {
+        if (!payload) return
+        setVoiceSample({ reference: payload.reference ?? '', bytes: payload.bytes ?? 0 })
+      })
+      .catch(() => undefined)
+  }
+  const generateSamples = async (): Promise<void> => {
+    if (sampleBusy) return
+    setSampleBusy(true)
+    setSampleNotice('生成候选音色…')
+    setSampleCandidates([])
+    try {
+      const res = await fetch(`${PET_API}/tts-sample/candidates`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ count: 3 }),
+      })
+      const payload = await res.json() as { ok?: boolean; samples?: { data: string }[]; error?: string }
+      if (!payload.ok || !payload.samples?.length) throw new Error(payload.error ?? `http ${res.status}`)
+      setSampleCandidates(payload.samples.map((item) => item.data))
+      setSampleNotice(`已生成 ${payload.samples.length} 条，试听后挑一条采用`)
+    } catch (error) {
+      setSampleNotice(`生成失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSampleBusy(false)
+    }
+  }
+  const adoptSample = async (data: string): Promise<void> => {
+    if (sampleBusy) return
+    setSampleBusy(true)
+    setSampleNotice('保存音色样本…')
+    try {
+      const res = await fetch(`${PET_API}/tts-sample`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ data }),
+      })
+      const payload = await res.json() as { ok?: boolean; error?: string }
+      if (!payload.ok) throw new Error(payload.error ?? `http ${res.status}`)
+      setSampleCandidates([])
+      setSampleNotice('已固定音色：以后每次合成都会带上这条样本')
+      refreshVoiceSample()
+    } catch (error) {
+      setSampleNotice(`保存失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSampleBusy(false)
+    }
+  }
+  const clearSample = async (): Promise<void> => {
+    if (sampleBusy) return
+    setSampleBusy(true)
+    try {
+      const res = await fetch(`${PET_API}/tts-sample`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ clear: true }),
+      })
+      const payload = await res.json() as { ok?: boolean; error?: string }
+      if (!payload.ok) throw new Error(payload.error ?? `http ${res.status}`)
+      setSampleNotice('已清除音色样本（音色会重新随机）')
+      refreshVoiceSample()
+    } catch (error) {
+      setSampleNotice(`清除失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSampleBusy(false)
+    }
+  }
+
   /** 试听：把一句样例发给 /tts，拿回 mp3 直接播（不写缓存文件、不改设置）。 */
   const auditionVoice = async (): Promise<void> => {
     if (ttsBusy) return
@@ -2901,6 +2995,45 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }, ttsBusy ? '合成中…' : '试听一句'),
           createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } },
             ttsStatus ?? '用当前的模型 / 音色 / 演绎指令合成一句话'),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '音色样本'),
+        createElement('div', { style: { ...formControlInlineStyle, flexWrap: 'wrap', gap: GAP.sm } },
+          createElement('button', {
+            type: 'button',
+            style: { ...buttonPrimaryStyle, opacity: sampleBusy ? 0.6 : 1 },
+            disabled: !writable || sampleBusy,
+            onClick: () => { void generateSamples() },
+          }, sampleBusy ? '处理中…' : '生成候选（3 条）'),
+          voiceSample?.reference
+            ? createElement('button', {
+              type: 'button',
+              style: buttonSecondaryStyle,
+              disabled: !writable || sampleBusy,
+              onClick: () => { void clearSample() },
+            }, '清除已固定的样本')
+            : null,
+          createElement('span', { style: { width: '100%', fontSize: 12, color: C.textSecondary, lineHeight: 1.6 } },
+            sampleNotice
+              ?? (voiceSample?.reference
+                ? `已固定：${voiceSample.reference}（${Math.round(voiceSample.bytes / 1024)} KB），音色不会再变`
+                : randomVoice
+                  ? '这个模型每句都会换人声：先生成候选，挑一条喜欢的采用'
+                  : '可选：用一条样本把音色钉住（对无固定音色的模型有效）')),
+          ...sampleCandidates.map((data, index) => createElement('div', {
+            key: `sample-${index}`,
+            style: { display: 'flex', gap: GAP.sm, alignItems: 'center', width: '100%' },
+          },
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, `候选 ${index + 1}`),
+          createElement('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => playBase64(data) }, '试听'),
+          createElement('button', {
+            type: 'button',
+            style: buttonPrimaryStyle,
+            disabled: !writable || sampleBusy,
+            onClick: () => { void adoptSample(data) },
+          }, '用这条'),
+          )),
         ),
       ),
     ),

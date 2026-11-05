@@ -81,6 +81,7 @@ const BASE_SETTINGS: PetSettings = {
   ttsInstructions: 'test',
   lipsyncEnabled: true,
   lipsyncGain: 100,
+  ttsReference: '',
 }
 
 function makeRoutes(

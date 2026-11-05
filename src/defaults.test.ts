@@ -39,12 +39,22 @@ describe('默认值一致性', () => {
 })
 
 describe('语音模型目录（ADR-033 修订）', () => {
-  it('默认音色属于默认模型，且默认模型不是随机音色', () => {
+  it('默认模型在目录里；随机音色模型不配默认音色，固定音色模型取首个音色', () => {
     const model = TTS_MODELS.find((item) => item.id === DEFAULT_TTS_MODEL)
     expect(model, '默认模型必须在目录里').toBeTruthy()
-    expect(model?.randomVoice).not.toBe(true)
-    expect(model?.voices.some((voice) => voice.id === DEFAULT_TTS_VOICE)).toBe(true)
-    expect(ttsModelRandomVoice(DEFAULT_TTS_MODEL)).toBe(false)
+    if (model?.randomVoice) {
+      // Drama 3 这类模型没有固定音色：默认音色留空，靠「音色样本」钉住人声
+      expect(DEFAULT_TTS_VOICE).toBe('')
+      expect(model.voices).toEqual([])
+      expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe('')
+    } else {
+      expect(model?.voices.some((voice) => voice.id === DEFAULT_TTS_VOICE)).toBe(true)
+      expect(ttsModelRandomVoice(DEFAULT_TTS_MODEL)).toBe(false)
+    }
+    // 目录里两种模型都要有：随机音色的表演模型 + 音色固定的兜底模型
+    const fixed = TTS_MODELS.filter((item) => item.randomVoice !== true)
+    expect(fixed.length).toBeGreaterThan(0)
+    expect(ttsDefaultVoice(fixed[0].id)).toBe(fixed[0].voices[0].id)
   })
 
   it('随机音色模型不提供音色列表；固定音色模型的音色 id 不重复', () => {

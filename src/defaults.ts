@@ -61,19 +61,14 @@ export interface TtsModelOption {
  */
 export const TTS_MODELS: TtsModelOption[] = [
   {
-    id: 'microsoft/mai-voice-2.1-flash',
-    label: '微软 MAI-Voice 2.1 Flash（音色固定）',
-    voices: [
-      { id: 'zh-CN-Mei:MAI-Voice-2.1-Flash', label: 'Mei（中文·女）' },
-      { id: 'zh-CN-Lan:MAI-Voice-2.1-Flash', label: 'Lan（中文·女）' },
-      { id: 'zh-CN-Wei:MAI-Voice-2.1-Flash', label: 'Wei（中文·男）' },
-      { id: 'zh-CN-Bo:MAI-Voice-2.1-Flash', label: 'Bo（中文·男）' },
-      { id: 'en-US-Iris:MAI-Voice-2.1-Flash', label: 'Iris（英文·女）' },
-    ],
+    id: 'fish-audio/drama-3',
+    label: 'Fish Audio Drama 3（最会演，需选一条音色样本固定人声）',
+    voices: [],
+    randomVoice: true,
   },
   {
     id: 'qwen/qwen-audio-3.0-tts-plus',
-    label: '通义千问 TTS Plus（音色固定）',
+    label: '通义千问 TTS Plus（自带固定音色）',
     voices: [
       { id: 'longanlingxin', label: '龙安灵心（中文·女）' },
       { id: 'longanlufeng', label: '龙安陆风（中文·男）' },
@@ -81,7 +76,7 @@ export const TTS_MODELS: TtsModelOption[] = [
   },
   {
     id: 'hexgrad/kokoro-82m',
-    label: 'Kokoro 82M（最便宜，音色固定）',
+    label: 'Kokoro 82M（最便宜，自带固定音色）',
     voices: [
       { id: 'zf_xiaoxiao', label: '晓晓（中文·女）' },
       { id: 'zf_xiaoyi', label: '晓伊（中文·女）' },
@@ -90,18 +85,20 @@ export const TTS_MODELS: TtsModelOption[] = [
       { id: 'af_heart', label: 'Heart（英文·女）' },
     ],
   },
-  {
-    id: 'fish-audio/drama-3',
-    label: 'Fish Audio Drama 3（表演力强，音色每次随机）',
-    voices: [],
-    randomVoice: true,
-  },
 ]
 
-/** 默认 TTS 模型：微软 MAI-Voice 2.1 Flash —— 音色可固定，中文自然。 */
-export const DEFAULT_TTS_MODEL = 'microsoft/mai-voice-2.1-flash'
+/** 默认 TTS 模型：Fish Audio Drama 3（表演力最好；人声由「音色样本」固定）。 */
+export const DEFAULT_TTS_MODEL = 'fish-audio/drama-3'
 /** 默认音色（空 = 用模型默认音色；随机音色的模型必须留空）。 */
-export const DEFAULT_TTS_VOICE = 'zh-CN-Mei:MAI-Voice-2.1-Flash'
+export const DEFAULT_TTS_VOICE = ''
+/** 音色样本文件名（空 = 没有样本；存在时随每次请求走无状态音色克隆）。 */
+export const DEFAULT_TTS_REFERENCE = ''
+/** 音色样本目录（`$DSH_HOME/waifu/voices`）。 */
+export const TTS_REFERENCE_DIR = 'voices'
+/** 选中样本的文件名（同一时间只保留一条）。 */
+export const TTS_REFERENCE_FILENAME = 'reference.mp3'
+/** 音色样本大小上限（字节）：样本只用来克隆音色，太长白花钱。 */
+export const TTS_REFERENCE_MAX_BYTES = 8 * 1024 * 1024
 
 /** 按 id 查模型选项。 */
 export function ttsModelOption(id: string): TtsModelOption | undefined {
@@ -188,6 +185,7 @@ export const DEFAULT_SETTINGS = {
   ttsEngine: DEFAULT_TTS_ENGINE,
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: DEFAULT_TTS_VOICE,
+  ttsReference: DEFAULT_TTS_REFERENCE,
   ttsInstructions: DEFAULT_TTS_INSTRUCTIONS,
   lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,
   lipsyncGain: DEFAULT_LIPSYNC_GAIN,

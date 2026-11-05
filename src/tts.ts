@@ -92,6 +92,12 @@ export interface TtsVoiceOptions {
   voice?: string
   /** 演绎指令（Fish Audio 会把它拼进文本开头，作为「[语气]」提示）。 */
   instructions?: string
+  /**
+   * 音色参考样本（ADR-033 修订二）：base64 数据 URI，随请求走 OpenRouter 的无状态音色克隆
+   * （`input_references`）。Drama 3 这类「表演模型」没有 `supported_voices`，不发参考时每句
+   * 都会换人声；发了就固定在这一个音色上。
+   */
+  reference?: string
 }
 
 /** 合成结果。 */
@@ -111,7 +117,11 @@ export interface TtsEngine {
 
 /** 缓存键：同一段文字 + 同一套语音参数才复用。 */
 export function ttsCacheKey(text: string, options: TtsVoiceOptions): string {
-  const payload = [options.model, options.voice ?? '', options.instructions ?? '', text].join('\u0000')
+  // 参考样本可能很长：只把它的哈希算进键，换样本即换缓存
+  const reference = options.reference
+    ? createHash('sha1').update(options.reference).digest('hex').slice(0, 12)
+    : ''
+  const payload = [options.model, options.voice ?? '', options.instructions ?? '', reference, text].join('\u0000')
   return createHash('sha1').update(payload).digest('hex')
 }
 
@@ -187,6 +197,9 @@ export class OpenRouterTtsEngine implements TtsEngine {
       }
       if (options.voice) body.voice = options.voice
       if (options.instructions) body.instructions = options.instructions
+      if (options.reference) {
+        body.input_references = [{ type: 'input_audio', input_audio: { data: options.reference } }]
+      }
       const response = await this.fetcher(this.endpoint, {
         method: 'POST',
         headers: {
