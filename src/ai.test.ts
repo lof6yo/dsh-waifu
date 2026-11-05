@@ -181,7 +181,9 @@ describe('savePersona', () => {
 
 describe('最近对话注入（ADR-030）', () => {
   const FALLBACK = { provider: 'p', model: 'm' }
-  const T = new Date('2026-11-05T21:00:00').getTime()
+  // 时间戳相对「现在」构造：时间戳前缀里同日只给 HH:MM、跨天补日期，
+  // 写死日期会让这条用例在第二天必然失败（曾经就在跨 11/5→11/6 时挂过）。
+  const T = Date.now() - 60_000
   const history: AiHistoryEntry[] = [
     { role: 'user', text: '第 1 句', at: T - 4000 },
     { role: 'assistant', text: '第 2 句', at: T - 3000, provider: 'p', model: 'm' },
@@ -204,7 +206,9 @@ describe('最近对话注入（ADR-030）', () => {
 
   it('注入的历史带时间戳前缀（同一天只给时分，跨天补日期）', () => {
     const rows = historyMessages(history, 2, FALLBACK)
-    expect(rows[0].content[0].text).toMatch(/^\[\d{2}:\d{2}\] 第 3 句$/)
+    // fixture 用的是「一分钟前」，必然落在今天 → 只带 HH:MM
+    const clock = `${String(new Date(T - 2000).getHours()).padStart(2, '0')}:${String(new Date(T - 2000).getMinutes()).padStart(2, '0')}`
+    expect(rows[0].content[0].text).toBe(`[${clock}] 第 3 句`)
     const now = new Date('2026-11-05T21:10:00').getTime()
     expect(formatStamp(new Date('2026-11-05T20:03:00').getTime(), now)).toBe('20:03')
     expect(formatStamp(new Date('2026-11-04T20:03:00').getTime(), now)).toBe('11/4 20:03')
