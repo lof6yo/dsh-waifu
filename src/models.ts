@@ -48,9 +48,9 @@ export const DEFAULT_MOTION_MAP: MotionMap = {
   idle: ['Idle'],
   thinking: ['Tilt', 'Idle'],
   error: ['ShakeHead', 'Idle'],
-  done: ['Hop', 'Idle'],
+  done: ['Idle'],
   waiting: ['Sway', 'Idle'],
-  delivered: ['Hop', 'Idle'],
+  delivered: ['Idle'],
 }
 
 /** 宠物事件键（与状态动画槽位同构：空闲/思考/出错/完成/交付/等审批）。 */
@@ -104,11 +104,11 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
     lines: [['出错了…我再试一次。', '唔，好像不太顺利。']],
   },
   done: {
-    motions: ['Hop', 'Idle'],
+    motions: ['Idle'],
     lines: [['搞定！', '完成了。', '做完啦。']],
   },
   delivered: {
-    motions: ['Hop', 'Idle'],
+    motions: ['Idle'],
     lines: [['文件放这儿了。', '交付完成，请查收。']],
   },
   waiting: {

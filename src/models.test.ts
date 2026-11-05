@@ -37,9 +37,9 @@ describe('listBuiltinPresets', () => {
     expect(jian.animationMap?.idle).toEqual(['Idle'])
     expect(jian.animationMap?.thinking).toEqual(['Tilt'])
     expect(jian.animationMap?.error).toEqual(['ShakeHead'])
-    expect(jian.animationMap?.done).toEqual(['Hop'])
+    expect(jian.animationMap?.done).toEqual([])
     expect(jian.animationMap?.waiting).toEqual(['Sway'])
-    expect(jian.animationMap?.delivered).toEqual(['Hop'])
+    expect(jian.animationMap?.delivered).toEqual([])
     expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
     expect(jian.touchParts?.map((p) => p.motions)).toEqual([
       [], [], [], [], [], [], [], [], [],
@@ -73,7 +73,7 @@ describe('resolveMotionMap', () => {
     expect(map.idle).toEqual(['Idle'])
     expect(map.thinking).toEqual(['Tilt'])
     expect(map.error).toEqual(['ShakeHead'])
-    expect(map.delivered).toEqual(['Hop'])
+    expect(map.delivered).toEqual([])
   })
 })
 

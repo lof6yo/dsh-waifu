@@ -42,13 +42,6 @@
 					"FadeInTime": 0.3,
 					"FadeOutTime": 0.35
 				}
-			],
-			"Hop": [
-				{
-					"File": "motions/hop.motion3.json",
-					"FadeInTime": 0.12,
-					"FadeOutTime": 0.2
-				}
 			]
 		}
 	},

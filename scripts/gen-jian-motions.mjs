@@ -37,7 +37,7 @@ const MODEL3_FILE = resolve(MODEL_DIR, '简.model3.json')
 const CDI3_FILE = resolve(MODEL_DIR, '简.cdi3.json')
 
 const FPS = 30
-const EXPECTED_GROUPS = ['Idle', 'Nod', 'ShakeHead', 'Tilt', 'Sway', 'Hop']
+const EXPECTED_GROUPS = ['Idle', 'Nod', 'ShakeHead', 'Tilt', 'Sway']
 
 /**
  * 允许在动作里驱动的参数白名单 + 量纲守护范围。
@@ -408,12 +408,12 @@ const MOTION_DEFS = [
     loop: false,
     build: () => {
       const d = 3.0
-      // 左右晃动：两个来回，侧倾 ±12°、转头 ±9°（相位滞后）、头部位移 ±5°；头尾包络归零
+      // 左右晃动：两个来回，侧倾 ±19°、转头 ±13.5°（相位滞后）、头部位移 ±7.5°；头尾包络归零
       const env = (t) => Math.pow(Math.sin(Math.PI * (t / d)), 0.5)
-      const headZ = (t) => 12 * Math.sin(TAU * 2 * (t / d)) * env(t)
-      const headX = (t) => 9 * Math.sin(TAU * 2 * (t / d) - 0.55) * env(t)
-      const headY = (t) => 2.8 * Math.sin(TAU * 2 * (t / d) - 1.1) * env(t)
-      const headPX = (t) => 5 * Math.sin(TAU * 2 * (t / d) - 0.3) * env(t)
+      const headZ = (t) => 19 * Math.sin(TAU * 2 * (t / d)) * env(t)
+      const headX = (t) => 13.5 * Math.sin(TAU * 2 * (t / d) - 0.55) * env(t)
+      const headY = (t) => 4.0 * Math.sin(TAU * 2 * (t / d) - 1.1) * env(t)
+      const headPX = (t) => 7.5 * Math.sin(TAU * 2 * (t / d) - 0.3) * env(t)
       const eye = (t) => 1 - 0.95 * pulse(t, 0.95, 0.05) - 0.95 * pulse(t, 2.25, 0.05)
       return [
         buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
@@ -422,30 +422,6 @@ const MOTION_DEFS = [
         buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
         buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
         buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
-      ]
-    },
-  },
-  {
-    group: 'Hop',
-    file: 'hop.motion3.json',
-    duration: 1.2,
-    loop: false,
-    build: () => {
-      const d = 1.2
-      // 蓄力下蹲 → 腾空 → 落地缓冲 → 回弹；位移由客户端渲染层补抛物线
-      const headY = (t) =>
-        6.5 * pulse(t, 0.16, 0.08) - 5.0 * pulse(t, 0.44, 0.14) + 7.5 * pulse(t, 0.7, 0.09) + 1.8 * pulse(t, 0.95, 0.1)
-      const headZ = (t) => 2.0 * pulse(t, 0.45, 0.24) - 1.4 * pulse(t, 0.72, 0.12)
-      const eye = (t) => 1 - 0.32 * pulse(t, 0.16, 0.08) - 0.6 * pulse(t, 0.7, 0.07)
-      const mouthOpen = (t) => 0.34 * pulse(t, 0.42, 0.2)
-      const cheek = (t) => 0.24 * pulse(t, 0.18, 0.1)
-      return [
-        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
-        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
-        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
-        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
-        buildCurve('ParamMouthOpenY', sample(d, mouthOpen), { loop: false, duration: d }),
-        buildCurve('ParamCheekPuff', sample(d, cheek), { loop: false, duration: d }),
       ]
     },
   },

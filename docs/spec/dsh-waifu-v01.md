@@ -35,8 +35,8 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 | 空闲 | `agent/status` status=idle（非刚完成） | 待机动画（默认 `Idle`：呼吸/微摆/眨眼）；偶发瞬态气泡（事件 idle 台词池） |
 | 思考中 | `agent/status` status=running | 歪头 `Tilt`；气泡**常驻**，文案随思考时长阶段演进 |
 | 出错 | `agent/error` | 摇头 `ShakeHead`；瞬态气泡（事件 error 台词池） |
-| 完成 | `agent/turn-stopping` + running→idle 下降沿 | 轻跳 `Hop`；瞬态气泡（事件 done 台词池） |
-| 交付 | `session/event` 中 `deliverables/presented` | 轻跳 `Hop`（默认与完成同链，可单独映射）；瞬态气泡（事件 delivered 台词池） |
+| 完成 | `agent/turn-stopping` + running→idle 下降沿 | 无动作（保持 `Idle`）；瞬态气泡（事件 done 台词池） |
+| 交付 | `session/event` 中 `deliverables/presented` | 无动作（保持 `Idle`，可单独映射）；瞬态气泡（事件 delivered 台词池） |
 | （可选）等审批 | `approval/request` | 左右晃 `Sway`；气泡**常驻**，文案随等待时长阶段演进（三阶段台词池） |
 
 - 状态变化即时反映（事件驱动，SSE 推送）
@@ -92,13 +92,12 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 
 - **本版只内置「简」**（`presets.jsonc` 唯一一条，`modelUrl: /waifu-assets/models/jian/简.model3.json`）；不提供模型选择/导入 UI（自定义模型能力暂不对用户暴露，后续版本再考虑）：
   - 模型资源**随包分发**在 `assets/models/jian/`（moc3、纹理、physics3、cdi3、model3.json、motions）
-  - 动作组共 **6 个**（`scripts/gen-jian-motions.mjs` 幂等生成；ADR-021）：
+  - 动作组共 **5 个**（`scripts/gen-jian-motions.mjs` 幂等生成；ADR-021）：
     - `Idle`（循环 5s）：呼吸 + 微摆 + 眨眼
     - `Nod` 点头 1.5s / `ShakeHead` 摇头 1.6s / `Tilt` 歪头 2.0s / `Sway` 左右晃 3.0s：只驱动头部角度、头部平移与表情，身体由物理链自然跟随
-    - `Hop` 上下轻跳 1.2s：动作文件只做蓄力/腾空/落地姿态，竖直位移由客户端渲染层补抛物线（模型没有可驱动的根位移参数）
-    - ADR-018 那批「受击反应 / 人设小动作」已证明与物理打架（ADR-019/020），本轮不再包含
+    - ADR-018 那批「受击反应 / 人设小动作」已证明与物理打架（ADR-019/020）；「上下轻跳」因为模型没有可驱动的根位移参数、客户端补位移也不自然，已删除
   - 动作只用 cdi3 白名单参数（角度 / 眼笑 / 眉毛 / 嘴形 / 嘟嘴 / 眼球），不驱动 `ParamSwitch*` 表情开关；`model3.json` 另声明 `EyeBlink`（ParamEyeLOpen/ROpen）与 `LipSync`（ParamMouthOpenY）参数组；身体/胸/胯参数是物理输出（Output Weight 30–100），**动作只驱动物理输入**（头部角度与平移，ADR-019）
-  - 默认事件动画映射：`idle→Idle`、`thinking→Tilt`、`waiting→Sway`、`error→ShakeHead`、`done/delivered→Hop`；默认触摸部位不挂动作（只出气泡）。用户可在设置页逐项改
+  - 默认事件动画映射：`idle→Idle`、`thinking→Tilt`、`waiting→Sway`、`error→ShakeHead`、`done/delivered` 不挂动作；默认触摸部位不挂动作（只出气泡）。用户可在设置页逐项改
   - 许可标注：作者「用户自备模型」、许可类型「用户自备模型（随包内置；公开分发前请确认模型授权）」
 - 素材经 Host 同源 `/waifu-assets/*` prefix 路由提供（带目录穿越防护；moc3/json/png 等 MIME 正确）
 - 动作组选项来自当前模型 `.model3.json` 的 `Motions`（设置页事件绑定与触摸部位共用同款多选下拉），解析失败时可保存但无动作可选

@@ -26,4 +26,4 @@
 | [018](018-motion-set-status-touch-character.md) | 动作集扩充为 15 组（状态 / 触摸反馈 / 人设小动作） | Superseded（ADR-020） |
 | [019](019-physics-driven-touch-motions.md) | 触摸动作改为驱动物理输入（不直接写躯干/胸参数） | Superseded（ADR-020 的动作集部分） |
 | [020](020-motion-set-reverted-to-idle.md) | 动作集回退为只有 Idle，其余动作待重新设计 | Superseded（ADR-021） |
-| [021](021-basic-motion-set-nod-shake-tilt-sway-hop.md) | 基础动作组：点头 / 摇头 / 歪头 / 左右晃 / 上下跳 | Accepted（取代 ADR-020 的「只留 Idle」） |
+| [021](021-basic-motion-set-nod-shake-tilt-sway-hop.md) | 基础动作组：点头 / 摇头 / 歪头 / 左右晃 | Accepted（取代 ADR-020 的「只留 Idle」） |
