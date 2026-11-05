@@ -83,7 +83,7 @@ dsh plugin --profile <profile> remove dsh-waifu
 
 ### 显示
 
-- **基础显示**：显示宠物开关 / 尺寸滑杆（40–400px，默认 240）/ 渲染帧率（30 / 60 / 不限制）
+- **基础显示**：显示宠物开关 / 尺寸滑杆（40–400px，默认 300）/ 渲染帧率（30 / 60 / 不限制）
 - **画布与位置**：水平 / 垂直留白（每侧占尺寸百分比，默认 125 / 50，防止甩尾被裁切）；默认位置（显示区中心点距窗口右 / 底，**按窗口宽高的百分比**，默认 15 / 24）与「归位」（回到默认位置）、「捕捉」（把当前位置设为默认位置）两个按钮
 - **对白气泡**：水平 / 垂直偏移（相对角色包围盒顶部中心；垂直偏移正值向上、负值向下）、背景色、背景不透明度、文字颜色
 
@@ -121,8 +121,8 @@ dsh plugin --profile <profile> remove dsh-waifu
 ### 语音
 
 - 开关在设置页「语音」分组：开启后 AI 台词会**说出来**，并且气泡、语音、口型三者同步
-- 模型与音色都是**下拉**：只有两个通义千问 TTS 模型——`qwen/qwen-audio-3.0-tts-plus`（旗舰音色，默认，`longanlingxin` 龙安灵心）与 `qwen/qwen-audio-3.0-tts-flash`（便宜、女声最多，`longanyuanfei` 高傲妃子 / `longanlingxi` 可爱甜美 / `longanxiaoxin` 亲切活泼 等）。音色只收女声，来源是[千问 TTS 音色列表](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)
-- 合成走 OpenRouter 的 `/api/v1/audio/speech`（OpenAI 兼容），默认模型 `qwen/qwen-audio-3.0-tts-plus`；Key 直接用 DSH 凭据里的 `OPENROUTER_API_KEY`（就是在「设置 → 模型」里填过的那份），不用在这里再填一次
+- 模型与音色都是**下拉**：只有两个通义千问 TTS 模型——`qwen/qwen-audio-3.0-tts-flash`（默认，`longanxiaoxin` 龙安小昕）与 `qwen/qwen-audio-3.0-tts-flash`（便宜、女声最多，`longanyuanfei` 高傲妃子 / `longanlingxi` 可爱甜美 / `longanxiaoxin` 亲切活泼 等）。音色只收女声，来源是[千问 TTS 音色列表](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)
+- 合成走 OpenRouter 的 `/api/v1/audio/speech`（OpenAI 兼容），默认模型 `qwen/qwen-audio-3.0-tts-flash`；Key 直接用 DSH 凭据里的 `OPENROUTER_API_KEY`（就是在「设置 → 模型」里填过的那份），不用在这里再填一次
 - **同步方式**：模型出字的同时按标点切成小段，每段立刻合成 → 该段音频**开始播放时**气泡才出现这一段文字。所以不会出现「字全出来了声音还没跟上」，也不会出现「说着上一句、屏幕上是下一句」
 - **口型**：`ParamMouthOpenY` 由正在播放的那段音频的波形能量驱动（张得快、收得慢），强度 0–300% 可调；不想要口型可以单独关掉
 - **试听一句**：设置页按钮，直接用当前模型 / 音色合成一句话播放，调参不用反复去戳宠物

@@ -44,7 +44,7 @@ describe('语音模型目录（ADR-033 修订）', () => {
     expect(model, '默认模型必须在目录里').toBeTruthy()
     expect(model!.voices.some((voice) => voice.id === DEFAULT_TTS_VOICE)).toBe(true)
     expect(ttsModelRandomVoice(DEFAULT_TTS_MODEL)).toBe(false)
-    expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe(model!.voices[0].id)
+    expect(model!.voices.some((voice) => voice.id === DEFAULT_TTS_VOICE)).toBe(true)
   })
 
   it('目录只保留通义千问 TTS Plus / Flash，且每个模型都有音色', () => {
@@ -66,7 +66,9 @@ describe('语音模型目录（ADR-033 修订）', () => {
   })
 
   it('ttsDefaultVoice 取首个音色；目录外模型返回空串', () => {
-    expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe(DEFAULT_TTS_VOICE)
+    expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe(
+      TTS_MODELS.find((item) => item.id === DEFAULT_TTS_MODEL)!.voices[0].id,
+    )
     expect(ttsDefaultVoice('fish-audio/drama-3')).toBe('')
     expect(ttsDefaultVoice('unknown/model')).toBe('')
   })

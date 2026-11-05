@@ -10,13 +10,13 @@
 import { clampInt } from './clamp.ts'
 
 /** 显示/位置持久化默认值（`$DSH_HOME/waifu.json`，px 相对视口右下角）。 */
-export const DEFAULT_DISPLAY = { right: 24, bottom: 20, size: 240 } as const
+export const DEFAULT_DISPLAY = { right: 24, bottom: 20, size: 300 } as const
 
 /** 冷启动/快照缺字段时的渲染兜底常量。 */
 export const DEFAULT_CANVAS_PAD_X = 125
 export const DEFAULT_CANVAS_PAD_Y = 50
-export const DEFAULT_HOME_RIGHT = 15
-export const DEFAULT_HOME_BOTTOM = 24
+export const DEFAULT_HOME_RIGHT = 12
+export const DEFAULT_HOME_BOTTOM = 31
 export const DEFAULT_BUBBLE_OFFSET_X = 0
 export const DEFAULT_BUBBLE_OFFSET_Y = -15
 export const DEFAULT_BUBBLE_BG_COLOR = '#ffffff'
@@ -29,10 +29,10 @@ export const DEFAULT_MAX_FPS = 30
 /** 默认模型 id（与内置 preset 目录一致）。 */
 export const DEFAULT_MODEL_ID = 'jian'
 /** AI 回复默认路由（DSH 已配置的 provider / 模型，ADR-025）。 */
-export const DEFAULT_AI_PROVIDER = 'deepseek-official'
-export const DEFAULT_AI_MODEL = 'deepseek-flash'
+export const DEFAULT_AI_PROVIDER = 'openrouter'
+export const DEFAULT_AI_MODEL = 'google/gemma-4-31b-it'
 /** 注入到 prompt 的最近对话条数（0 = 不注入；ADR-030）。 */
-export const DEFAULT_AI_HISTORY = 10
+export const DEFAULT_AI_HISTORY = 20
 
 /** 语音合成（TTS，ADR-033）：默认引擎 = OpenRouter 的 `/api/v1/audio/speech`。 */
 export const DEFAULT_TTS_ENABLED = true
@@ -84,9 +84,9 @@ export const TTS_MODELS: TtsModelOption[] = [
 ]
 
 /** 默认 TTS 模型：通义千问 TTS Plus（旗舰音色）。 */
-export const DEFAULT_TTS_MODEL = 'qwen/qwen-audio-3.0-tts-plus'
-/** 默认音色：Plus 唯一的女声「龙安灵心」。 */
-export const DEFAULT_TTS_VOICE = 'longanlingxin'
+export const DEFAULT_TTS_MODEL = 'qwen/qwen-audio-3.0-tts-flash'
+/** 默认音色：Flash 的「龙安小昕」（22 岁·亲切活泼）。 */
+export const DEFAULT_TTS_VOICE = 'longanxiaoxin'
 /** 按 id 查模型选项。 */
 export function ttsModelOption(id: string): TtsModelOption | undefined {
   return TTS_MODELS.find((item) => item.id === id)
@@ -105,7 +105,7 @@ export function ttsDefaultVoice(model: string): string {
 /** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */
 export const DEFAULT_LIPSYNC_ENABLED = true
 /** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
-export const DEFAULT_LIPSYNC_GAIN = 100
+export const DEFAULT_LIPSYNC_GAIN = 140
 /** 口型强度边界。 */
 export const LIPSYNC_GAIN_LIMITS = { min: 0, max: 300 } as const
 
@@ -145,7 +145,7 @@ export const DEFAULT_SETTINGS = {
   enabled: true,
   size: DEFAULT_DISPLAY.size,
   maxFps: DEFAULT_MAX_FPS,
-  developerMode: true,
+  developerMode: false,
   debug: false,
   showTapZones: false,
   canvasPadX: DEFAULT_CANVAS_PAD_X,
@@ -161,7 +161,7 @@ export const DEFAULT_SETTINGS = {
   aiEnabled: true,
   aiTouchOnly: false,
   /** 全 AI 接管：不显示任何预置对白，气泡全靠模型；长状态延迟失效、入态即请求（ADR-031）。 */
-  aiTakeover: false,
+  aiTakeover: true,
   aiProvider: DEFAULT_AI_PROVIDER,
   aiModel: DEFAULT_AI_MODEL,
   aiHistoryCount: DEFAULT_AI_HISTORY,

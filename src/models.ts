@@ -240,7 +240,7 @@ export function isLongState(state: PetEventKey): state is LongState {
 /** 长状态 AI 演绎的默认节奏（delay/interval 单位秒，max 为每次入态最多演绎次数）。 */
 export const DEFAULT_LONG_AI: Record<LongState, { delay: number; interval: number; max: number }> = {
   thinking: { delay: 5, interval: 10, max: 3 },
-  waiting: { delay: 5, interval: 30, max: 3 },
+  waiting: { delay: 5, interval: 20, max: 3 },
 }
 
 /** 长状态 AI 演绎节奏的取值范围（设置页滑杆/校验共用）。 */

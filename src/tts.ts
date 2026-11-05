@@ -136,11 +136,18 @@ async function readCache(dir: string, key: string): Promise<Buffer | undefined> 
   }
 }
 
+/** 每写这么多次缓存才清理一次（readdir + stat 全目录不便宜，没必要每段都做）。 */
+const PRUNE_EVERY_WRITES = 20
+let writesSincePrune = 0
+
 /** 写缓存并按数量上限清理最旧文件（失败不影响播放）。 */
 async function writeCache(dir: string, key: string, audio: Buffer): Promise<void> {
   try {
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, `${key}.mp3`), audio)
+    writesSincePrune += 1
+    if (writesSincePrune < PRUNE_EVERY_WRITES) return
+    writesSincePrune = 0
     const names = (await readdir(dir)).filter((name) => name.endsWith('.mp3'))
     if (names.length <= TTS_CACHE_MAX_FILES) return
     const stamped = await Promise.all(names.map(async (name) => {

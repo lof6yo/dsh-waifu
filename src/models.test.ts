@@ -53,11 +53,12 @@ describe('listBuiltinPresets', () => {
     expect(jian.animationMap?.done).toEqual(['star'])
     expect(jian.animationMap?.waiting).toEqual(['Sway'])
     expect(jian.animationMap?.delivered).toEqual(['heart'])
-    expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
+    expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '私处', '臀', '腰', '大腿', '手', '小腿', '脚'])
     expect(jian.touchParts?.map((p) => p.motions)).toEqual([
       ['Tilt', 'blush'],
       ['Nod', 'blush'],
       ['ShakeHead', 'blush', 'heart'],
+      ['ShakeHead', 'blush', 'tear'],
       ['Sway', 'blush', 'heart'],
       ['Sway', 'heart', 'blush'],
       ['Sway', 'blush', 'heart'],
@@ -65,7 +66,7 @@ describe('listBuiltinPresets', () => {
       ['Sway', 'blush', 'heart'],
       ['ShakeHead', 'whites'],
     ])
-    expect(resolveDefaultTouchParts('jian').length).toBe(9)
+    expect(resolveDefaultTouchParts('jian').length).toBe(10)
     expect(resolveDefaultTouchParts('nope')).toEqual([])
   })
 })
@@ -184,7 +185,7 @@ describe('EventBindings（事件绑定）', () => {
     expect(isLongState('waiting')).toBe(true)
     expect(isLongState('done')).toBe(false)
     expect(DEFAULT_LONG_AI.thinking).toEqual({ delay: 5, interval: 10, max: 3 })
-    expect(DEFAULT_LONG_AI.waiting).toEqual({ delay: 5, interval: 30, max: 3 })
+    expect(DEFAULT_LONG_AI.waiting).toEqual({ delay: 5, interval: 20, max: 3 })
   })
 
   it('normalizeEventBindings 只保留合法事件/清洗台词/只留入态一组', () => {

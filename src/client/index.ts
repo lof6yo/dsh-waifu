@@ -1047,6 +1047,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     })
   }
 
+  /** 上一次应用过的快照签名（display + config）：一致就跳过整段 applyConfig。 */
+  let viewSignature = ''
+
   function applyState(next: PetStateView | null): void {
     const state = demoState ?? next?.state ?? 'idle'
     // 状态变化时播状态气泡与状态动作（spec §3）：长状态（思考/等审批）走
@@ -2457,7 +2460,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         view = next
         // 位置取持久化值；渲染尺寸保持现状，由 applyConfig 负责 diff 与更新
         pos = { right: next.display.right, bottom: next.display.bottom, size: pos.size }
-        applyConfig(next)
+        // 每次状态变化都会推整份快照，但 config 通常没变：签个名跳过整段 diff，
+        // 只在配置/位置真的变了时才重算布局与浮层（状态本身交给 applyState）。
+        const signature = `${next.display.right}|${next.display.bottom}|${next.displaySaved ? 1 : 0}|${JSON.stringify(next.config)}`
+        if (signature !== viewSignature) {
+          viewSignature = signature
+          applyConfig(next)
+        }
         applyState(next)
       }
       let closeEvents: (() => void) | undefined

@@ -11,7 +11,7 @@
  * @module dsh-waifu
  */
 
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
@@ -57,6 +57,7 @@ import {
   savePersona,
   type AiHistoryEntry,
   type AiPayload,
+  type ReplyContext,
 } from './ai.ts'
 import {
   defaultModelId,
@@ -226,6 +227,7 @@ export function apply(ctx: Context, config: Config): void {
 
   // AI 回复（ADR-025）：复用 DSH 已配置的 provider/model 与账号，人设读 $DSH_HOME/waifu/persona.md。
   // 冷却：同类触发（tap/state）1.2s 内只回一次，避免连点刷屏与刷 token。
+  const AI_COOLDOWN_MS = 1200
   let lastAiAt = 0
   // 最近对话（ADR-030）：只存内存，进程重启即清空；条数由设置页 `aiHistoryCount` 决定注入多少
   let aiHistory: AiHistoryEntry[] = []
@@ -234,41 +236,63 @@ export function apply(ctx: Context, config: Config): void {
   let lastTtsPayload: TtsPayload | null = null
   let lastSpeakPayload: TtsPayload | null = null
   let payloadSink: 'tts' | 'speak' = 'tts'
+  /**
+   * AI 触发的公共前置（/interact 与 /speak 共用，ADR-025/028/031）：
+   * 开关 → 1.2s 冷却 → 全 AI 接管时丢掉参考台词（旧客户端/手工调用也不再泄露固定对白）。
+   */
+  const beginAiTurn = (
+    input: ReplyContext,
+  ): { ok: true; settings: PetSettings; context: ReplyContext } | { ok: false; error: string } => {
+    const settings = settingsStore.get()
+    if (!settings.aiEnabled) return { ok: false, error: 'ai-disabled' }
+    const now = Date.now()
+    if (now - lastAiAt < AI_COOLDOWN_MS) return { ok: false, error: 'cooldown' }
+    lastAiAt = now
+    const context = settings.aiTakeover ? { ...input, hint: undefined } : input
+    return { ok: true, settings, context }
+  }
+
+  /** 两个入口共用的请求参数（provider/model/人设/历史注入）。 */
+  const aiRequest = (
+    settings: PetSettings,
+    context: ReplyContext,
+    onPayload: (payload: AiPayload) => void,
+    signal?: AbortSignal,
+  ) => ({
+    provider: settings.aiProvider,
+    model: settings.aiModel,
+    persona: loadPersona(dirname(settingsStore.path)),
+    context,
+    history: aiHistory,
+    historyCount: settings.aiHistoryCount,
+    onPayload,
+    signal,
+  })
+
+  /** 只记录成功的往来：失败的请求不该污染上下文；参考台词不进历史（ADR-030）。 */
+  const recordAiTurn = (context: ReplyContext, text: string, settings: PetSettings): void => {
+    const at = Date.now()
+    aiHistory = appendHistory(aiHistory, {
+      role: 'user',
+      text: buildSceneMessage(context, { forHistory: true }),
+      at,
+    })
+    aiHistory = appendHistory(
+      aiHistory,
+      { role: 'assistant', text, at: Date.now(), provider: settings.aiProvider, model: settings.aiModel },
+      AI_HISTORY_MAX_ENTRIES,
+    )
+  }
+
   const aiApi: InteractRoutesApi = {
     reply: async (input) => {
-      const settings = settingsStore.get()
-      if (!settings.aiEnabled) return { ok: false, error: 'ai-disabled' }
-      const now = Date.now()
-      if (now - lastAiAt < 1200) return { ok: false, error: 'cooldown' }
-      lastAiAt = now
-      // 全 AI 接管（ADR-031）：参考台词一律不给模型——客户端已经不发，这里再兜一层，
-      // 免得旧客户端或手工调用 /interact 时把固定对白塞进 prompt。
-      const context = settings.aiTakeover ? { ...input, hint: undefined } : input
-      const attempt = await generateReply(ctx.llm, {
-        provider: settings.aiProvider,
-        model: settings.aiModel,
-        persona: loadPersona(dirname(settingsStore.path)),
-        context,
-        history: aiHistory,
-        historyCount: settings.aiHistoryCount,
-        onPayload: (payload) => {
-          lastAiPayload = payload
-        },
-      })
+      const turn = beginAiTurn(input)
+      if (!turn.ok) return { ok: false, error: turn.error }
+      const attempt = await generateReply(ctx.llm, aiRequest(turn.settings, turn.context, (payload) => {
+        lastAiPayload = payload
+      }))
       if (attempt.text) {
-        // 只记录成功的往来：失败的请求不该污染上下文
-        // 历史只记真实发生的事：去掉参考台词（它没有上屏），避免模型把预置对白当成自己说过的话
-        const at = Date.now()
-        aiHistory = appendHistory(aiHistory, {
-          role: 'user',
-          text: buildSceneMessage(context, { forHistory: true }),
-          at,
-        })
-        aiHistory = appendHistory(
-          aiHistory,
-          { role: 'assistant', text: attempt.text, at: Date.now(), provider: settings.aiProvider, model: settings.aiModel },
-          AI_HISTORY_MAX_ENTRIES,
-        )
+        recordAiTurn(turn.context, attempt.text, turn.settings)
         return { ok: true, text: attempt.text }
       }
       // 失败原因回传（ADR-028）：设置页/排查时能直接看到是「没配 provider」还是「模型空回复」
@@ -362,30 +386,16 @@ export function apply(ctx: Context, config: Config): void {
       return { mime: audio.mime, audio: audio.audio }
     },
     stream: async (input, emit, signal) => {
-      const settings = settingsStore.get()
-      if (!settings.aiEnabled) {
-        emit('error', { error: 'ai-disabled' })
+      const turn = beginAiTurn(input)
+      if (!turn.ok) {
+        emit('error', { error: turn.error })
         return
       }
-      const now = Date.now()
-      if (now - lastAiAt < 1200) {
-        emit('error', { error: 'cooldown' })
-        return
-      }
-      lastAiAt = now
-      // 全 AI 接管：参考台词一律不给模型（与 /interact 同一层兜底）
-      const context = settings.aiTakeover ? { ...input, hint: undefined } : input
+      const { settings, context } = turn
       const speakOn = settings.ttsEnabled && settings.ttsModel.trim().length > 0
-      const chunks = streamReply(ctx.llm, {
-        provider: settings.aiProvider,
-        model: settings.aiModel,
-        persona: loadPersona(dirname(settingsStore.path)),
-        context,
-        history: aiHistory,
-        historyCount: settings.aiHistoryCount,
-        onPayload: (payload) => { lastAiPayload = payload },
-        signal,
-      })
+      const chunks = streamReply(ctx.llm, aiRequest(settings, context, (payload) => {
+        lastAiPayload = payload
+      }, signal))
       const speakOptions = voiceOptions()
       payloadSink = 'speak'
       const synthesize = async (text: string): Promise<TtsAudio | null> => {
@@ -398,19 +408,7 @@ export function apply(ctx: Context, config: Config): void {
         }
       }
       const result = await runSpeakPipeline({ chunks, synthesize, emit, signal })
-      if (result.text) {
-        const at = Date.now()
-        aiHistory = appendHistory(aiHistory, {
-          role: 'user',
-          text: buildSceneMessage(context, { forHistory: true }),
-          at,
-        })
-        aiHistory = appendHistory(
-          aiHistory,
-          { role: 'assistant', text: result.text, at: Date.now(), provider: settings.aiProvider, model: settings.aiModel },
-          AI_HISTORY_MAX_ENTRIES,
-        )
-      }
+      if (result.text) recordAiTurn(context, result.text, settings)
     },
   }
 

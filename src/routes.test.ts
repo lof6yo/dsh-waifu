@@ -147,7 +147,7 @@ describe('makePetRoutes API 路由', () => {
     expect(body.state).toBe('idle')
     expect(body.config.size).toBe(200)
     expect(body.config.spatialTap).toBeUndefined()
-    expect(body.config.touchParts.map((p: { name: string }) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
+    expect(body.config.touchParts.map((p: { name: string }) => p.name)).toEqual(['脸', '头发', '胸', '私处', '臀', '腰', '大腿', '手', '小腿', '脚'])
     cleanup()
   })
 
@@ -242,7 +242,7 @@ describe('makePetRoutes API 路由', () => {
     const body = JSON.parse(res.state.body.toString('utf8'))
     expect(body.model).toBe('jian')
     expect(body.saved).toBe(false)
-    expect(body.parts.length).toBe(9)
+    expect(body.parts.length).toBe(10)
     // 事件绑定（当前模型生效值，供设置页初始化）
     expect(body.events.idle.motions).toEqual(['Idle'])
     expect(body.events.thinking.lines.length).toBe(1)

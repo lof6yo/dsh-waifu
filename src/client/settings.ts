@@ -46,7 +46,6 @@ import {
   LIPSYNC_GAIN_LIMITS,
   normalizeHistoryCount,
   normalizeLipsyncGain,
-  DEFAULT_INTERACTION_MODE,
   TTS_MODELS,
   ttsDefaultVoice,
   ttsModelOption,

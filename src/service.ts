@@ -108,7 +108,7 @@ export class PetService {
   private listeners = new Set<ChangeListener>()
 
   constructor(
-    private readonly ctx: Context,
+    ctx: Context,
     private readonly getSettings: () => PetSettings,
     private readonly touchPartsStore?: TouchPartsStore,
   ) {

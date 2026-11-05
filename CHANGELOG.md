@@ -4,15 +4,23 @@
 
 ### Added
 
-- `/api/dsh-waifu/ai-debug` 增加 `lastTtsPayload` / `lastSpeakPayload`：分别记录最近一次「试听合成」与「对话流式合成」实际发给供应商的 body（model / input / voice / response_format / 是否命中缓存），方便对照同一次调用的 LLM 载荷排查
+- **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
+- 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
+- **AI 请求注入时间**：当前情景带上「现在是 X月X日 周X HH:MM」，注入历史每条带 `[HH:MM]`（跨天 `[M/D HH:MM]`）时间戳，模型可判断两次互动隔了多久（ADR-030 修订）。
+- **打断优先级设置 `interactionMode`**（ADR-032）：触摸优先（默认，触摸立刻接管长状态演绎）/ 互相打断 / 事件优先三档；长状态期间点宠物不再没反应。
+- 设置项「全 AI 接管」（`aiTakeover`）：不显示任何固定对白，气泡全部由模型生成（人设 + 场景 + 注入历史）；长状态的「延迟」失效、入态立刻请求，「间隔 / 上限」保留（ADR-031）。
+- `/api/dsh-waifu/ai-debug` 增加 `lastTtsPayload` / `lastSpeakPayload`：分别记录最近一次「试听合成」与「对话流式合成」实际发给供应商的 body（model / input / voice / response_format / 是否命中缓存），方便对照同一次调用的 LLM 载荷排查。
 
 ### Changed
 
-- 语音模型目录只保留通义千问 TTS 的两个模型：`qwen/qwen-audio-3.0-tts-plus`（默认，音色 `longanlingxin` 龙安灵心）与 `qwen/qwen-audio-3.0-tts-flash`（女声更多：龙安元妃 / 龙安风悦 / 龙安灵希 / 龙安小昕 / 龙安欢 / 龙泡泡 / loongmary / loongeva）。音色只收女性，取自[千问 TTS 音色列表](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；`fish-audio/drama-3`、`hexgrad/kokoro-82m`、`microsoft/mai-voice-2.1-flash` 从目录移除。设置文件版本升到 7，旧文件里的目录外模型自动回落到新默认
+- **默认值跟维护者日常配置对齐**：尺寸 300、中心距 12% / 31%、全 AI 接管默认开启、`openrouter` + `google/gemma-4-31b-it`、注入历史 20 条、等确认节奏 5s / 20s / 3 次、语音 `qwen/qwen-audio-3.0-tts-flash` + `longanxiaoxin`、口型强度 140%、开发者选项默认关闭、默认触摸部位新增「私处」（共 10 个）。
+- 语音模型目录只保留通义千问 TTS 的两个模型：`qwen/qwen-audio-3.0-tts-plus`（旗舰音色，`longanlingxin` 龙安灵心）与 `qwen/qwen-audio-3.0-tts-flash`（默认，女声更多：龙安元妃 / 龙安风悦 / 龙安灵希 / 龙安小昕 / 龙安欢 / 龙泡泡 / loongmary / loongeva）。音色只收女性，取自[千问 TTS 音色列表](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；`fish-audio/drama-3`、`hexgrad/kokoro-82m`、`microsoft/mai-voice-2.1-flash` 从目录移除。设置文件版本升到 7，旧文件里的目录外模型自动回落到新默认。
+- `src/ai.ts` 抽出 `assembleRequest()`（`generateReply` / `streamReply` 共用同一套人设 + 历史 + 场景拼装与载荷回报）；`src/index.ts` 抽出 `beginAiTurn` / `aiRequest` / `recordAiTurn`（`/interact` 与 `/speak` 共用冷却、接管兜底与历史记录）。
+- 客户端快照应用加签名短路：`config` / 位置没变时跳过整段 `applyConfig`，状态事件只走 `applyState`。
 
 ### Removed
 
-- 去掉「音色样本」（无状态音色克隆，`ttsReference` + `voices/reference.mp3` + `GET|POST /tts-sample*`）与「演绎指令」（`ttsInstructions`）：设置页少两行、少三个接口，请求体也不再带参考音频。`fish-audio/drama-3` 仍是默认模型（每句人声随机）；要固定人声请换 `TTS_MODELS` 里带音色列表的模型。
+- 去掉「音色样本」（无状态音色克隆，`ttsReference` + `voices/reference.mp3` + `GET|POST /tts-sample*`）与「演绎指令」（`ttsInstructions`）：设置页少两行、少三个接口，请求体也不再带参考音频。
 
 ### Performance
 
@@ -21,34 +29,6 @@
 - **表情参数只在未收敛时写**：目标值在状态变化、触摸、调试面板切换时刷新，10 个 `ParamSwitch*` 全部到位后跳过整帧写入。
 - **`applyBubbleStyle` 加样式签名短路**：SSE 每条消息都会调它，值没变不写 style。
 - **Host 配置读取带缓存**：`settings.jsonc` / `touch-parts.jsonc` 以 `mtimeMs:size` 判缓存，`snapshot()` 从每次 3 次读盘 + JSONC 解析降到 0–1 次。
-
-### Added
-
-- **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`，默认 `fish-audio/drama-3`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
-- 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
-
-- **AI 请求注入时间**：当前情景带上「现在是 X月X日 周X HH:MM」，注入历史每条带 `[HH:MM]`（跨天 `[M/D HH:MM]`）时间戳，模型可判断两次互动隔了多久（ADR-030 修订）
-
-- **打断优先级设置 `interactionMode`**（ADR-032）：触摸优先（默认，触摸立刻接管长状态演绎）/ 互相打断 / 事件优先三档；长状态期间点宠物不再没反应
-
-- 设置项「全 AI 接管」（`aiTakeover`，默认关）：不显示任何固定对白，气泡全部由模型生成（人设 + 场景 + 注入历史）；长状态的「延迟」失效、入态立刻请求，「间隔 / 上限」保留（ADR-031）
-- 排查接口 `GET /api/dsh-waifu/ai-debug`：返回当前历史缓冲、注入条数，以及**最近一次真正发给模型的载荷**（system + 逐条 messages），用于确认历史注入是否生效
-
-- **AI 演绎注入最近对话历史**（ADR-030）：Host 侧维护一份内存环形缓冲（情景描述 + 当时真正上屏的台词），请求时把最近 N 条拼在当前情景之前一起发给模型，连续触摸/状态流转的台词能接住上文、不再每次都像第一次见；设置页「AI 回复」新增「注入历史（条，0 = 不注入）」，默认 10、上限 50，0 = 完全恢复旧行为；只记录成功的往来，自检请求不污染历史；历史里存的是**干净版场景描述**（不带「你下意识想说的是『…』」的参考台词，避免模型把预置对白当成自己说过的话）
-
-### Changed
-
-- **默认值收敛到单一来源**（`src/defaults.ts`）：Config schema、设置页兜底、客户端渲染兜底、`waifu.json` 默认位置全部引用同一份常量，`defaults.test.ts` 校验一致；数值边界统一走 `src/clamp.ts`，插件私有路径统一走 `src/home.ts`。
-- 删除死代码：`shuffled`、`toggleEventMotion`、`modelDraft`、`saveError`，以及 `src/index.ts` 里同一模块的重复再导出。
-
-### Fixed
-
-- AI 回复不再传 `stop` 选项：`llm-pi-ai` 会以 `UNSUPPORTED_OPTION` 拒收整个请求，导致 OpenRouter 等 provider 一秒内返回空文本。
-- **推理型模型（如 `google/gemma-4-31b-it`）只吐思考、正文为空**：这类模型开着思维链时正文整段为空，插件只收到 reasoning 增量、没有 `text-delta`，表现为 `no-reply: empty-stream`；现在空正文会自动**关掉推理（`reasoningEffort: 'off'`）重试一次**，并把流结束原因带进错误码
-- **AI 回复失败不再「无声无息」**（ADR-028）：`generateReply()` 失败时返回原因，`/api/dsh-waifu/interact` 回 `no-reply: <原因>`（如 openrouter 未配 `OPENROUTER_API_KEY`、模型名不存在、超时、模型只吐空白）；桌宠仍回落到预置台词，不会把错误显示给用户
-- **AI 默认 provider 回退为 `deepseek-official` / `deepseek-flash`**：`openrouter` 依赖 `OPENROUTER_API_KEY` 环境变量，缺 key 时整条 provider 不可用，默认值不该指向它
-
-- **气泡过滤时间戳**：模型偶尔会像聊天记录那样给回复加上 `[14:57]`、`2026-11-05T14:57:16Z` 之类的时间，现在台词进气泡前统一滤掉（`stripTimestamps`，AI 台词、语音逐段显示、固定台词池都覆盖；句子中间的时间不动，只剩时间戳时保留原文）
 
 ## [0.4.0] - 2026-11-05
 
