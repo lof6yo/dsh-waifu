@@ -46,11 +46,11 @@ export type MotionMap = Partial<Record<AnimationSlot, string[]>>
 /** 默认动画映射：与旧版内置候选链一致（有序 fallback；配置映射后为随机选择）。 */
 export const DEFAULT_MOTION_MAP: MotionMap = {
   idle: ['Idle'],
-  thinking: ['Thinking', 'Working', 'Idle'],
-  error: ['Failed', 'Sad', 'Idle'],
-  done: ['Jumping', 'Done', 'Idle'],
-  waiting: ['Waiting', 'Idle'],
-  delivered: ['Jumping', 'Done', 'Idle'],
+  thinking: ['Tilt', 'Idle'],
+  error: ['ShakeHead', 'Idle'],
+  done: ['Hop', 'Idle'],
+  waiting: ['Sway', 'Idle'],
+  delivered: ['Hop', 'Idle'],
 }
 
 /** 宠物事件键（与状态动画槽位同构：空闲/思考/出错/完成/交付/等审批）。 */
@@ -92,7 +92,7 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
     lines: [['（安静地待着）', '……在的。', '有什么要做的吗？']],
   },
   thinking: {
-    motions: ['Thinking', 'Working', 'Idle'],
+    motions: ['Tilt', 'Idle'],
     lines: [
       ['思考中…', '让我想想。'],
       ['还在想，稍等…', '这个问题有点绕。'],
@@ -100,19 +100,19 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
     ],
   },
   error: {
-    motions: ['Failed', 'Sad', 'Idle'],
+    motions: ['ShakeHead', 'Idle'],
     lines: [['出错了…我再试一次。', '唔，好像不太顺利。']],
   },
   done: {
-    motions: ['Jumping', 'Done', 'Idle'],
+    motions: ['Hop', 'Idle'],
     lines: [['搞定！', '完成了。', '做完啦。']],
   },
   delivered: {
-    motions: ['Jumping', 'Done', 'Idle'],
+    motions: ['Hop', 'Idle'],
     lines: [['文件放这儿了。', '交付完成，请查收。']],
   },
   waiting: {
-    motions: ['Waiting', 'Idle'],
+    motions: ['Sway', 'Idle'],
     lines: [
       ['等你确认。', '需要你决定一下。'],
       ['还在等你哦。', '不着急，我等着。'],

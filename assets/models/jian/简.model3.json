@@ -14,6 +14,41 @@
 					"FadeInTime": 0.5,
 					"FadeOutTime": 0.5
 				}
+			],
+			"Nod": [
+				{
+					"File": "motions/nod.motion3.json",
+					"FadeInTime": 0.15,
+					"FadeOutTime": 0.25
+				}
+			],
+			"ShakeHead": [
+				{
+					"File": "motions/shake-head.motion3.json",
+					"FadeInTime": 0.15,
+					"FadeOutTime": 0.25
+				}
+			],
+			"Tilt": [
+				{
+					"File": "motions/tilt.motion3.json",
+					"FadeInTime": 0.25,
+					"FadeOutTime": 0.3
+				}
+			],
+			"Sway": [
+				{
+					"File": "motions/sway.motion3.json",
+					"FadeInTime": 0.3,
+					"FadeOutTime": 0.35
+				}
+			],
+			"Hop": [
+				{
+					"File": "motions/hop.motion3.json",
+					"FadeInTime": 0.12,
+					"FadeOutTime": 0.2
+				}
 			]
 		}
 	},

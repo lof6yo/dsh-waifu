@@ -1,6 +1,6 @@
 # ADR-020：动作集回退为只有 Idle，其余动作待重新设计
 
-- 状态：Accepted
+- 状态：Superseded（ADR-021 以 5 个基础动作重开）
 - 日期：2026-11-05
 - 关联：取代 ADR-018、ADR-019 的动作集部分；spec §5/§6；`scripts/gen-jian-motions.mjs`
 

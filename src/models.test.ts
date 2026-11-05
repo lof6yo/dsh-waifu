@@ -35,11 +35,11 @@ describe('listBuiltinPresets', () => {
   it('内置模型带状态动画映射与默认触摸部位', () => {
     const jian = listBuiltinPresets()[0]
     expect(jian.animationMap?.idle).toEqual(['Idle'])
-    expect(jian.animationMap?.thinking).toEqual([])
-    expect(jian.animationMap?.error).toEqual([])
-    expect(jian.animationMap?.done).toEqual([])
-    expect(jian.animationMap?.waiting).toEqual([])
-    expect(jian.animationMap?.delivered).toEqual([])
+    expect(jian.animationMap?.thinking).toEqual(['Tilt'])
+    expect(jian.animationMap?.error).toEqual(['ShakeHead'])
+    expect(jian.animationMap?.done).toEqual(['Hop'])
+    expect(jian.animationMap?.waiting).toEqual(['Sway'])
+    expect(jian.animationMap?.delivered).toEqual(['Hop'])
     expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
     expect(jian.touchParts?.map((p) => p.motions)).toEqual([
       [], [], [], [], [], [], [], [], [],
@@ -71,9 +71,9 @@ describe('resolveMotionMap', () => {
   it('内置 presets 的 animationMap 生效', () => {
     const map = resolveMotionMap('jian')
     expect(map.idle).toEqual(['Idle'])
-    expect(map.thinking).toEqual([])
-    expect(map.error).toEqual([])
-    expect(map.delivered).toEqual([])
+    expect(map.thinking).toEqual(['Tilt'])
+    expect(map.error).toEqual(['ShakeHead'])
+    expect(map.delivered).toEqual(['Hop'])
   })
 })
 

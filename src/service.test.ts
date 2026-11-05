@@ -74,8 +74,8 @@ describe('PetService 状态机', () => {
     expect(view.config.maxFps).toBe(30)
     expect(view.config.model).toBe('jian')
     expect(view.config.events.idle.motions).toEqual(['Idle'])
-    expect(view.config.events.thinking.motions).toEqual([])
-    expect(view.config.events.done.motions).toEqual([])
+    expect(view.config.events.thinking.motions).toEqual(['Tilt'])
+    expect(view.config.events.done.motions).toEqual(['Hop'])
     // 默认台词池（无固定人设，中性口吻；长状态 3 阶段）
     expect(view.config.events.idle.lines.length).toBe(1)
     expect(view.config.events.thinking.lines.length).toBe(3)
@@ -115,7 +115,7 @@ describe('PetService 状态机', () => {
 
   it('保存事件绑定覆盖层后 snapshot.config.events 立即生效（整事件替换）', () => {
     const { service } = makeHarness()
-    expect(service.snapshot().config.events.thinking.motions).toEqual([])
+    expect(service.snapshot().config.events.thinking.motions).toEqual(['Tilt'])
     service.saveTouchParts('jian', [], {
       thinking: { motions: ['TapHead', 'Idle'], lines: [['自己想的台词']] },
     })

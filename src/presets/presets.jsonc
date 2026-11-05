@@ -18,16 +18,15 @@
       },
       "cubism": 4,
       "status": "bundled",
-      // 简的动作组（assets/models/jian/motions/ 只有自建 Idle；ADR-017/020）
-      // 其余事件默认不播动作（只出气泡），可在设置页「事件绑定」里手动挂 Idle。
-      // 六个事件都挂了对应状态动作；不想要动作可在设置页「事件绑定」里清空（只出气泡）。
+      // 简的动作组（assets/models/jian/motions/：Idle/Nod/ShakeHead/Tilt/Sway/Hop；ADR-021）
+      // 事件默认挂载：思考=歪头、等待=左右晃、出错=摇头、完成/交付=轻跳（可在设置页「事件绑定」里改）。
       "animationMap": {
         "idle": ["Idle"],
-        "thinking": [],
-        "error": [],
-        "done": [],
-        "waiting": [],
-        "delivered": []
+        "thinking": ["Tilt"],
+        "error": ["ShakeHead"],
+        "done": ["Hop"],
+        "waiting": ["Sway"],
+        "delivered": ["Hop"]
       },
       // 默认触摸部位（按「简」实际渲染构图调好的取值，用户可在设置页覆盖/增删）。
       // 数组顺序 = 图层顺序（第 0 项最上层）：脸 > 头发 > 胸 > 臀 > 腰 > 大腿 > 手 > 小腿 > 脚（spec §4）。

@@ -587,6 +587,54 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
+  /** 上下轻跳的动作组名：动作文件只做姿态（蓄力/腾空/落地缓冲），位移由 canvas 侧补。 */
+  const HOP_MOTION = 'Hop'
+  let hopRaf = 0
+
+  /**
+   * 「Hop」的位移段：模型没有可驱动的根位移参数（位移类参数都被物理接管），
+   * 纯靠动作只能做出头颈姿态，所以这里给渲染层补一段抛物线位移 + 起落压扁/拉伸。
+   * 只动渲染元素（不改 pos/命中判定），0.62s 后自动复位。
+   */
+  function playHopBounce(): void {
+    const targets: HTMLElement[] = []
+    if (canvas) targets.push(canvas)
+    if (touchboxOverlay) targets.push(touchboxOverlay)
+    if (hitLayer) targets.push(hitLayer)
+    if (targets.length === 0) return
+    const height = Math.max(12, Math.round(pos.size * 0.1))
+    const duration = 620
+    const startedAt = performance.now()
+    window.cancelAnimationFrame(hopRaf)
+    for (const el of targets) el.style.transformOrigin = '50% 100%'
+    const step = (): void => {
+      const t = (performance.now() - startedAt) / duration
+      if (t >= 1) {
+        for (const el of targets) el.style.transform = ''
+        hopRaf = 0
+        return
+      }
+      let lift = 0
+      let squash = 1
+      if (t < 0.15) {
+        // 蓄力：压扁一点
+        squash = 1 - 0.07 * (t / 0.15)
+      } else if (t < 0.72) {
+        // 腾空：抛物线位移 + 轻微拉伸
+        const u = (t - 0.15) / 0.57
+        lift = 4 * u * (1 - u) * height
+        squash = 1 + 0.05 * Math.sin(Math.PI * u)
+      } else {
+        // 落地：短促回弹
+        squash = 1 - 0.05 * Math.sin(Math.PI * ((t - 0.72) / 0.28))
+      }
+      const transform = `translateY(${(-lift).toFixed(2)}px) scaleY(${squash.toFixed(3)})`
+      for (const el of targets) el.style.transform = transform
+      hopRaf = window.requestAnimationFrame(step)
+    }
+    hopRaf = window.requestAnimationFrame(step)
+  }
+
   /**
    * 按候选动作链启动动作，统一处理优先级、重播前 stopAllMotions、布尔返回值 fallback。
    * - idle 用 IDLE 优先级；状态/互动用 FORCE（NORMAL 不能打断 NORMAL，无法满足状态立即切换）。
@@ -615,7 +663,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       try {
         const ok = await model.motion(name, undefined, priority)
         if (seq !== motionSeq || !model) return false
-        if (ok) return true
+        if (ok) {
+          if (name === HOP_MOTION) playHopBounce()
+          return true
+        }
       } catch {
         if (seq !== motionSeq || !model) return false
         // 单个候选失败/返回 false 时继续尝试下一个
