@@ -30,7 +30,7 @@ ADR-018/019 的两轮动作（状态 + 触摸 + 人设，共 17 组）观感始�
 | --- | --- | --- | --- |
 | `Nod` 点头 | `motions/nod.motion3.json` | 1.5s | 两次、先浅后深（14° → 20°）；侧倾比俯仰晚 0.12s 到位；收尾上抬 3° 过冲再刹车回落；点头时眼睑下压，抬起来前眨一次 |
 | `ShakeHead` 摇头 | `motions/shake-head.motion3.json` | 1.6s | 1.7Hz 正弦 ±26° × 中段抬升包络（头尾自然归零）；侧倾迟 0.9rad 跟随；中段眨眼；眉毛压低、嘴角下拉 |
-| `Tilt` 歪头 | `motions/tilt.motion3.json` | 2.0s | 平滑起 0.4s 到 22°，停住约 0.7s，回正反向过冲 2.5°；眼球上移、眉梢抬、腮微鼓 |
+| `Tilt` 歪头 | `motions/tilt.motion3.json` | 2.0s | 平滑起 0.4s 到 28°，停住约 0.7s，回正反向过冲 3.2°；眼球上移、眉梢抬、腮微鼓 |
 | `Sway` 左右晃 | `motions/sway.motion3.json` | 3.0s | 两个来回的正弦（`AngleZ` ±19、`AngleX` ±13.5 相位滞后 0.55rad、`AnglePX` ±7.5），头尾包络保证从静止起、回静止收；两次眨眼 |
 
 **「上下轻跳」已删除**：模型没有可驱动的根位移参数（`ParamBodyAngleRX/RY/RZ` 分别是
