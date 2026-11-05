@@ -229,6 +229,8 @@ export interface AiRoutesApi {
   readPersona(): { text: string; path: string }
   /** 写人设文件（超长截断；空白回退默认人设）。 */
   writePersona(text: string): { text: string; path: string }
+  /** 用指定（或已保存的）provider/model 跑一次真实请求，把失败原因直接回传。 */
+  check?(input?: { provider?: string; model?: string }): Promise<{ ok: boolean; text?: string; error?: string }>
 }
 
 /** AI 回复 API（ADR-025）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
@@ -316,6 +318,11 @@ export function makePetRoutes(deps: {
         () => aiSettings.readPersona(),
         (body) => aiSettings.writePersona(typeof body.text === 'string' ? body.text : ''),
       ),
+      // 连通性自检：设置页「测试连接」用它把 provider/模型的真实失败原因打出来
+      ...(aiSettings.check ? [postRoute(`${PET_API_PREFIX}/ai-check`, (body) => aiSettings.check!({
+        provider: typeof body.provider === 'string' && body.provider.length > 0 ? body.provider : undefined,
+        model: typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined,
+      }))] : []),
     ] : []),
     // AI 回复（ADR-025）：客户端上报「戳了哪里 / 变成什么状态」，Host 用 ctx.llm 生成一句台词
     ...(ai ? [postRoute(`${PET_API_PREFIX}/interact`, (body) => {

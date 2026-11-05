@@ -214,6 +214,19 @@ export function apply(ctx: Context, config: Config): void {
       return { text: loadPersona(home), path: personaPath(home) }
     },
     writePersona: (text) => savePersona(dirname(settingsStore.path), text),
+    // 连通性自检（设置页「测试连接」）：用显式 provider/model 或已保存配置真实发一次请求
+    check: async (input) => {
+      const settings = settingsStore.get()
+      const attempt = await generateReply(ctx.llm, {
+        provider: input?.provider || settings.aiProvider,
+        model: input?.model || settings.aiModel,
+        persona: loadPersona(dirname(settingsStore.path)),
+        context: { kind: 'tap', part: '脸', hint: '有人戳了戳你的脸' },
+        timeoutMs: 20000,
+      })
+      if (attempt.text) return { ok: true, text: attempt.text }
+      return { ok: false, error: attempt.error ?? 'unknown' }
+    },
   }
 
   // 路由随插件生命周期注册/清理。插件卸载时同时关闭全部活跃 SSE 流（onStream），

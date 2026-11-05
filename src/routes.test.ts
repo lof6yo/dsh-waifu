@@ -79,6 +79,7 @@ function makeRoutes(
     options: () => Promise<{ providers: { id: string; name: string }[]; models: Record<string, { id: string; name: string }[]> }>
     readPersona: () => { text: string; path: string }
     writePersona: (text: string) => { text: string; path: string }
+    check?: (input?: { provider?: string; model?: string }) => Promise<{ ok: boolean; text?: string; error?: string }>
   },
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-route-'))

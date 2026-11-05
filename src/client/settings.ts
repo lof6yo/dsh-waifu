@@ -384,6 +384,7 @@ const SETTINGS_API = '/api/dsh-waifu/settings'
 const STATE_API = '/api/dsh-waifu/state'
 const TOUCH_PARTS_API = '/api/dsh-waifu/touch-parts'
 const AI_OPTIONS_API = '/api/dsh-waifu/ai-options'
+const AI_CHECK_API = '/api/dsh-waifu/ai-check'
 const PERSONA_API = '/api/dsh-waifu/persona'
 
 /* ---- 设计 token（DSH Theme 变量；深/浅色自动适配） ---- */
@@ -1264,6 +1265,29 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const [personaDraft, setPersonaDraft] = useState<string | null>(null)
   const [personaStatus, setPersonaStatus] = useState<string | null>(null)
   const [personaSaving, setPersonaSaving] = useState(false)
+  const [aiCheckStatus, setAiCheckStatus] = useState<{ ok: boolean; text: string } | null>(null)
+  const [aiChecking, setAiChecking] = useState(false)
+
+  /** 连通性自检：真实发一次请求，把成功台词或失败原因就地显示（排查 provider 差异用）。 */
+  const checkAi = (): void => {
+    if (aiChecking) return
+    setAiChecking(true)
+    setAiCheckStatus(null)
+    void fetch(`${AI_CHECK_API}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: value.aiProvider, model: value.aiModel }),
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<{ ok?: boolean; text?: string; error?: string }>) : null))
+      .then((result) => {
+        if (!result) { setAiCheckStatus({ ok: false, text: '请求失败' }); return }
+        setAiCheckStatus(result.ok
+          ? { ok: true, text: result.text ?? '（空回复）' }
+          : { ok: false, text: result.error ?? '未知错误' })
+      })
+      .catch(() => setAiCheckStatus({ ok: false, text: '请求异常' }))
+      .finally(() => setAiChecking(false))
+  }
 
   // AI 回复（ADR-025）：provider/model 候选取 Host 的 llm 目录；人设文件按需读取
   useEffect(() => {
@@ -2615,7 +2639,27 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 if (next && next !== value.aiModel) enqueueWrite(() => [{ op: 'set', path: ['aiModel'], value: next }])
               },
             }),
+          createElement('button', {
+            type: 'button',
+            style: { ...buttonPrimaryStyle, marginLeft: 8, opacity: aiChecking ? 0.6 : 1 },
+            disabled: aiChecking,
+            onClick: () => checkAi(),
+          }, aiChecking ? '测试中…' : '测试'),
         ),
+      ),
+      !!aiCheckStatus && createElement('div', { style: formRowStyle },
+        createElement('label', { style: formLabelStyle }, '自检'),
+        createElement('div', {
+          style: {
+            ...formControlStyle,
+            color: aiCheckStatus.ok ? C.success : C.error,
+            fontSize: 12,
+            lineHeight: 1.5,
+            wordBreak: 'break-all',
+            maxHeight: 96,
+            overflowY: 'auto',
+          },
+        }, aiCheckStatus.text),
       ),
       createElement('div', { style: formRowStartStyle },
         createElement('label', { style: formLabelStartStyle }, '人设'),
