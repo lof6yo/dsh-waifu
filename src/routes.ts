@@ -221,15 +221,26 @@ function serveFile(req: IncomingMessage, res: ServerResponse, file: string): Pro
   })
 }
 
+/** AI 回复 API（ADR-025）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
+export interface InteractRoutesApi {
+  reply(input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<{
+    ok: boolean
+    text?: string
+    error?: string
+  }>
+}
+
 /** 构建完整路由族（API + SSE + 素材 + 本地模型）供 ctx.webServer.register。 */
 export function makePetRoutes(deps: {
   service: PetService
   packageRoot: string
   settings: SettingsRoutesApi
+  /** AI 回复（可选：未接线时不注册 /interact）。 */
+  ai?: InteractRoutesApi
   /** SSE 活跃流注册钩子：插件卸载时由调用方逐一 close（ADR-006）。 */
   onStream?: (close: () => void) => void
 }): WebRoute[] {
-  const { service, packageRoot, settings, onStream } = deps
+  const { service, packageRoot, settings, ai, onStream } = deps
   const apiRoutes: WebRoute[] = [
     sseStateRoute(`${PET_API_PREFIX}/events`, service, onStream),
     getRoute(`${PET_API_PREFIX}/state`, async () => service.snapshot()),
@@ -285,6 +296,14 @@ export function makePetRoutes(deps: {
       return Promise.resolve({ ok: true, display: service.setDisplay(patch) })
     }),
     postRoute(`${PET_API_PREFIX}/reset-display`, () => Promise.resolve({ ok: true, display: service.resetDisplay() })),
+    // AI 回复（ADR-025）：客户端上报「戳了哪里 / 变成什么状态」，Host 用 ctx.llm 生成一句台词
+    ...(ai ? [postRoute(`${PET_API_PREFIX}/interact`, (body) => {
+      const kind = body.kind === 'state' ? 'state' as const : 'tap' as const
+      const part = typeof body.part === 'string' ? body.part.slice(0, 40) : undefined
+      const state = typeof body.state === 'string' ? body.state.slice(0, 20) : undefined
+      const hint = typeof body.hint === 'string' ? body.hint.slice(0, 120) : undefined
+      return ai.reply({ kind, part, state, hint })
+    })] : []),
     // 浏览器侧诊断日志（spec §9）：客户端启动里程碑/错误上报，Host 落盘便于无控制台环境排查
     getPostRoute(
       `${PET_API_PREFIX}/client-log`,

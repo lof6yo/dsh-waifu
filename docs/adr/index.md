@@ -30,3 +30,4 @@
 | [022](022-expressions.md) | 表情系统：参数开关（脸黑/脸红/生气/星星眼/白眼/泪花/爱心眼/眼泪/血/高光消失）+ 连续参数强度滑杆 | Superseded（ADR-023 的入口与强度滑杆部分） |
 | [023](023-motion-selection-merged-expression.md) | 动作组与表情合并为同一套「动作 / 表情」混选（一个动作 + 一个表情） | Accepted（「一个表情」与英文名由 ADR-024 调整） |
 | [024](024-multiple-expressions-and-labels.md) | 表情可叠加（按互斥组收敛）+ 动作组中文显示名 | Accepted |
+| [025](025-ai-reply-via-dsh-llm.md) | AI 回复：复用 DSH 的 llm 服务 + 人设文件（persona.md） | Accepted |

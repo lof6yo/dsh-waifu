@@ -255,6 +255,13 @@ const api = {
     es.onerror = onError
     return () => es.close()
   },
+  /** AI 回复（ADR-025）：上报「戳了哪里/变成什么状态」，拿回一句台词（失败返回 ok:false）。 */
+  interact: (body: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    fetch(`${PET_API}/interact`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((res) => readJson<{ ok: boolean; text?: string; error?: string }>(res)),
   setDisplay: (patch: { right?: number; bottom?: number }): Promise<{ ok: boolean }> =>
     fetch(`${PET_API}/set-display`, {
       method: 'POST',
@@ -416,6 +423,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let debugExpression: string | null = null
   /** 表达式开关参数当前混合值（每帧向目标逼近 → 淡入淡出）。 */
   const expressionMix = new Map<string, number>()
+  /** AI 回复开关（SSE config.aiEnabled；ADR-025）：开启后触摸/状态台词改由 Host 调 LLM 生成。 */
+  let aiEnabled = false
+  /** AI 回复请求序号：只采用最后一次请求的结果，避免连点时旧回复覆盖新回复。 */
+  let aiRequestSeq = 0
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
   let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
@@ -703,6 +714,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         const line = pickEventLine(state, 0)
         if (line !== undefined) showBubble(line)
         else hideBubble()
+        if (state !== 'idle') void requestAiReply({ kind: 'state', state, hint: line })
       }
       playState(state)
     }
@@ -1611,6 +1623,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     bubbleTextColor = typeof cfg.bubbleTextColor === 'string' && cfg.bubbleTextColor.trim()
       ? cfg.bubbleTextColor
       : DEFAULT_BUBBLE_TEXT_COLOR
+    aiEnabled = cfg.aiEnabled === true
     applyBubbleStyle()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -1676,6 +1689,22 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
+  /**
+   * AI 回复（ADR-025）：Host 生成一句台词后替换气泡；失败/超时保持预置台词不动。
+   * 连点时只采用最新一次请求的结果（`aiRequestSeq`）。
+   */
+  async function requestAiReply(input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<void> {
+    if (!aiEnabled) return
+    const seq = ++aiRequestSeq
+    try {
+      const result = await api.interact(input)
+      if (seq !== aiRequestSeq) return
+      if (result.ok && result.text) showBubble(result.text)
+    } catch {
+      // 忽略：保留预置台词（无网络/模型不可用时的降级路径）
+    }
+  }
+
   function handleTap(e: PointerEvent): void {
     if (!canvas || !model) return
     const now = Date.now()
@@ -1697,13 +1726,17 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (!part) return
       // 台词：该部位自定义台词（part.lines）非空时随机选一条，并避开该部位上一条
       // （按 part.id 记录，部位间互不干扰）；未配置台词 → 不显示气泡，只播部位动作（spec §4）。
+      let spoken: string | undefined
       if (part.lines && part.lines.length > 0) {
         const line = pickLine(part.lines, lastPartLine.get(part.id))
         if (line !== undefined) {
           lastPartLine.set(part.id, line)
           showBubble(line)
+          spoken = line
         }
       }
+      // AI 回复（ADR-025）：预置台词先出、AI 台词到了再替换（失败即保持预置台词）
+      void requestAiReply({ kind: 'tap', part: part.name, hint: spoken })
       // 动作组 / 表情：部位混选里 1 个动作组 + 若干表情；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
       const selection = splitMotionSelection(part.motions)
       if (selection.expressions.length > 0) {
@@ -1755,6 +1788,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         bubbleTextColor = typeof view.config.bubbleTextColor === 'string' && view.config.bubbleTextColor.trim()
           ? view.config.bubbleTextColor
           : DEFAULT_BUBBLE_TEXT_COLOR
+        aiEnabled = view.config.aiEnabled === true
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)
 

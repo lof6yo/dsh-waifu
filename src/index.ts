@@ -11,12 +11,15 @@
  * @module dsh-waifu
  */
 
+import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-llm'
 import { PetService } from './service.ts'
-import { makePetRoutes, petPackageRoot, type SettingsRoutesApi } from './routes.ts'
+import { makePetRoutes, petPackageRoot, type InteractRoutesApi, type SettingsRoutesApi } from './routes.ts'
+import { generateReply, loadPersona } from './ai.ts'
 import {
   defaultModelId,
   listBuiltinPresets,
@@ -88,10 +91,13 @@ export const Config: Schema<Config> = Schema.object({
   bubbleBgColor: Schema.string().default('#ffffff'),
   bubbleBgOpacity: Schema.number().min(0).max(100).default(92),
   bubbleTextColor: Schema.string().default('#222222'),
+  aiEnabled: Schema.boolean().default(false),
+  aiProvider: Schema.string().default('deepseek-official'),
+  aiModel: Schema.string().default('deepseek-flash'),
 })
 
-/** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）。 */
-export const inject = ['webServer', 'settings']
+/** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）、llm（AI 回复，ADR-025）。 */
+export const inject = ['webServer', 'settings', 'llm']
 
 /** 注册宠物服务、设置 API 与素材路由。 */
 export function apply(ctx: Context, config: Config): void {
@@ -117,6 +123,9 @@ export function apply(ctx: Context, config: Config): void {
     bubbleBgColor: config.bubbleBgColor,
     bubbleBgOpacity: config.bubbleBgOpacity,
     bubbleTextColor: config.bubbleTextColor,
+    aiEnabled: config.aiEnabled,
+    aiProvider: config.aiProvider,
+    aiModel: config.aiModel,
   }
   const settingsStore = new SettingsStore(baseSettings)
 
@@ -133,6 +142,26 @@ export function apply(ctx: Context, config: Config): void {
     },
   }
 
+  // AI 回复（ADR-025）：复用 DSH 已配置的 provider/model 与账号，人设读 $DSH_HOME/waifu/persona.md。
+  // 冷却：同类触发（tap/state）1.2s 内只回一次，避免连点刷屏与刷 token。
+  let lastAiAt = 0
+  const aiApi: InteractRoutesApi = {
+    reply: async (input) => {
+      const settings = settingsStore.get()
+      if (!settings.aiEnabled) return { ok: false, error: 'ai-disabled' }
+      const now = Date.now()
+      if (now - lastAiAt < 1200) return { ok: false, error: 'cooldown' }
+      lastAiAt = now
+      const text = await generateReply(ctx.llm, {
+        provider: settings.aiProvider,
+        model: settings.aiModel,
+        persona: loadPersona(dirname(settingsStore.path)),
+        context: input,
+      })
+      return text ? { ok: true, text } : { ok: false, error: 'no-reply' }
+    },
+  }
+
   // 路由随插件生命周期注册/清理。插件卸载时同时关闭全部活跃 SSE 流（onStream），
   // 避免旧流在路由注销后空转心跳。
   ctx.effect(() => {
@@ -141,6 +170,7 @@ export function apply(ctx: Context, config: Config): void {
       service,
       packageRoot: petPackageRoot(import.meta.url),
       settings: settingsApi,
+      ai: aiApi,
       onStream: (close) => { openStreams.add(close) },
     })
     const disposers = routes.map((route) => ctx.webServer.register(route))

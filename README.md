@@ -105,6 +105,13 @@ dsh plugin --profile <profile> remove dsh-waifu
 5. 部位有**图层**：列表从上到下 = 从顶层到底层，box 重叠时上层生效；用「↑ / ↓」调整，新建部位默认在最上层
 6. 修改按部位粒度提示保存（卡片头「保存」；新建 / 删除 / 排序在分组顶部提示保存），保存后写入 `$DSH_HOME/waifu/touch-parts.jsonc`
 
+### AI 回复
+
+- 开关在设置页「AI 回复」分组；开启后触摸部位 / 事件状态的台词交给 DSH 已配置的模型现场生成（复用 provider 与账号，不需要另外填 Key）
+- `Provider` / `模型` 默认 `deepseek-official` / `deepseek-flash`，可改成 DSH 里配置过的其他路由
+- 人设是 `$DSH_HOME/waifu/persona.md`：首次开启自动生成模板（短句、口语、不要旁白），直接编辑即可换语气；改完刷新页面生效
+- 容错：先显示预置台词，AI 台词到了再替换；模型不可用 / 超时 / 返回空 → 保持预置台词
+
 ### 开发者选项
 
 - 总开关；开启后可打开调试面板（状态演示、模型原生动画预览）与「显示触摸部位色块」叠加层
@@ -115,6 +122,7 @@ dsh plugin --profile <profile> remove dsh-waifu
 |---|---|
 | `$DSH_HOME/waifu/settings.jsonc` | 显示 / 渲染 / 画布 / 气泡等标量设置 |
 | `$DSH_HOME/waifu/touch-parts.jsonc` | 触摸部位（parts：图层 / box / 台词 / 动作）与事件绑定覆盖（events） |
+| `$DSH_HOME/waifu/persona.md` | AI 回复的人设提示词（ADR-025） |
 | `$DSH_HOME/waifu/client.log` | 浏览器侧诊断日志（启动里程碑 / 错误栈） |
 | `$DSH_HOME/waifu.json` | 宠物显示位置（拖动 / 归位后持久化） |
 

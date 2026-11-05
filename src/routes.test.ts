@@ -60,9 +60,12 @@ const BASE_SETTINGS: PetSettings = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
+  aiEnabled: false,
+  aiProvider: 'deepseek-official',
+  aiModel: 'deepseek-flash',
 }
 
-function makeRoutes() {
+function makeRoutes(ai?: { reply: (input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }) => Promise<{ ok: boolean; text?: string; error?: string }> }) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-route-'))
   mkdirSync(join(dir, 'assets', 'vendor'), { recursive: true })
   mkdirSync(join(dir, 'assets', 'models', 'jian'), { recursive: true })
@@ -92,7 +95,7 @@ function makeRoutes() {
     write: vi.fn(async () => {}),
   }
   const openStreams: Array<() => void> = []
-  const routes = makePetRoutes({ service, packageRoot: dir, settings, onStream: (close) => { openStreams.push(close) } })
+  const routes = makePetRoutes({ service, packageRoot: dir, settings, ai, onStream: (close) => { openStreams.push(close) } })
   const route = (path: string) => routes.find((r) => r.path === path)
   const cleanup = () => { delete process.env.DSH_HOME; rmSync(dir, { recursive: true, force: true }) }
   return { route, routes, settings, service, emit, openStreams, dir, cleanup }
@@ -116,6 +119,27 @@ describe('makePetRoutes API 路由', () => {
     cleanup()
   })
 
+
+  it('POST /interact 把部位/状态转给 AI 并返回台词', async () => {
+    const reply = vi.fn(async () => ({ ok: true, text: '别戳啦…' }))
+    const { route, cleanup } = makeRoutes({ reply })
+    const res = fakeRes()
+    await route(`${PET_API_PREFIX}/interact`)!.handler(
+      fakeReq('POST', JSON.stringify({ kind: 'tap', part: '胸', hint: '呀！那里不能戳啦…' })),
+      res as never,
+    )
+    await flush()
+    expect(res.state.status).toBe(200)
+    expect(JSON.parse(res.state.body.toString('utf8'))).toEqual({ ok: true, text: '别戳啦…' })
+    expect(reply).toHaveBeenCalledWith({ kind: 'tap', part: '胸', state: undefined, hint: '呀！那里不能戳啦…' })
+    cleanup()
+  })
+
+  it('未接线 AI 时不注册 /interact', () => {
+    const { route, cleanup } = makeRoutes()
+    expect(route(`${PET_API_PREFIX}/interact`)).toBeUndefined()
+    cleanup()
+  })
 
   it('错误方法返回 405', () => {
     const { route, cleanup } = makeRoutes()

@@ -56,6 +56,8 @@ export interface PetStateView {
     bubbleBgColor: string
     bubbleBgOpacity: number
     bubbleTextColor: string
+    /** AI 回复开关（ADR-025）。 */
+    aiEnabled: boolean
     /** 六个事件的绑定（动画组候选 + 台词池；内置/自定义默认 → 用户覆盖）。 */
     events: EventBindings
     /** 当前模型生效的触摸部位（用户自定义优先，其次内置默认；spec §4）。 */
@@ -202,6 +204,7 @@ export class PetService {
         bubbleBgColor: settings.bubbleBgColor,
         bubbleBgOpacity: settings.bubbleBgOpacity,
         bubbleTextColor: settings.bubbleTextColor,
+        aiEnabled: settings.aiEnabled,
         events: this.effectiveEvents(settings.model),
         touchParts: this.touchPartsFor(settings.model),
       },

@@ -13,7 +13,7 @@
  */
 
 import { Fragment, createElement, useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, ChangeEvent, MouseEvent, ReactNode, ReactElement } from 'react'
+import type { CSSProperties, ChangeEvent, FocusEvent, MouseEvent, ReactNode, ReactElement } from 'react'
 import type {
   EventBinding,
   EventBindings,
@@ -73,6 +73,12 @@ export interface PetSettingsValue {
   debug: boolean
   /** 显示触摸部位色块（开发者选项，spec §2/§4）。 */
   showTapZones: boolean
+  /** AI 回复总开关（ADR-025）。 */
+  aiEnabled: boolean
+  /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider）。 */
+  aiProvider: string
+  /** AI 回复使用的模型 id。 */
+  aiModel: string
 }
 
 /** GET /api/dsh-waifu/settings 视图（settings.jsonc 读取结果）。 */
@@ -110,6 +116,9 @@ const DEFAULT_VALUE: PetSettingsValue = {
   developerMode: false,
   debug: false,
   showTapZones: false,
+  aiEnabled: false,
+  aiProvider: 'deepseek-official',
+  aiModel: 'deepseek-flash',
 }
 
 /** 事件卡片展示顺序（空闲/思考中/出错/完成/交付/等审批）。 */
@@ -2316,7 +2325,59 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     }, '+ 新建部位'),
   ))
 
-  // 6. 开发者选项
+  // 6. AI 回复（ADR-025）：复用 DSH 已配置的 provider/model；人设读 $DSH_HOME/waifu/persona.md
+  children.push(createElement('div', { key: 'ai-reply', style: sectionStyle },
+    createElement(SectionHeader, {
+      title: 'AI 回复',
+      description: '开启后触摸与状态变化改由 DSH 已配置的模型生成一句台词（失败自动回落下面的预置台词）。',
+      action: createElement(ThemeSwitch, {
+        checked: !!value.aiEnabled,
+        disabled: !writable,
+        onChange: (next) => {
+          enqueueWrite(() => [{ op: 'set', path: ['aiEnabled'], value: next }])
+        },
+      }),
+    }),
+    !!value.aiEnabled && createElement('div', null,
+      createElement('div', { style: rowStyle },
+        createElement('label', { style: labelStyle }, 'Provider'),
+        createElement('input', {
+          key: `ai-provider-${value.aiProvider}`,
+          type: 'text',
+          defaultValue: value.aiProvider,
+          style: inputStyle,
+          disabled: !writable,
+          placeholder: 'deepseek-official',
+          onBlur: (e: FocusEvent<HTMLInputElement>) => {
+            const next = e.target.value.trim()
+            if (next && next !== value.aiProvider) enqueueWrite(() => [{ op: 'set', path: ['aiProvider'], value: next }])
+          },
+        }),
+      ),
+      createElement('div', { style: rowStyle },
+        createElement('label', { style: labelStyle }, '模型'),
+        createElement('input', {
+          key: `ai-model-${value.aiModel}`,
+          type: 'text',
+          defaultValue: value.aiModel,
+          style: inputStyle,
+          disabled: !writable,
+          placeholder: 'deepseek-flash',
+          onBlur: (e: FocusEvent<HTMLInputElement>) => {
+            const next = e.target.value.trim()
+            if (next && next !== value.aiModel) enqueueWrite(() => [{ op: 'set', path: ['aiModel'], value: next }])
+          },
+        }),
+      ),
+      createElement('div', { style: { ...noticeMutedStyle, marginTop: 8 } },
+        '人设文件：',
+        createElement('code', { style: { fontSize: 11 } }, '$DSH_HOME/waifu/persona.md'),
+        '（首次开启自动生成模板，直接编辑即可换语气）。',
+      ),
+    ),
+  ))
+
+  // 7. 开发者选项
   children.push(createElement('div', { key: 'devtools', style: sectionStyle },
     createElement(SectionHeader, {
       title: '开发者选项',
