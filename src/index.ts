@@ -212,11 +212,14 @@ export function apply(ctx: Context, config: Config): void {
       const now = Date.now()
       if (now - lastAiAt < 1200) return { ok: false, error: 'cooldown' }
       lastAiAt = now
+      // 全 AI 接管（ADR-031）：参考台词一律不给模型——客户端已经不发，这里再兜一层，
+      // 免得旧客户端或手工调用 /interact 时把固定对白塞进 prompt。
+      const context = settings.aiTakeover ? { ...input, hint: undefined } : input
       const attempt = await generateReply(ctx.llm, {
         provider: settings.aiProvider,
         model: settings.aiModel,
         persona: loadPersona(dirname(settingsStore.path)),
-        context: input,
+        context,
         history: aiHistory,
         historyCount: settings.aiHistoryCount,
         onPayload: (payload) => {
@@ -228,7 +231,7 @@ export function apply(ctx: Context, config: Config): void {
         // 历史只记真实发生的事：去掉参考台词（它没有上屏），避免模型把预置对白当成自己说过的话
         aiHistory = appendHistory(aiHistory, {
           role: 'user',
-          text: buildSceneMessage(input, { forHistory: true }),
+          text: buildSceneMessage(context, { forHistory: true }),
         })
         aiHistory = appendHistory(
           aiHistory,
