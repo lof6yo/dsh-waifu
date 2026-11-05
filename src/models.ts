@@ -47,10 +47,10 @@ export type MotionMap = Partial<Record<AnimationSlot, string[]>>
 export const DEFAULT_MOTION_MAP: MotionMap = {
   idle: ['Idle'],
   thinking: ['Tilt'],
-  error: ['ShakeHead', 'angry'],
-  done: ['star'],
+  error: ['ShakeHead', 'whites', 'dark'],
+  done: ['Nod', 'star'],
   waiting: ['Sway'],
-  delivered: ['heart'],
+  delivered: ['Tilt', 'star'],
 }
 
 /**

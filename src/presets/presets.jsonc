@@ -20,15 +20,15 @@
       "cubism": 4,
       "status": "bundled",
       // 简的动作组（assets/models/jian/motions/：Idle/Nod/ShakeHead/Tilt/Sway；ADR-021）
-      // 事件默认挂载 = 动作组 + 表情混选（ADR-023）：思考=歪头、等待=左右晃、出错=摇头+生气、
-      // 完成=星星眼、交付=爱心眼（完成/交付不播动作，只出气泡 + 表情）。
+      // 事件默认挂载 = 动作组 + 表情混选（ADR-023）：思考=歪头、等待=左右晃、
+      // 出错=摇头+白眼+脸黑、完成=点头+星星眼、交付=歪头+星星眼。
       "animationMap": {
         "idle": ["Idle"],
         "thinking": ["Tilt"],
-        "error": ["ShakeHead", "angry"],
-        "done": ["star"],
+        "error": ["ShakeHead", "whites", "dark"],
+        "done": ["Nod", "star"],
         "waiting": ["Sway"],
-        "delivered": ["heart"]
+        "delivered": ["Tilt", "star"]
       },
       // 默认触摸部位（按「简」实际渲染构图调好的取值，用户可在设置页覆盖/增删）。
       // 脸部的 motions 里 "blush" 是表情 id（不是动作组）：摸脸 = 脸红的开关，ADR-023。
