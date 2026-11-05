@@ -14,6 +14,11 @@ AI 回复失败时（provider 没配 API Key、模型/端点不可用、超时�
    （保持预置台词，不把错误显示给用户）。
 3. 不新增日志文件：排查时 `curl POST /interact` 一次即可看到 DSH LLM 层给出的原文。
 
+4. 空正文时自动关推理重试一次：`google/gemma-4-31b-it` 这类推理模型开着思维链会把预算花在
+   reasoning 上、`content` 整段为空（实测 `reasoning: {enabled: true}` + `max_tokens: 80` → 正文空、
+   `completion_tokens` 只 3 个）。`generateReply()` 首轮空正文就带 `reasoningEffort: 'off'` 再来一次，
+   仍失败才回落预置台词；`maxTokens` 提到 120、超时 15s。
+
 ## 后果
 
 - 排障从「桌宠不说话」变成「一句 curl 看到 openrouter 401 / model not found / timeout」。

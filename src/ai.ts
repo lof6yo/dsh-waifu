@@ -43,6 +43,8 @@ export interface WaifuLlmRequest {
   temperature?: number
   maxTokens?: number
   stop?: string[]
+  /** 关闭推理链（部分模型开启推理后只产出 reasoning，正文为空）。 */
+  reasoningEffort?: string
   signal?: AbortSignal
 }
 
@@ -141,34 +143,49 @@ export async function generateReply(
     timeoutMs?: number
   },
 ): Promise<ReplyAttempt> {
-  const controller = new AbortController()
-  const timeoutMs = options.timeoutMs ?? 12_000
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const stream = llm.stream({
-      provider: options.provider,
-      model: options.model,
-      system: `${options.persona}
+  const timeoutMs = options.timeoutMs ?? 15_000
+  const attempt = async (reasoningEffort?: string): Promise<ReplyAttempt> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const stream = llm.stream({
+        provider: options.provider,
+        model: options.model,
+        system: `${options.persona}
 
 输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
 不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`,
-      messages: [{ role: 'user', content: [{ type: 'text', text: buildSceneMessage(options.context) }] }],
-      temperature: 1,
-      maxTokens: 80,
-      stop: ['\n'],
-      signal: controller.signal,
-    })
-    let text = ''
-    for await (const chunk of stream) {
-      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+        messages: [{ role: 'user', content: [{ type: 'text', text: buildSceneMessage(options.context) }] }],
+        temperature: 1,
+        maxTokens: 120,
+        stop: ['\n'],
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        signal: controller.signal,
+      })
+      let text = ''
+      let finish: string | undefined
+      for await (const chunk of stream) {
+        if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+        else if (chunk.type === 'finish') finish = (chunk as { reason?: string }).reason
+      }
+      const line = sanitizeLine(text)
+      if (line) return { text: line }
+      return {
+        text: null,
+        error: text ? 'empty-after-sanitize' : `empty-stream${finish === undefined ? '' : ` (${finish})`}`,
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      return { text: null, error: reason.slice(0, 200) || 'stream-failed' }
+    } finally {
+      clearTimeout(timer)
     }
-    const line = sanitizeLine(text)
-    if (line) return { text: line }
-    return { text: null, error: text ? 'empty-after-sanitize' : 'empty-stream' }
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    return { text: null, error: reason.slice(0, 200) || 'stream-failed' }
-  } finally {
-    clearTimeout(timer)
   }
+
+  const first = await attempt()
+  if (first.text !== null) return first
+  // 推理型模型（如 gemma）开着思维链时正文可能整段为空：关掉推理再试一次。
+  if (!first.error?.startsWith('empty')) return first
+  const retry = await attempt('off')
+  return retry.text === null ? first : retry
 }

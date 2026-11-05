@@ -98,7 +98,7 @@ describe('generateReply', () => {
     expect(llm.calls[0].provider).toBe('deepseek-official')
     expect(llm.calls[0].model).toBe('deepseek-flash')
     expect(llm.calls[0].system).toContain(DEFAULT_PERSONA)
-    expect(llm.calls[0].maxTokens).toBe(80)
+    expect(llm.calls[0].maxTokens).toBe(120)
   })
 
   it('流中断或空文本返回 null + 原因（调用方回落预置台词）', async () => {
@@ -110,6 +110,26 @@ describe('generateReply', () => {
     const blank = await generateReply(empty, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'state', state: 'idle' } })
     expect(blank.text).toBeNull()
     expect(blank.error).toBe('empty-after-sanitize')
+  })
+})
+
+describe('generateReply 推理模型兜底', () => {
+  it('首轮只产出空正文时关掉推理重试', async () => {
+    const calls: WaifuLlmRequest[] = []
+    const llm: WaifuLlm = {
+      stream(request: WaifuLlmRequest) {
+        calls.push(request)
+        const first = calls.length === 1
+        return (async function* () {
+          if (!first) yield { type: 'text-delta', text: '哼，手拿开。' }
+        })()
+      },
+    }
+    const attempt = await generateReply(llm, { provider: 'openrouter', model: 'google/gemma-4-31b-it', persona: 'x', context: { kind: 'tap', part: '脸' } })
+    expect(attempt.text).toBe('哼，手拿开。')
+    expect(calls).toHaveLength(2)
+    expect(calls[0].reasoningEffort).toBeUndefined()
+    expect(calls[1].reasoningEffort).toBe('off')
   })
 })
 
