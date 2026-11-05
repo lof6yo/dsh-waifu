@@ -38,7 +38,7 @@ import {
   normalizeEventBindings,
 } from '../models.ts'
 import { clientLog } from './client-log.ts'
-import { emitRecenter } from './pet-commands.ts'
+import { emitCaptureHome, emitRecenter } from './pet-commands.ts'
 import { emitTouchEdit } from './touch-edit.ts'
 
 /** 设置解析值（与 Host PetSettings 对齐）。 */
@@ -634,6 +634,10 @@ const formRowStartStyle: CSSProperties = { ...formRowStyle, alignItems: 'start' 
 const formLabelStyle: CSSProperties = { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 }
 const formLabelStartStyle: CSSProperties = { ...formLabelStyle, paddingTop: 6 }
 const formControlStyle: CSSProperties = { minWidth: 0, display: 'flex', alignItems: 'center', gap: GAP.sm }
+/** 整行两段式表单行（label 独占一行、控件占满整行）：长 label 不换行、控件不再挤在左边。 */
+const formRowStackStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: GAP.md }
+const formLabelStackStyle: CSSProperties = { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 }
+const formControlStackStyle: CSSProperties = { minWidth: 0, display: 'flex', alignItems: 'center', gap: GAP.sm, flexWrap: 'wrap' }
 
 /** box 编辑表格：列宽固定（# 24 / 四项 1fr / 删除 56）。 */
 const boxGridStyle: CSSProperties = {
@@ -1204,6 +1208,22 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       const current = stateRef.current.value ?? DEFAULT_VALUE
       const view = await writeSettings(compose(current))
       if (view !== null) setSettingsState({ status: 'ready', value: view.value, writable: view.writable !== false, error: view.error ?? null })
+    })
+  }
+
+  /**
+   * 捕捉：向宠物半边要「角色现在的位置」，换算成「显示中心距右/距下」的百分比后写成新的默认位置。
+   * 百分比按视口宽/高算（与 homePositionFromConfig 一致），所以换窗口尺寸后仍落在同一相对位置。
+   */
+  const requestCapture = (): void => {
+    emitCaptureHome((home) => {
+      enqueueWrite(() => [
+        { op: 'set', path: ['homeRight'], value: home.right },
+        { op: 'set', path: ['homeBottom'], value: home.bottom },
+      ])
+      setResetNotice(`已捕捉默认位置：${home.right}% / ${home.bottom}%`)
+      if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
+      resetNoticeTimer.current = setTimeout(() => setResetNotice(null), 2400)
     })
   }
 
@@ -2087,6 +2107,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
   const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
   const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
+  const numberInputWideStyle: CSSProperties = { ...inputStyle, flex: '1 1 96px', width: 'auto', minWidth: 0, textAlign: 'right' }
   const colorInputStyle: CSSProperties = {
     ...inputStyle,
     flex: '0 0 48px',
@@ -2156,9 +2177,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     // B. 画布与位置
     createElement('div', { key: 'canvas-home', style: rowStyle },
       createElement('div', { style: cardHeadingStyle }, '画布与位置'),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '水平留白（%）'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '水平留白（%）'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'number',
             min: 0,
@@ -2166,7 +2187,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             step: 5,
             value: canvasPadX,
             disabled: !writable,
-            style: numberInputStyle,
+            style: numberInputWideStyle,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
               const next = normalizeCanvasPad(e.target.value, 0)
               enqueueWrite(() => [{ op: 'set', path: ['canvasPadX'], value: next }])
@@ -2174,9 +2195,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '垂直留白（%）'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '垂直留白（%）'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'number',
             min: 0,
@@ -2184,7 +2205,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             step: 5,
             value: canvasPadY,
             disabled: !writable,
-            style: numberInputStyle,
+            style: numberInputWideStyle,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
               const next = normalizeCanvasPad(e.target.value, 0)
               enqueueWrite(() => [{ op: 'set', path: ['canvasPadY'], value: next }])
@@ -2192,9 +2213,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '中心距右（% 窗口宽）'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '中心距右（% 窗口宽）'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'number',
             min: 0,
@@ -2202,7 +2223,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             step: 1,
             value: homeRight,
             disabled: !writable,
-            style: numberInputStyle,
+            style: numberInputWideStyle,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
               const next = normalizeHomePosition(e.target.value, 0)
               enqueueWrite(() => [{ op: 'set', path: ['homeRight'], value: next }])
@@ -2210,9 +2231,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '中心距下（% 窗口高）'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: { ...formRowStackStyle, marginBottom: GAP.sm } },
+        createElement('span', { style: formLabelStackStyle }, '中心距下（% 窗口高）'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'number',
             min: 0,
@@ -2220,7 +2241,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             step: 1,
             value: homeBottom,
             disabled: !writable,
-            style: numberInputStyle,
+            style: numberInputWideStyle,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
               const next = normalizeHomePosition(e.target.value, 0)
               enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
@@ -2229,25 +2250,33 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           createElement('button', {
             type: 'button',
             className: 'dsh-btn dsh-btn-secondary',
-            style: buttonSecondaryStyle,
+            style: { ...buttonSecondaryStyle, flex: '0 0 auto' },
             disabled: !writable,
             onClick: requestRecenter,
           }, '归位'),
-          resetNotice
-            ? createElement('span', {
-              key: 'reset-notice',
-              style: { ...statusTextStyle, color: C.success },
-            }, resetNotice)
-            : null,
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-btn dsh-btn-secondary',
+            style: { ...buttonSecondaryStyle, flex: '0 0 auto' },
+            title: '把角色现在的位置设为默认位置',
+            disabled: !writable,
+            onClick: requestCapture,
+          }, '捕捉'),
         ),
       ),
+      resetNotice
+        ? createElement('div', {
+          key: 'reset-notice',
+          style: { ...statusTextStyle, color: C.success, marginTop: 2 },
+        }, resetNotice)
+        : null,
     ),
     // C. 对白气泡
     createElement('div', { key: 'bubble-style', style: rowStyle },
       createElement('div', { style: cardHeadingStyle }, '对白气泡'),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '水平偏移（px）'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '水平偏移（px）'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'number',
             min: -1000,
@@ -2255,7 +2284,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             step: 5,
             value: bubbleOffsetX,
             disabled: !writable,
-            style: numberInputStyle,
+            style: numberInputWideStyle,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
               const next = normalizeBubbleOffset(e.target.value, 0)
               enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetX'], value: next }])
@@ -2263,9 +2292,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '垂直偏移（px）'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '垂直偏移（px）'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'number',
             min: -1000,
@@ -2273,17 +2302,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             step: 5,
             value: bubbleOffsetY,
             disabled: !writable,
-            style: numberInputStyle,
+            style: numberInputWideStyle,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
               const next = normalizeBubbleOffset(e.target.value, 0)
               enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetY'], value: next }])
             },
           }),
+          createElement('span', { style: formLabelStackStyle }, '正值向上、负值向下'),
         ),
       ),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '背景色'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '背景色'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'color',
             value: bubbleBgColor,
@@ -2294,11 +2324,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['bubbleBgColor'], value: next }])
             },
           }),
+          createElement('span', { style: formLabelStackStyle }, bubbleBgColor),
         ),
       ),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '背景不透明度'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '背景不透明度'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'number',
             min: 0,
@@ -2306,7 +2337,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             step: 1,
             value: bubbleBgOpacity,
             disabled: !writable,
-            style: numberInputStyle,
+            style: numberInputWideStyle,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
               const next = normalizeBubbleOpacity(e.target.value, 0)
               enqueueWrite(() => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
@@ -2314,9 +2345,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-        createElement('span', { style: formLabelStyle }, '文字颜色'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: { ...formRowStackStyle, marginBottom: 0 } },
+        createElement('span', { style: formLabelStackStyle }, '文字颜色'),
+        createElement('div', { style: formControlStackStyle },
           createElement('input', {
             type: 'color',
             value: bubbleTextColor,
@@ -2327,6 +2358,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['bubbleTextColor'], value: next }])
             },
           }),
+          createElement('span', { style: formLabelStackStyle }, bubbleTextColor),
         ),
       ),
     ),

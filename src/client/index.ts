@@ -45,7 +45,7 @@ import {
   type TouchPart,
 } from '../models.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
-import { onRecenter } from './pet-commands.ts'
+import { homePercentFromPos, onCaptureHome, onRecenter } from './pet-commands.ts'
 
 /** 注入所需服务。 */
 export const inject = ['slots']
@@ -328,6 +328,17 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     homePositionFromConfig()
     applyPosToBox()
     persistDisplay()
+  }))
+  // 设置页「捕捉」命令（spec §2）：把角色当前位置换算成「显示中心距右/距下」的百分比回传，
+  // 由设置页写成新的默认位置——位置只有宠物半边知道，换算也只有这里拿得到画布与视口尺寸。
+  pushCleanup(onCaptureHome((captured) => {
+    const { width, height } = logicalCanvasSize()
+    const viewport = {
+      width: window.innerWidth || document.documentElement.clientWidth || 0,
+      height: window.innerHeight || document.documentElement.clientHeight || 0,
+    }
+    const home = homePercentFromPos(pos, { width, height }, viewport)
+    if (home !== null) captured(home)
   }))
 
   let box: HTMLDivElement | null = null

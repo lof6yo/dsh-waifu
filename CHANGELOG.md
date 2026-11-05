@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- **「捕捉」当前位置为默认位置**：画布与位置卡片里「归位」右侧新增按钮，把角色现在的中心点换算成「中心距右/距下」百分比写进设置（宠物半边负责换算，取整到 1%、夹到 0–100），调好位置顺手按一下即可
+- **设置页表单行改两段式**：画布与位置、对白气泡两张卡片的 label 独占一行、输入框占满整行（原来固定 96px label 列会把「中心距右（% 窗口宽）」挤成两行、控件全缩在左边）；颜色项顺带显示当前色值
 - **AI 回复**（ADR-025）：设置页新增「AI 回复」分组，开启后触摸部位与状态变化的台词由 DSH 已配置的模型（`ctx.llm`，默认 `deepseek-official` / `deepseek-flash`）现场生成
   - 复用 DSH 的 provider/账号凭据，插件不需要另存 API Key；人设写在 `$DSH_HOME/waifu/persona.md`（首次自动生成模板）
   - Provider / 模型是**下拉**（`GET /api/dsh-waifu/ai-options`，候选取 Host 的 `ctx.llm.listProviders()/listModels()`），不再手填容易拼错；适配器无模型目录时回落成输入框
