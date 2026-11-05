@@ -56,6 +56,8 @@ const DRAG_THRESHOLD = 6
 const TAP_DEBOUNCE_MS = 80
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
+/** 气泡最长连续可见时长兜底（秒）：默认 30；0 = 不限（spec §3）。 */
+const BUBBLE_MAX_DEFAULT = 30
 /** AI 台词最短可见时长：状态切换再快，也要让这句露一脸（ADR-025 补丁）。 */
 const AI_BUBBLE_HOLD_MS = 1400
 /**
@@ -420,6 +422,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 当前模型 motionManager 的 motionFinish 解绑函数（模型重载/卸载时清理）。 */
   let detachMotionFinish: (() => void) | null = null
   let bubbleHideTimer: number | undefined
+  /** 气泡最长可见计时器：从「隐藏 → 可见」那一刻起算，替换文案不重置（ADR-027）。 */
+  let bubbleMaxTimer: number | undefined
+  let bubbleMaxMs = BUBBLE_MAX_DEFAULT * 1000
+  /** 气泡当前是否可见（用于判断一次新的显示是否要重新起算最长时长）。 */
+  let bubbleVisible = false
   /** 长状态的 AI 演绎计时器（入态延迟 + 间隔重试，ADR-026）。 */
   let longAiTimers: number[] = []
   /** 当前长状态（thinking/waiting）；非空时气泡常驻。 */
@@ -508,6 +515,48 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
+  function clearBubbleMaxTimer(): void {
+    if (bubbleMaxTimer !== undefined) {
+      window.clearTimeout(bubbleMaxTimer)
+      bubbleMaxTimer = undefined
+    }
+  }
+
+  /**
+   * 气泡最长可见时长（ADR-027）：出态事件丢失时长状态会永久常驻，这里做兜底。
+   * 从「隐藏 → 可见」起算，替换文案不重置；到时连常驻底稿与 AI 演绎一起收掉。
+   */
+  function armBubbleMaxTimer(): void {
+    if (bubbleMaxMs <= 0) { clearBubbleMaxTimer(); return }
+    if (bubbleMaxTimer !== undefined) return
+    bubbleMaxTimer = window.setTimeout(() => {
+      bubbleMaxTimer = undefined
+      bubbleVisible = false
+      // 长状态的出态事件可能没送到：气泡不能永远挂着，顺手停掉 AI 演绎，避免继续烧 token
+      clearLongState()
+      if (pendingBubbleTimer !== undefined) {
+        window.clearTimeout(pendingBubbleTimer)
+        pendingBubbleTimer = undefined
+      }
+      pendingBubbleText = null
+      aiTextUntil = 0
+      clearBubbleHideTimer()
+      if (bubble) bubble.style.opacity = '0'
+    }, bubbleMaxMs)
+  }
+
+  /** 应用「气泡最长显示」配置（秒；0 = 不限）；非法值保留当前值。 */
+  function applyBubbleMaxConfig(cfg: Partial<PetStateView['config']>): void {
+    const raw = cfg.bubbleMaxSeconds
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      const next = Math.round(Math.min(600, Math.max(0, raw)))
+      if (next !== bubbleMaxMs / 1000) {
+        bubbleMaxMs = next * 1000
+        if (bubbleVisible) { clearBubbleMaxTimer(); armBubbleMaxTimer() }
+      }
+    }
+  }
+
   /** 应用气泡样式（背景 rgba / 文字色 / 最大宽度；不重建元素，spec §3）。 */
   function applyBubbleStyle(): void {
     if (!bubble) return
@@ -557,6 +606,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     clearBubbleHideTimer()
     bubble.textContent = text
     bubble.style.opacity = '1'
+    if (!bubbleVisible) {
+      bubbleVisible = true
+      armBubbleMaxTimer()
+    }
     updateBubblePosition()
   }
 
@@ -580,6 +633,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 隐藏气泡并取消瞬态隐藏计时（事件台词池为空时不显示气泡，spec §3）。 */
   function hideBubble(): void {
     clearBubbleHideTimer()
+    clearBubbleMaxTimer()
+    bubbleVisible = false
     if (bubble) bubble.style.opacity = '0'
   }
 
@@ -622,7 +677,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     bubbleHideTimer = window.setTimeout(() => {
       bubbleHideTimer = undefined
       if (longState !== null) showStickyText()
-      else if (bubble) bubble.style.opacity = '0'
+      else {
+        bubbleVisible = false
+        clearBubbleMaxTimer()
+        if (bubble) bubble.style.opacity = '0'
+      }
     }, BUBBLE_DISPLAY_MS)
   }
 
@@ -1719,6 +1778,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     aiEnabled = cfg.aiEnabled === true
     aiTouchOnly = cfg.aiTouchOnly === true
     applyLongAiConfig(cfg)
+    applyBubbleMaxConfig(cfg)
     applyBubbleStyle()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -1899,6 +1959,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         aiEnabled = view.config.aiEnabled === true
         aiTouchOnly = view.config.aiTouchOnly === true
         applyLongAiConfig(view.config)
+        applyBubbleMaxConfig(view.config)
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)
 

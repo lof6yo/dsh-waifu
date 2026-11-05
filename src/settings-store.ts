@@ -54,6 +54,8 @@ export interface PetSettings {
   bubbleBgOpacity: number
   /** 气泡文字颜色（#rrggbb）。 */
   bubbleTextColor: string
+  /** 气泡最长连续可见秒数（0 = 不限，默认 30；ADR-027 兜底断流导致的气泡常驻）。 */
+  bubbleMaxSeconds: number
   /** AI 回复总开关（ADR-025）：开启后触摸/状态回复改由 `ctx.llm` 生成。 */
   aiEnabled: boolean
   /** 仅触摸：状态变化只用预置台词，AI 只在触摸部位时发言（ADR-025）。 */
@@ -159,6 +161,12 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     if (!Number.isFinite(n)) return fallback
     return Math.round(Math.min(max, Math.max(min, n)))
   }
+  /** 气泡最长显示秒数：0–600，0 = 不限。 */
+  const clampBubbleMax = (value: unknown, fallback: number): number => {
+    const n = typeof value === 'number' ? value : Number(value)
+    if (!Number.isFinite(n)) return fallback
+    return Math.round(Math.min(600, Math.max(0, n)))
+  }
   const opacity = (value: unknown, fallback: number): number => {
     const n = typeof value === 'number' ? value : Number(value)
     if (!Number.isFinite(n)) return fallback
@@ -190,6 +198,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     bubbleBgColor: color(record.bubbleBgColor, base.bubbleBgColor),
     bubbleBgOpacity: opacity(record.bubbleBgOpacity, base.bubbleBgOpacity),
     bubbleTextColor: color(record.bubbleTextColor, base.bubbleTextColor),
+    bubbleMaxSeconds: clampBubbleMax(record.bubbleMaxSeconds, base.bubbleMaxSeconds),
     aiEnabled: bool('aiEnabled'),
     aiTouchOnly: bool('aiTouchOnly'),
     aiProvider: pickString(record.aiProvider) ?? base.aiProvider,

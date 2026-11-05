@@ -21,6 +21,7 @@ const BASE: PetSettings = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
+  bubbleMaxSeconds: 30,
   aiEnabled: false,
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',
@@ -118,6 +119,17 @@ describe('SettingsStore', () => {
     expect(store.get().aiTouchOnly).toBe(true)
     store.applyOps([{ op: 'set', path: ['aiTouchOnly'], value: 'yes' }])
     expect(store.get().aiTouchOnly).toBe(false)
+  })
+
+  it('气泡最长显示：默认 30、可写、越界夹到 0–600（ADR-027）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().bubbleMaxSeconds).toBe(30)
+    store.applyOps([{ op: 'set', path: ['bubbleMaxSeconds'], value: 0 }])
+    expect(store.get().bubbleMaxSeconds).toBe(0)
+    store.applyOps([{ op: 'set', path: ['bubbleMaxSeconds'], value: 9999 }])
+    expect(store.get().bubbleMaxSeconds).toBe(600)
+    store.applyOps([{ op: 'set', path: ['bubbleMaxSeconds'], value: 'long' }])
+    expect(store.get().bubbleMaxSeconds).toBe(30)
   })
 
   it('长状态 AI 节奏：默认值、可写、越界夹到区间（ADR-026）', () => {

@@ -60,6 +60,7 @@ const BASE_SETTINGS: PetSettings = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
+  bubbleMaxSeconds: 30,
   aiEnabled: false,
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',

@@ -32,3 +32,4 @@
 | [024](024-multiple-expressions-and-labels.md) | 表情可叠加（按互斥组收敛）+ 动作组中文显示名 | Accepted |
 | [025](025-ai-reply-via-dsh-llm.md) | AI 回复：复用 DSH 的 llm 服务 + 人设文件（persona.md） | Accepted |
 | [026](026-long-state-ai-cadence.md) | 长状态取消多阶段固定台词，改由 AI 按「延迟 / 间隔 / 上限」演绎 | Accepted（取代 ADR-015 的阶段台词部分） |
+| [027](027-bubble-max-lifetime.md) | 所有对白加最长显示时长（默认 30s）兜底，断流/丢出态不再永久常驻 | Accepted |

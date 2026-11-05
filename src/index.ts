@@ -101,6 +101,8 @@ export const Config: Schema<Config> = Schema.object({
   bubbleOffsetY: Schema.number().min(-1000).max(1000).default(10),
   bubbleBgColor: Schema.string().default('#ffffff'),
   bubbleBgOpacity: Schema.number().min(0).max(100).default(92),
+  /** 气泡最长连续可见秒数（0 = 不限）；默认 30。 */
+  bubbleMaxSeconds: Schema.number().min(0).max(600).default(30),
   bubbleTextColor: Schema.string().default('#222222'),
   aiEnabled: Schema.boolean().default(false),
   aiTouchOnly: Schema.boolean().default(false),
@@ -141,6 +143,7 @@ export function apply(ctx: Context, config: Config): void {
     bubbleOffsetY: config.bubbleOffsetY,
     bubbleBgColor: config.bubbleBgColor,
     bubbleBgOpacity: config.bubbleBgOpacity,
+    bubbleMaxSeconds: config.bubbleMaxSeconds,
     bubbleTextColor: config.bubbleTextColor,
     aiEnabled: config.aiEnabled,
     aiTouchOnly: config.aiTouchOnly,

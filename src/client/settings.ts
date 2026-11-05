@@ -65,6 +65,8 @@ export interface PetSettingsValue {
   bubbleBgOpacity: number
   /** 气泡文字颜色（#rrggbb）。 */
   bubbleTextColor: string
+  /** 气泡最长连续可见秒数（0 = 不限；ADR-027 兜底长状态收不到出态）。 */
+  bubbleMaxSeconds: number
   model: string
   /** 开发者选项总开关：开启后显示调试面板/触摸部位色块等开发者入口。 */
   developerMode: boolean
@@ -127,6 +129,7 @@ const DEFAULT_VALUE: PetSettingsValue = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
+  bubbleMaxSeconds: 30,
   model: 'jian',
   developerMode: false,
   debug: false,
@@ -767,6 +770,13 @@ function normalizeBubbleOpacity(raw: unknown, fallback: number): number {
   const n = typeof raw === 'number' ? raw : Number(raw)
   if (!Number.isFinite(n)) return fallback
   return Math.min(100, Math.max(0, Math.round(n)))
+}
+
+/** 气泡最长显示秒数（0–600 整数，0 = 不限）；非法值回落 fallback。 */
+function normalizeBubbleMax(raw: unknown, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(600, Math.max(0, Math.round(n)))
 }
 
 /** 颜色值统一为小写 #rrggbb；非法值回落 fallback。 */
@@ -2106,6 +2116,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const bubbleBgColor = normalizeHexColor(state.value?.bubbleBgColor, '#ffffff')
   const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
   const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
+  const bubbleMaxSeconds = normalizeBubbleMax(state.value?.bubbleMaxSeconds, DEFAULT_VALUE.bubbleMaxSeconds)
   const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
   const numberInputWideStyle: CSSProperties = { ...inputStyle, flex: '1 1 96px', width: 'auto', minWidth: 0, textAlign: 'right' }
   const colorInputStyle: CSSProperties = {
@@ -2343,6 +2354,25 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
             },
           }),
+        ),
+      ),
+      createElement('div', { style: formRowStackStyle },
+        createElement('span', { style: formLabelStackStyle }, '最长显示（秒）'),
+        createElement('div', { style: formControlStackStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 600,
+            step: 5,
+            value: bubbleMaxSeconds,
+            disabled: !writable,
+            style: numberInputWideStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeBubbleMax(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['bubbleMaxSeconds'], value: next }])
+            },
+          }),
+          createElement('span', { style: formLabelStackStyle }, bubbleMaxSeconds === 0 ? '不限（不自动消失）' : '超时自动收起'),
         ),
       ),
       createElement('div', { style: { ...formRowStackStyle, marginBottom: 0 } },

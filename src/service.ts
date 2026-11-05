@@ -55,6 +55,8 @@ export interface PetStateView {
     bubbleOffsetY: number
     bubbleBgColor: string
     bubbleBgOpacity: number
+    /** 气泡最长连续可见秒数（0 = 不限）。 */
+    bubbleMaxSeconds: number
     bubbleTextColor: string
     /** AI 回复开关（ADR-025）。 */
     aiEnabled: boolean
@@ -224,6 +226,7 @@ export class PetService {
         bubbleOffsetY: settings.bubbleOffsetY,
         bubbleBgColor: settings.bubbleBgColor,
         bubbleBgOpacity: settings.bubbleBgOpacity,
+        bubbleMaxSeconds: settings.bubbleMaxSeconds,
         bubbleTextColor: settings.bubbleTextColor,
         aiEnabled: settings.aiEnabled,
         aiTouchOnly: settings.aiTouchOnly,
