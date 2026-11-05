@@ -660,21 +660,32 @@ function normalizeMaxFps(raw: unknown): number {
  * current 里可能出现模型没解析到的旧动作组名字（保证 tag 能显示）。
  */
 function motionSelectionOptions(motionGroups: readonly string[], current: readonly string[] = []): ThemeSelectOption[] {
-  const motions = [...new Set([
-    ...motionGroups,
-    ...current.filter((id) => !isExpressionId(id)),
-  ])]
-  return [
-    ...motions.map((id) => ({ id, name: motionLabel(id), group: '动作', exclusive: 'motion' })),
-    ...EXPRESSIONS
-      .filter((expression) => expression.id !== 'none')
-      .map((expression) => ({
-        id: expression.id,
-        name: expression.name,
-        group: '表情',
-        exclusive: expression.exclusive,
-      })),
-  ]
+  // id 全局去重：表情 id 绝不能再以「动作」身份出现一次，否则列表里会出现两行同名项
+  // （一行英文、一行中文），且 tag 取到英文那行——表现为「选中后显示 blush、重开多一个选中项」。
+  const options: ThemeSelectOption[] = []
+  const taken = new Set<string>()
+  for (const raw of [...motionGroups, ...current]) {
+    const id = typeof raw === 'string' ? raw.trim() : ''
+    if (!id || taken.has(id) || isExpressionId(id)) continue
+    taken.add(id)
+    options.push({ id, name: motionLabel(id), group: '动作', exclusive: 'motion' })
+  }
+  for (const expression of EXPRESSIONS) {
+    if (expression.id === 'none' || taken.has(expression.id)) continue
+    taken.add(expression.id)
+    options.push({
+      id: expression.id,
+      name: expression.name,
+      group: '表情',
+      exclusive: expression.exclusive,
+    })
+  }
+  return options
+}
+
+/** 混选里的单项显示名：表情走表情表、其余当动作组（未知 id 回退原名）。 */
+function selectionOptionLabel(id: string): string {
+  return isExpressionId(id) ? expressionLabel(id) : motionLabel(id)
 }
 
 /** 混选标签文案（卡片摘要用）：动作组 + 表情（可多个）。 */
@@ -921,7 +932,6 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
   }, [open])
 
-  const nameOf = (id: string) => options.find((o) => o.id === id)?.name ?? id
   /** 按 group 首次出现顺序切块；无 group 的选项归到空标题组（不渲染标题）。 */
   const blocks: { label: string; items: ThemeSelectOption[] }[] = []
   for (const option of options) {
@@ -979,7 +989,7 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
       },
         value.length === 0
           ? createElement('span', { style: { color: C.textSecondary } }, placeholder ?? '选择动作组')
-          : value.map((id) => createElement('span', {
+          : [...new Set(value)].map((id) => createElement('span', {
             key: id,
             style: {
               height: 20,
@@ -992,7 +1002,7 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
               fontSize: 12,
               whiteSpace: 'nowrap',
             },
-          }, nameOf(id))),
+          }, selectionOptionLabel(id))),
       ),
       createElement('span', { style: { color: C.textSecondary, fontSize: 10, flexShrink: 0 } }, open ? '▴' : '▾'),
     ),
@@ -1754,7 +1764,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const isTopLayer = index === 0
     const isBottomLayer = index === touchDraft.length - 1
     const layerLabel = `#${index + 1}`
-    const groups = [...motionGroups, ...part.motions.filter((motion) => !motionGroups.includes(motion))]
+    // 这里只补「模型里没有的旧动作组名」；表情 id 不能混进来当动作（否则列表出现英文重名行）
+    const groups = [
+      ...motionGroups,
+      ...part.motions.filter((motion) => !motionGroups.includes(motion) && !isExpressionId(motion)),
+    ]
     const dirty = dirtyPartIds.has(part.id)
     const toggleExpanded = (): void => {
       const next = expanded ? null : part.id
