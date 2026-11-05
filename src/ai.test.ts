@@ -196,6 +196,26 @@ describe('最近对话注入（ADR-030）', () => {
     expect(historyMessages(history, 99, FALLBACK)).toHaveLength(4)
   })
 
+  it('onPayload 回报实际发出的 system 与逐条 messages', async () => {
+    const llm = fakeLlm(['好'])
+    const payloads: { system: string; messages: { role: string; content: string }[] }[] = []
+    await generateReply(llm, {
+      provider: 'p',
+      model: 'm',
+      persona: '人设',
+      context: { kind: 'tap', part: '脸', hint: '别捏脸啦～' },
+      history,
+      historyCount: 2,
+      onPayload: (payload) => payloads.push(payload),
+    })
+    expect(payloads).toHaveLength(1)
+    expect(payloads[0].system).toContain('人设')
+    expect(payloads[0].messages).toHaveLength(3)
+    expect(payloads[0].messages[2].content).toContain('主人刚戳了你的「脸」')
+    expect(payloads[0].messages[2].content).toContain('别捏脸啦～')
+    expect(payloads[0].messages[0].content).not.toContain('别捏脸啦')
+  })
+
   it('注入内容排在当前情景之前', async () => {
     const llm = fakeLlm(['好'])
     await generateReply(llm, {

@@ -52,6 +52,7 @@ import {
   personaPath,
   savePersona,
   type AiHistoryEntry,
+  type AiPayload,
 } from './ai.ts'
 import {
   defaultModelId,
@@ -200,6 +201,8 @@ export function apply(ctx: Context, config: Config): void {
   let lastAiAt = 0
   // 最近对话（ADR-030）：只存内存，进程重启即清空；条数由设置页 `aiHistoryCount` 决定注入多少
   let aiHistory: AiHistoryEntry[] = []
+  // 最近一次真正发给模型的载荷（排查注入是否生效；ADR-030 追加 /ai-debug）
+  let lastAiPayload: AiPayload | null = null
   const aiApi: InteractRoutesApi = {
     reply: async (input) => {
       const settings = settingsStore.get()
@@ -214,6 +217,9 @@ export function apply(ctx: Context, config: Config): void {
         context: input,
         history: aiHistory,
         historyCount: settings.aiHistoryCount,
+        onPayload: (payload) => {
+          lastAiPayload = payload
+        },
       })
       if (attempt.text) {
         // 只记录成功的往来：失败的请求不该污染上下文
@@ -236,6 +242,12 @@ export function apply(ctx: Context, config: Config): void {
 
   // AI 设置（ADR-025）：provider / 模型候选直接取 DSH 的 llm 目录；人设读 $DSH_HOME/waifu/persona.md
   const aiSettingsApi: AiRoutesApi = {
+    // 排查用：当前历史缓冲 + 最近一次实际发出的载荷（含 system 与逐条 messages）
+    debug: () => ({
+      history: aiHistory,
+      historyCount: settingsStore.get().aiHistoryCount,
+      lastPayload: lastAiPayload,
+    }),
     options: async () => {
       const providers = ctx.llm.listProviders().map((p) => ({ id: p.id, name: p.name }))
       const models: Record<string, { id: string; name: string }[]> = {}

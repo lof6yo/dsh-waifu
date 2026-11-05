@@ -201,6 +201,17 @@ export interface ReplyAttempt {
   error?: string
 }
 
+/**
+ * 实际发给模型的载荷（排查用）：system 提示词 + 依次发出的 messages。
+ * 内容按文本展开，方便直接读；`role` 区分 user/assistant/system。
+ */
+export interface AiPayload {
+  provider: string
+  model: string
+  system: string
+  messages: { role: string; content: string }[]
+}
+
 /** 把 `finish.reason`（`{ kind, failure }` 或字符串）压成一句可读原因。 */
 function describeFinish(reason: unknown): string | undefined {
   if (typeof reason === 'string') return reason
@@ -222,6 +233,8 @@ export async function generateReply(
     /** 最近对话历史（按 `historyCount` 取末尾若干条注入；ADR-030）。 */
     history?: readonly AiHistoryEntry[]
     historyCount?: number
+    /** 每次真正请求前回报载荷（`/ai-debug` 用，排查注入是否生效）。 */
+    onPayload?: (payload: AiPayload) => void
   },
 ): Promise<ReplyAttempt> {
   const timeoutMs = options.timeoutMs ?? 15_000
@@ -229,20 +242,34 @@ export async function generateReply(
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
+      const system = `${options.persona}
+
+输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
+不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`
+      const history = historyMessages(options.history ?? [], options.historyCount ?? 0, {
+        provider: options.provider,
+        model: options.model,
+      })
+      const messages = [
+        ...history,
+        { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context) }] },
+      ]
+      options.onPayload?.({
+        provider: options.provider,
+        model: options.model,
+        system,
+        messages: messages.map((message) => ({
+          role: message.role,
+          content: message.content
+            .map((part) => (typeof part === 'object' && part !== null && 'text' in part ? String(part.text) : ''))
+            .join(''),
+        })),
+      })
       const stream = llm.stream({
         provider: options.provider,
         model: options.model,
-        system: `${options.persona}
-
-输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
-不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`,
-        messages: [
-          ...historyMessages(options.history ?? [], options.historyCount ?? 0, {
-            provider: options.provider,
-            model: options.model,
-          }),
-          { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context) }] },
-        ],
+        system,
+        messages,
         temperature: 1,
         maxTokens: 120,
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),

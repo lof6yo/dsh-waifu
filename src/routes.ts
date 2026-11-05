@@ -231,6 +231,8 @@ export interface AiRoutesApi {
   writePersona(text: string): { text: string; path: string }
   /** 用指定（或已保存的）provider/model 跑一次真实请求，把失败原因直接回传。 */
   check?(input?: { provider?: string; model?: string }): Promise<{ ok: boolean; text?: string; error?: string }>
+  /** 排查用：历史缓冲 + 最近一次实际发出的载荷。 */
+  debug?(): Promise<unknown> | unknown
 }
 
 /** AI 回复 API（ADR-025）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
@@ -319,6 +321,7 @@ export function makePetRoutes(deps: {
         (body) => aiSettings.writePersona(typeof body.text === 'string' ? body.text : ''),
       ),
       // 连通性自检：设置页「测试连接」用它把 provider/模型的真实失败原因打出来
+      ...(aiSettings.debug ? [getRoute(`${PET_API_PREFIX}/ai-debug`, () => Promise.resolve(aiSettings.debug!()))] : []),
       ...(aiSettings.check ? [postRoute(`${PET_API_PREFIX}/ai-check`, (body) => aiSettings.check!({
         provider: typeof body.provider === 'string' && body.provider.length > 0 ? body.provider : undefined,
         model: typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined,
