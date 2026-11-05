@@ -168,7 +168,6 @@ export async function generateReply(
         messages: [{ role: 'user', content: [{ type: 'text', text: buildSceneMessage(options.context) }] }],
         temperature: 1,
         maxTokens: 120,
-        stop: ['\n'],
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
         signal: controller.signal,
       })

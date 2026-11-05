@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Fixed
+
+- AI 回复不再传 `stop` 选项：`llm-pi-ai` 会以 `UNSUPPORTED_OPTION` 拒收整个请求，导致 OpenRouter 等 provider 一秒内返回空文本。
 - **推理型模型（如 `google/gemma-4-31b-it`）只吐思考、正文为空**：这类模型开着思维链时正文整段为空，插件只收到 reasoning 增量、没有 `text-delta`，表现为 `no-reply: empty-stream`；现在空正文会自动**关掉推理（`reasoningEffort: 'off'`）重试一次**，并把流结束原因带进错误码
 - **AI 回复失败不再「无声无息」**（ADR-028）：`generateReply()` 失败时返回原因，`/api/dsh-waifu/interact` 回 `no-reply: <原因>`（如 openrouter 未配 `OPENROUTER_API_KEY`、模型名不存在、超时、模型只吐空白）；桌宠仍回落到预置台词，不会把错误显示给用户
 - **AI 默认 provider 回退为 `deepseek-official` / `deepseek-flash`**：`openrouter` 依赖 `OPENROUTER_API_KEY` 环境变量，缺 key 时整条 provider 不可用，默认值不该指向它
