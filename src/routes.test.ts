@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -81,6 +81,7 @@ function makeRoutes(
   },
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-route-'))
+  tempDirs.push(dir)
   mkdirSync(join(dir, 'assets', 'vendor'), { recursive: true })
   mkdirSync(join(dir, 'assets', 'models', 'jian'), { recursive: true })
   writeFileSync(join(dir, 'assets', 'vendor', 'pixi.min.js'), 'fake-pixi-js')
@@ -117,6 +118,12 @@ function makeRoutes(
 
 /** GET 路由的 handler 不返回 Promise，等一个事件循环轮次让异步完成。 */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/** 本文件建过的临时目录：个别用例只建路由不调用 cleanup，统一在结束时兜底删除。 */
+const tempDirs: string[] = []
+afterAll(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+})
 
 describe('makePetRoutes API 路由', () => {
   it('GET /state 返回 200 + 快照 JSON（含 touchParts/events，不含旧 spatialTap 字段）', async () => {
