@@ -39,13 +39,13 @@ export interface PetSettings {
   canvasPadX: number
   /** 画布垂直留白（每侧，size 的百分比 0–300）。 */
   canvasPadY: number
-  /** 默认位置：显示区**中心点**距视口右侧（px，用于「归位」与首次启动）。 */
+  /** 默认位置：显示区**中心点**距视口右侧（视口宽度百分比 0–100，用于「归位」与首次启动）。 */
   homeRight: number
-  /** 默认位置：显示区**中心点**距视口底部（px）。 */
+  /** 默认位置：显示区**中心点**距视口底部（视口高度百分比 0–100）。 */
   homeBottom: number
   /** 气泡相对模型顶部中心的水平偏移（px，正值向右）。 */
   bubbleOffsetX: number
-  /** 气泡相对模型顶部中心的垂直偏移（px，默认 -10 表示模型上方）。 */
+  /** 气泡相对模型顶部中心的垂直偏移（px，正值向上、负值向下；默认 10 = 模型上方 10px）。 */
   bubbleOffsetY: number
   /** 气泡背景色（#rrggbb）。 */
   bubbleBgColor: string
@@ -74,8 +74,12 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor`
 
-/** 设置文件结构版本：2 起 homeRight/homeBottom 语义 = 显示区中心点距右/距下。 */
-const SETTINGS_SCHEMA_VERSION = 2
+/**
+ * 设置文件结构版本：
+ * - 2 起 homeRight/homeBottom 语义 = 显示区中心点距右/距下（px）
+ * - 3 起 homeRight/homeBottom 改为**视口宽/高的百分比**（0–100）；bubbleOffsetY 改为负值向下
+ */
+const SETTINGS_SCHEMA_VERSION = 3
 
 function serializeSettings(value: PetSettings): string {
   return `${SETTINGS_HEADER}\n${JSON.stringify({ ...value, version: SETTINGS_SCHEMA_VERSION }, null, 2)}\n`
@@ -113,7 +117,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
   const clampHome = (value: unknown, fallback: number): number => {
     const n = typeof value === 'number' ? value : Number(value)
     if (!Number.isFinite(n)) return fallback
-    return Math.round(Math.min(4000, Math.max(0, n)))
+    return Math.round(Math.min(100, Math.max(0, n)))
   }
   const clampOffset = (value: unknown, fallback: number): number => {
     const n = typeof value === 'number' ? value : Number(value)
@@ -129,9 +133,15 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     if (!Number.isFinite(n)) return fallback
     return Math.round(Math.min(100, Math.max(0, n)))
   }
-  // 旧版（无 version 字段）的 home 语义是「画布右下角距右/距下」，迁移为新语义（中心点距右/距下）：
-  // 直接回退到 base 默认值，避免旧的小数值把角色推到屏幕外。
-  const legacyHome = record.version !== SETTINGS_SCHEMA_VERSION
+  // 旧版本迁移：
+  // - v1（无 version）：home 语义是「画布右下角距右/距下」；
+  // - v2：home 是 px 的「中心点距右/距下」；
+  // 两种旧值都无法直接换算成 v3 的视口百分比（旧值依赖当时的窗口尺寸），一律回退 base 默认值。
+  // - bubbleOffsetY 在 v3 前是「负值向上」，与新版正好相反，值取反即可保持观感不变。
+  const version = typeof record.version === 'number' ? record.version : 0
+  const legacyHome = version < SETTINGS_SCHEMA_VERSION
+  const offsetYRaw = record.bubbleOffsetY
+  const offsetY = legacyHome && typeof offsetYRaw === 'number' ? -offsetYRaw : offsetYRaw
   return {
     enabled: bool('enabled'),
     size: clampSize(record.size) ?? base.size,
@@ -145,7 +155,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     homeRight: legacyHome ? base.homeRight : clampHome(record.homeRight, base.homeRight),
     homeBottom: legacyHome ? base.homeBottom : clampHome(record.homeBottom, base.homeBottom),
     bubbleOffsetX: clampOffset(record.bubbleOffsetX, base.bubbleOffsetX),
-    bubbleOffsetY: clampOffset(record.bubbleOffsetY, base.bubbleOffsetY),
+    bubbleOffsetY: clampOffset(offsetY, base.bubbleOffsetY),
     bubbleBgColor: color(record.bubbleBgColor, base.bubbleBgColor),
     bubbleBgOpacity: opacity(record.bubbleBgOpacity, base.bubbleBgOpacity),
     bubbleTextColor: color(record.bubbleTextColor, base.bubbleTextColor),

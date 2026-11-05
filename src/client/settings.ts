@@ -46,9 +46,9 @@ export interface PetSettingsValue {
   canvasPadX: number
   /** 画布垂直留白（%，0–300）。 */
   canvasPadY: number
-  /** 默认位置：显示区中心点距右边（px，0–4000）。 */
+  /** 默认位置：显示区中心点距右边（视口宽度百分比 0–100）。 */
   homeRight: number
-  /** 默认位置：显示区中心点距下边（px，0–4000）。 */
+  /** 默认位置：显示区中心点距下边（视口高度百分比 0–100）。 */
   homeBottom: number
   /** 气泡相对角色顶部中心的水平偏移（px，-1000–1000）。 */
   bubbleOffsetX: number
@@ -93,10 +93,10 @@ const DEFAULT_VALUE: PetSettingsValue = {
   maxFps: 30,
   canvasPadX: 125,
   canvasPadY: 50,
-  homeRight: 300,
-  homeBottom: 260,
+  homeRight: 16,
+  homeBottom: 24,
   bubbleOffsetX: 0,
-  bubbleOffsetY: -10,
+  bubbleOffsetY: 10,
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
@@ -220,7 +220,25 @@ function orderTouchBox(box: TouchBox): TouchBox {
   }
 }
 
-/** 触摸部位每个 box 的四个边（设置页输入框顺序：左 / 上 / 右 / 下）。 */
+/**
+ * 设置页把 box 坐标按**左下角**为原点显示（更符合直觉：上 = box 上边离底边的距离，调大即往上长）。
+ * 存储仍是相对左上角的归一化 {left, top, right, bottom}，只在这一层做互补换算。
+ */
+function boxFieldPercent(box: TouchBox, key: keyof TouchBox): number {
+  if (key === 'top') return Math.round((1 - box.bottom) * 100)
+  if (key === 'bottom') return Math.round((1 - box.top) * 100)
+  return toPercent(box[key])
+}
+
+/** 以左下角为原点的百分比输入 → 归一化 box（写回存储前照旧校正左右/上下顺序）。 */
+function applyBoxField(box: TouchBox, key: keyof TouchBox, raw: string): TouchBox {
+  const value = fromPercentInput(raw)
+  if (key === 'top') return orderTouchBox({ ...box, bottom: 1 - value })
+  if (key === 'bottom') return orderTouchBox({ ...box, top: 1 - value })
+  return orderTouchBox({ ...box, [key]: value })
+}
+
+/** 触摸部位每个 box 的四个边（设置页输入框顺序：左 / 上 / 右 / 下；原点在左下角）。 */
 const TOUCH_BOX_FIELDS: { key: keyof TouchBox; label: string }[] = [
   { key: 'left', label: '左' },
   { key: 'top', label: '上' },
@@ -627,7 +645,7 @@ function normalizeCanvasPad(raw: unknown, fallback: number): number {
 function normalizeHomePosition(raw: unknown, fallback: number): number {
   const n = typeof raw === 'number' ? raw : Number(raw)
   if (!Number.isFinite(n)) return fallback
-  return Math.min(4000, Math.max(0, Math.round(n)))
+  return Math.min(100, Math.max(0, Math.round(n)))
 }
 
 /** 气泡偏移（px）：clamp 到 -1000–1000 的整数；非法值回落 fallback。 */
@@ -1495,9 +1513,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const setBoxField = (partId: string, boxIndex: number, key: keyof TouchBox, raw: string): void => {
     updateTouchPart(partId, (part) => ({
       ...part,
-      boxes: part.boxes.map((box, index) => (index === boxIndex
-        ? orderTouchBox({ ...box, [key]: fromPercentInput(raw) })
-        : box)),
+      boxes: part.boxes.map((box, index) => (index === boxIndex ? applyBoxField(box, key, raw) : box)),
     }))
   }
 
@@ -1511,13 +1527,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     updateTouchPart(partId, (part) => ({ ...part, boxes: part.boxes.filter((_box, index) => index !== boxIndex) }))
   }
 
-  const togglePartMotion = (partId: string, group: string, checked: boolean): void => {
-    updateTouchPart(partId, (part) => ({
-      ...part,
-      motions: checked
-        ? (part.motions.includes(group) ? part.motions : [...part.motions, group])
-        : part.motions.filter((motion) => motion !== group),
-    }))
+  const setPartMotions = (partId: string, next: string[]): void => {
+    updateTouchPart(partId, (part) => ({ ...part, motions: [...next] }))
   }
 
   /** 部位台词变更：一行一条；全空时删除 lines 字段（回退全局默认台词）。 */
@@ -1725,7 +1736,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           : null,
       expanded && createElement('div', { style: cardBodyStyle },
         createElement('div', { style: hintStyle },
-          'box 用相对角色包围盒的百分比（0–100）表示；一个部位可有多个 box，命中任一即算该部位。'),
+          '坐标以角色包围盒的左下角为原点（0–100%）：「上」变大 = box 往上长，「下」变小 = box 往下长；',
+          '一个部位可有多个 box，命中任一即算该部位。'),
         part.boxes.length === 0
           ? createElement('div', { style: { ...hintStyle, marginBottom: GAP.sm } }, '还没有 box，点「+ 添加 box」画出点击区域。')
           : createElement('div', { key: 'box-table', style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: GAP.sm } },
@@ -1742,8 +1754,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 min: 0,
                 max: 100,
                 step: 1,
-                'aria-label': `${label}（%）`,
-                value: toPercent(box[key]),
+                'aria-label': `${label}（%，左下角原点）`,
+                value: boxFieldPercent(box, key),
                 disabled: readOnly,
                 style: boxCellInputStyle,
                 onChange: (e: ChangeEvent<HTMLInputElement>) => setBoxField(part.id, boxIndex, key, e.target.value),
@@ -1792,31 +1804,21 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 : `最多 ${MAX_LINES_PER_PART} 条 × ${MAX_LINE_LENGTH} 字`),
           ),
         ),
-        createElement('div', { key: 'part-motions', style: { ...formRowStyle, marginBottom: 0, alignItems: 'start' } },
-          createElement('span', { style: formLabelStartStyle }, '触摸动画'),
-          createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs, minWidth: 0 } },
-            createElement('div', { style: hintStyle }, '触摸该部位时随机播一个；不选 = 只出气泡。'),
-            motionGroupsStatus === 'loading'
-              ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '正在解析动作列表…')
-              : motionGroupsStatus === 'error'
-                ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（触摸动画可留空，部位仍会保存）')
-                : groups.length === 0
-                  ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '该模型没有定义动作组')
-                  : createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px' } },
-                    ...groups.map((group) => createElement('label', {
-                      key: group,
-                      style: { display: 'flex', alignItems: 'center', gap: GAP.xs, fontSize: 12, cursor: readOnly ? 'not-allowed' : 'pointer' },
-                    },
-                      createElement('input', {
-                        type: 'checkbox',
-                        checked: part.motions.includes(group),
-                        disabled: readOnly,
-                        onChange: (e: ChangeEvent<HTMLInputElement>) => togglePartMotion(part.id, group, e.target.checked),
-                      }),
-                      group,
-                    )),
-                  ),
-          ),
+        createElement('div', { key: 'part-motions', style: { ...formRowStyle, marginBottom: 0 } },
+          createElement('span', { style: formLabelStyle }, '触摸动画'),
+          motionGroupsStatus === 'loading'
+            ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '正在解析动作列表…')
+            : motionGroupsStatus === 'error'
+              ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（触摸动画可留空，部位仍会保存）')
+              : groups.length === 0
+                ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '该模型没有定义动作组')
+                : createElement(ThemeMultiSelect, {
+                  value: part.motions,
+                  options: groups.map((group) => ({ id: group, name: group })),
+                  disabled: readOnly || motionGroupsStatus !== 'ready',
+                  placeholder: '不选 = 只出气泡',
+                  onChange: (next: string[]) => setPartMotions(part.id, next),
+                }),
         ),
       ),
     )
@@ -1878,10 +1880,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const maxFps = normalizeMaxFps(value.maxFps)
   const canvasPadX = normalizeCanvasPad(state.value?.canvasPadX, 125)
   const canvasPadY = normalizeCanvasPad(state.value?.canvasPadY, 50)
-  const homeRight = normalizeHomePosition(state.value?.homeRight, 300)
-  const homeBottom = normalizeHomePosition(state.value?.homeBottom, 260)
-  const bubbleOffsetX = normalizeBubbleOffset(state.value?.bubbleOffsetX, 0)
-  const bubbleOffsetY = normalizeBubbleOffset(state.value?.bubbleOffsetY, -10)
+  const homeRight = normalizeHomePosition(state.value?.homeRight, DEFAULT_VALUE.homeRight)
+  const homeBottom = normalizeHomePosition(state.value?.homeBottom, DEFAULT_VALUE.homeBottom)
+  const bubbleOffsetX = normalizeBubbleOffset(state.value?.bubbleOffsetX, DEFAULT_VALUE.bubbleOffsetX)
+  const bubbleOffsetY = normalizeBubbleOffset(state.value?.bubbleOffsetY, DEFAULT_VALUE.bubbleOffsetY)
   const bubbleBgColor = normalizeHexColor(state.value?.bubbleBgColor, '#ffffff')
   const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
   const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
@@ -1992,13 +1994,13 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '中心距右（px）'),
+        createElement('span', { style: formLabelStyle }, '中心距右（% 窗口宽）'),
         createElement('div', { style: formControlStyle },
           createElement('input', {
             type: 'number',
             min: 0,
-            max: 4000,
-            step: 10,
+            max: 100,
+            step: 1,
             value: homeRight,
             disabled: !writable,
             style: numberInputStyle,
@@ -2010,13 +2012,13 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '中心距下（px）'),
+        createElement('span', { style: formLabelStyle }, '中心距下（% 窗口高）'),
         createElement('div', { style: formControlStyle },
           createElement('input', {
             type: 'number',
             min: 0,
-            max: 4000,
-            step: 10,
+            max: 100,
+            step: 1,
             value: homeBottom,
             disabled: !writable,
             style: numberInputStyle,
@@ -2025,11 +2027,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
             },
           }),
-        ),
-      ),
-      createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '操作'),
-        createElement('div', { style: { ...formControlStyle, flexWrap: 'wrap' } },
           createElement('button', {
             type: 'button',
             className: 'dsh-btn dsh-btn-secondary',
@@ -2045,10 +2042,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             : null,
         ),
       ),
-      createElement('div', { style: { ...hintStyle, marginTop: GAP.sm } },
-        '角色四周的画布留白，防止动作甩尾被裁切。',
-        createElement('br'),
-        '中心距右/下：显示区中心点距窗口右/底边的距离；首次启动与「归位」使用。'),
     ),
     // C. 对白气泡
     createElement('div', { key: 'bubble-style', style: rowStyle },
@@ -2087,7 +2080,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetY'], value: next }])
             },
           }),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, '相对角色顶部中心，负值向上。'),
         ),
       ),
       createElement('div', { style: formRowStyle },
@@ -2106,7 +2098,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowStyle },
-        createElement('span', { style: formLabelStyle }, '背景不透明度（%）'),
+        createElement('span', { style: formLabelStyle }, '背景不透明度'),
         createElement('div', { style: formControlStyle },
           createElement('input', {
             type: 'number',

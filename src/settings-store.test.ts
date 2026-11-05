@@ -14,10 +14,10 @@ const BASE: PetSettings = {
   showTapZones: false,
   canvasPadX: 130,
   canvasPadY: 70,
-  homeRight: 24,
-  homeBottom: 20,
+  homeRight: 16,
+  homeBottom: 24,
   bubbleOffsetX: 0,
-  bubbleOffsetY: -10,
+  bubbleOffsetY: 10,
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
@@ -61,7 +61,8 @@ describe('normalizeSettings', () => {
     expect(v.bubbleBgColor).toBe('#ffaa00')
     expect(v.bubbleTextColor).toBe('#222222')
     expect(v.bubbleBgOpacity).toBe(100)
-    expect(v.bubbleOffsetY).toBe(-1000)
+    // 无 version 字段按旧语义处理：垂直偏移取反后再 clamp 到 -1000–1000
+    expect(v.bubbleOffsetY).toBe(1000)
   })
 
   it('size 低于下限夹到 40，maxFps 0 允许（不限制）', () => {
@@ -115,15 +116,38 @@ describe('SettingsStore', () => {
     expect(view.value.size).toBe(200)
   })
 
-  it('新版本设置文件的 home 值原样保留', () => {
+  it('新版本设置文件的 home 值原样保留（0–100 百分比）', () => {
     const store = new SettingsStore(BASE)
     store.applyOps([
-      { op: 'set', path: ['homeRight'], value: 420 },
-      { op: 'set', path: ['homeBottom'], value: 300 },
+      { op: 'set', path: ['homeRight'], value: 42 },
+      { op: 'set', path: ['homeBottom'], value: 30 },
     ])
     const view = store.view()
-    expect(view.value.homeRight).toBe(420)
-    expect(view.value.homeBottom).toBe(300)
+    expect(view.value.homeRight).toBe(42)
+    expect(view.value.homeBottom).toBe(30)
+    // 百分比上限 100
+    store.applyOps([{ op: 'set', path: ['homeRight'], value: 420 }])
+    expect(store.view().value.homeRight).toBe(100)
+  })
+
+  it('v2 设置迁移到 v3：home 回退默认百分比，气泡垂直偏移取反以保持观感', () => {
+    const store = new SettingsStore(BASE)
+    const raw = {
+      version: 2,
+      enabled: true,
+      size: 200,
+      maxFps: 30,
+      homeRight: 300,
+      homeBottom: 260,
+      bubbleOffsetY: -10,
+      bubbleBgColor: '#ffffff',
+    }
+    writeFileSync(store.path, JSON.stringify(raw), 'utf8')
+    const view = store.view()
+    expect(view.value.homeRight).toBe(BASE.homeRight)
+    expect(view.value.homeBottom).toBe(BASE.homeBottom)
+    expect(view.value.bubbleOffsetY).toBe(10)
+    expect(view.value.size).toBe(200)
   })
 
   it('文件损坏时沿用上次好结果并报错', () => {

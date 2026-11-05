@@ -68,14 +68,14 @@ const DEFAULT_CANVAS_PAD_Y = 50
 
 /** 气泡默认偏移（相对模型包围盒顶部中心）与默认配色（Host 默认 0/-10、#ffffff/92%/#222222）。 */
 const DEFAULT_BUBBLE_OFFSET_X = 0
-const DEFAULT_BUBBLE_OFFSET_Y = -10
+const DEFAULT_BUBBLE_OFFSET_Y = 10
 const DEFAULT_BUBBLE_BG_COLOR = '#ffffff'
 const DEFAULT_BUBBLE_BG_OPACITY = 92
 const DEFAULT_BUBBLE_TEXT_COLOR = '#222222'
 
-/** 默认位置（显示区中心点距右/距下 px；Host 默认 300/260，spec §2）。 */
-const DEFAULT_HOME_RIGHT = 300
-const DEFAULT_HOME_BOTTOM = 260
+/** 默认位置（显示区中心点距右/距下，视口宽/高百分比；Host 默认 16/24，spec §2）。 */
+const DEFAULT_HOME_RIGHT = 16
+const DEFAULT_HOME_BOTTOM = 24
 
 /** #rgb/#rrggbb + 0–100 不透明度 → CSS rgba()（非法颜色回退白色，spec §3）。 */
 function colorWithOpacity(color: string, opacityPct: number): string {
@@ -456,8 +456,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /**
    * 气泡相对模型包围盒定位（spec §3）：气泡底部中点贴住
-   * (bounds.x + width/2 + bubbleOffsetX, bounds.y + bubbleOffsetY)（画布逻辑 CSS px），
-   * transform: translate(-50%, -100%) 由样式负责居中/贴底；无模型层时不更新。
+   * (bounds.x + width/2 + bubbleOffsetX, bounds.y - bubbleOffsetY)（画布逻辑 CSS px；
+   * bubbleOffsetY 正值向上、负值向下），transform: translate(-50%, -100%) 由样式居中/贴底。
    * 调试面板可见时锚点上移到面板顶部再往上 6px；目标视口 y clamp 到 ≥8，避免跑出视口。
    */
   function updateBubblePosition(): void {
@@ -478,7 +478,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 调试面板可见时气泡上移避让：锚点 = 面板顶部再往上 6px（spec §2）
     let anchorY = Number.isFinite(debugPanelTopLogical)
       ? debugPanelTopLogical - 6
-      : bounds.y + bubbleOffsetY
+      : bounds.y - bubbleOffsetY
     // 气泡目标视口 y clamp 到 ≥8（用 petLayer 视口 rect 换算，面板/模型贴顶时不跑出视口）
     try {
       const rect = petLayer.getBoundingClientRect()
@@ -801,18 +801,22 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /**
-   * 按配置的默认位置计算 pos（spec §2）：「显示区中心点距右/距下」——
-   * 显示区即整块逻辑画布 W×H，画布中心距右 = right + W/2、距下 = bottom + H/2，
-   * 因此 right = homeRight - W/2、bottom = homeBottom - H/2，最后按视口规则 clamp。
+   * 按配置的默认位置计算 pos（spec §2）：「显示区中心点距右/距下」是**视口宽/高的百分比**——
+   * 目标中心点 = (视口宽 × homeRight%、视口高 × homeBottom%)（相对右下角量），
+   * 画布中心距右 = right + W/2、距下 = bottom + H/2，因此
+   * right = 目标中心距右 - W/2、bottom = 目标中心距下 - H/2，最后按视口规则 clamp。
    */
   function homePositionFromConfig(): void {
     const { width: w, height: h } = logicalCanvasSize()
     const cfg = view?.config
     if (!cfg || !(w > 0 && h > 0)) return
-    const homeRight = Number.isFinite(cfg.homeRight) ? cfg.homeRight : DEFAULT_HOME_RIGHT
-    const homeBottom = Number.isFinite(cfg.homeBottom) ? cfg.homeBottom : DEFAULT_HOME_BOTTOM
-    pos.right = homeRight - w / 2
-    pos.bottom = homeBottom - h / 2
+    const homeRightPct = Number.isFinite(cfg.homeRight) ? cfg.homeRight : DEFAULT_HOME_RIGHT
+    const homeBottomPct = Number.isFinite(cfg.homeBottom) ? cfg.homeBottom : DEFAULT_HOME_BOTTOM
+    const viewportW = window.innerWidth || document.documentElement.clientWidth || 0
+    const viewportH = window.innerHeight || document.documentElement.clientHeight || 0
+    if (!(viewportW > 0 && viewportH > 0)) return
+    pos.right = viewportW * homeRightPct / 100 - w / 2
+    pos.bottom = viewportH * homeBottomPct / 100 - h / 2
     clampPosToViewport()
   }
 
