@@ -544,13 +544,16 @@ const inputStyle: CSSProperties = {
   flex: 1,
   outline: 'none',
 }
+/** 台词输入框：固定高度（不随行数伸缩、不可拖拽），超出滚动。 */
 const textareaStyle: CSSProperties = {
   ...inputStyle,
-  height: 'auto',
-  minHeight: 64,
+  height: 96,
+  minHeight: 96,
+  maxHeight: 96,
   padding: '6px 8px',
   lineHeight: 1.45,
-  resize: 'vertical',
+  overflowY: 'auto',
+  resize: 'none',
 }
 const chipStyle: CSSProperties = {
   display: 'inline-flex',
