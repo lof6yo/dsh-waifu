@@ -749,15 +749,17 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 台词/动作均来自事件绑定（config.events），无固定人设、无默认回退。
     if (state !== lastState) {
       lastState = state
+      const line = pickEventLine(state, 0)
       if (EVENT_STAGE_DELAYS[state]) {
         enterStaged(state)
       } else {
         clearStages()
-        const line = pickEventLine(state, 0)
         if (line !== undefined) showBubble(line)
         else hideBubble()
-        if (state !== 'idle') void requestAiReply({ kind: 'state', state, hint: line })
       }
+      // AI 台词与阶段台词并存：长状态（思考/等确认）先进阶段 0 的预置台词，
+      // AI 回复到了再覆盖（showAiBubble 的 1.4s 保护期内阶段推进不会抢走它）。
+      if (state !== 'idle') void requestAiReply({ kind: 'state', state, hint: line })
       playState(state)
     }
     if (debugTextEl) {
