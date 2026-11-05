@@ -2,7 +2,7 @@
  * 桌宠配置设置页（`settings.section` 注册体，spec §2）。
  * 单页信息架构（从上到下）：显示（开关 / 尺寸 / 留白 / 位置 / 气泡 / 帧率）/
  * 事件绑定（当前模型：6 事件的动作组 + 分阶段台词池）/ 触摸部位
- * （box / 台词 / 触摸动画）/ 开发者选项。仅内置「简」模型，不再有模型选择/导入、
+ * （box / 台词 / 动作组）/ 开发者选项。仅内置「简」模型，不再有模型选择/导入、
  * 固定人设、跳转链接或文件路径展示。
  * 读写经插件自己的同源 API `/api/dsh-waifu/settings` 与 `/api/dsh-waifu/touch-parts`
  * （Host 直连插件私有配置文件 settings.jsonc / touch-parts.jsonc，ADR-013）——不走
@@ -1384,7 +1384,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     return () => { alive = false }
   }, [selectedModel, state.status, reloadKey])
 
-  // 解析当前模型的 .model3.json 动作组名（事件绑定 / 触摸动画共用）
+  // 解析当前模型的 .model3.json 动作组名（事件绑定 / 触摸部位共用）
   useEffect(() => {
     if (state.status !== 'ready' || !selectedModel) return
     let alive = true
@@ -1805,11 +1805,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           ),
         ),
         createElement('div', { key: 'part-motions', style: { ...formRowStyle, marginBottom: 0 } },
-          createElement('span', { style: formLabelStyle }, '触摸动画'),
+          createElement('span', { style: formLabelStyle }, '动作组'),
           motionGroupsStatus === 'loading'
             ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '正在解析动作列表…')
             : motionGroupsStatus === 'error'
-              ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（触摸动画可留空，部位仍会保存）')
+              ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（动作组可留空，部位仍会保存）')
               : groups.length === 0
                 ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '该模型没有定义动作组')
                 : createElement(ThemeMultiSelect, {
