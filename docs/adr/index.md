@@ -24,3 +24,4 @@
 | [016](016-rename-to-dsh-waifu-and-drop-custom-models.md) | 插件更名为 dsh-waifu，并移除自定义模型支持 | Accepted（supersede ADR-009/010） |
 | [017](017-motion-set-idle-only.md) | 动作集精简为仅 Idle；原始 Scene1 调研后不采用 | Accepted（部分取代 ADR-014） |
 | [018](018-motion-set-status-touch-character.md) | 动作集扩充为 15 组（状态 / 触摸反馈 / 人设小动作） | Accepted（部分取代 ADR-017） |
+| [019](019-physics-driven-touch-motions.md) | 触摸动作改为驱动物理输入（不直接写躯干/胸参数） | Accepted |

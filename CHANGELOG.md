@@ -11,6 +11,7 @@
 - 新增 ADR-018：动作集扩充（部分取代 ADR-017）
 
 ### Fixed
+- **胸口/腰/臀动作改成「物理驱动」**：原来直接写 `ParamBodyAngleX0/Y0/Z0` 的正弦，等于把整块上身按物理权重（30/50/80）强行掰过去——看着是刚性的木偶摆动，而且**完全不会带动胸部**（胸的形变 `Chest_S1..S3`/`Chest_SY*` 只由 `ParamChestAngleX/Y` 经 `PhysicsSetting67/68` 算出，链头是头部角度 `ParamAngleX/Y/Z`）。现在改为只给物理输入一个短促冲量（0.08–0.1s 到位 + 反向过冲 + 归零），让摆锤自己衰减：胸 2.0s 单次受力、腰 2.0s 4.5Hz 衰减抖动、臀 2.2s 单次横向冲量（ADR-019）
 - **胸口/腰/臀动作幅度太小**：原来只写 `ParamBodyAngleX0/Y0/Z0`，而这些参数被物理按 Output Weight（30/50/80）覆盖、`ParamChestAngleY` 更是 100% 由物理接管，所以动作值挪到屏幕上几乎看不见。现在改为按模型真实量纲驱动：头部角度走满物理归一化上限 ±10（它以 70% 权重喂进摆锤链，是带动整个上身的把手）、躯干写 ±20~30 抵消覆盖，并新增**胸口绕竖轴（Y）转动**（`ParamAngleY` → `ParamBodyOutput_BodyY` → `ParamChestAngleY`）与头部平移 `ParamAnglePX/PY`；三个动作时长放长到 2.6–3.4s
 - 超范围的头部位移值（TapHead/TapFace/TapLeg 的 12–16°）夹回模型上限 ±10
 ### Changed

@@ -482,96 +482,106 @@ const MOTION_DEFS = [
     },
   },
   {
-    // 摸胸：上身被撞——左右甩 + 绕竖轴（Y）转 + 前后仰，三轴一起晃。
-    // 幅度说明：头部角度模型上限 ±10（物理归一化），躯干/胯模型范围 ±57 但物理按权重覆盖
-    //（BodyAngleX0 30 / Y0 50 / Z0 80 / ChestAngleY 100），所以写大值才能露出来：
-    // 头部走满 ±10（它经 ParamInput_Body*/Hip* 以 70% 权重驱动整条摆锤链），躯干走 ±30。
-    // 包络 sin(πτ) 保证首尾归零、连续可导；频率压到 1.2 个来回避免与物理刚度打架。
+    // 摸胸：被戳到胸口的「受力反应」。
+    //
+    // 为什么不再直接写躯干参数：CubismPhysics.cpp 的合成公式是
+    //   weight = Output.Weight / 100
+    //   value  = motion * (1 - weight) + physics * weight
+    // 本模型躯干/胸参数的 Output.Weight：ChestAngleX/Y = 100、BodyAngleX0 = 30、
+    // BodyAngleY0 = 50、BodyAngleZ0 = 80 —— 胸口 100% 归物理，X0 则 70% 听动作的。
+    // 上一版把 BodyAngleX0/Y0/Z0 写成 ±30 正弦，等于让整块上身刚性来回转，
+    // 既盖掉物理的滞后与余振、又和摆锤互相打架，所以像被推着晃的木偶。
+    //
+    // 正确做法（与鼠标跟随同源）：只给「物理输入」一个短促冲量，让摆锤自己衰减。
+    //   头部角度 AngleX/Y/Z（Weight 70）+ 头部平移 AnglePX/PY（Weight 30）
+    //     → ParamInput_Body*/Hip* → 摆锤 → ParamBodyOutput_Body*
+    //     → ParamChestAngleX/Y → PhysicsSetting67/68 → Chest_S1..S3 / Chest_SY*（胸部挤压与左右晃）
+    // 冲量 = 0.08~0.1s 到位 + 一次反向过冲 + 归零，之后留白，靠物理余振收尾。
     group: 'TapChest',
     file: 'tap-chest.motion3.json',
-    duration: 3.4,
+    duration: 2.0,
     loop: false,
     build: () => {
-      const d = 3.4
-      const steps = 34
-      const env = (tau, pow = 0.8) => Math.pow(Math.sin(Math.PI * tau), pow)
-      const c = (id, fn) => buildCurve(id, periodic(d, steps, fn), { loop: false, duration: d })
+      const d = 2.0
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
       return [
-        // 绕竖轴：头部俯仰（AngleY）→ 物理 ParamBodyOutput_BodyY → ParamChestAngleY（胸口转向）
-        c('ParamAngleY', (t) => 10 * Math.sin(TAU * 1.2 * t) * env(t)),
-        c('ParamBodyAngleY0', (t) => 30 * Math.sin(TAU * 1.2 * t - Math.PI / 6) * env(t)),
-        // 左右甩：头部侧倾 + 躯干 Z（相位略滞后，像被撞后跟上）
-        c('ParamAngleZ', (t) => 10 * Math.sin(TAU * 1.2 * t + Math.PI / 2) * env(t)),
-        c('ParamBodyAngleZ0', (t) => 30 * Math.sin(TAU * 1.2 * t + Math.PI / 3) * env(t)),
-        // 前后仰：头部转向 + 躯干 X + 头部平移（喂 BodyX/HipX）
-        c('ParamAngleX', (t) => 8 * Math.sin(TAU * 1.2 * t) * env(t)),
-        c('ParamBodyAngleX0', (t) => 26 * Math.sin(TAU * 1.2 * t + Math.PI / 4) * env(t)),
-        c('ParamAnglePX', (t) => 7 * Math.sin(TAU * 1.2 * t + Math.PI / 2) * env(t)),
-        c('ParamAnglePY', (t) => 5 * Math.sin(TAU * 1.2 * t) * env(t)),
-        // 表情：被打到时的瞪眼 / 皱眉 / 张嘴
-        c('ParamBrowLY', (t) => -0.8 * env(t, 0.5)),
-        c('ParamBrowRY', (t) => -0.8 * env(t, 0.5)),
-        c('ParamEyeLOpen', (t) => 1 - 0.5 * env(t, 0.5)),
-        c('ParamEyeROpen', (t) => 1 - 0.5 * env(t, 0.5)),
-        c('ParamEyeBallY', (t) => -0.35 * env(t, 0.7)),
-        c('ParamMouthOpenY', (t) => 0.6 * env(t, 0.6)),
-        c('ParamMouthForm', (t) => -0.85 * env(t, 0.5)),
+        // 侧身躲：快速偏转 → 回摆过冲 → 收
+        c('ParamAngleX', [[0, 0], [0.08, 9], [0.16, 9], [0.4, -4], [0.7, 2.2], [1.05, -1], [1.5, 0], [2.0, 0]]),
+        // 缩肩低头（俯仰）：这一轴经 BodyY 直接喂胸口转向，是胸部晃动的主动力
+        c('ParamAngleY', [[0, 0], [0.09, 10], [0.18, 10], [0.44, -4.5], [0.78, 2.4], [1.15, -1], [1.6, 0], [2.0, 0]]),
+        // 轻微歪头，让挤压不对称
+        c('ParamAngleZ', [[0, 0], [0.1, 5], [0.28, 4], [0.6, -2], [1.0, 0.6], [1.5, 0], [2.0, 0]]),
+        // 头部平移 = 身体受力的位移冲量（权重 30，喂 BodyX/HipX）
+        c('ParamAnglePX', [[0, 0], [0.09, 7], [0.24, 5.5], [0.6, -1.6], [1.0, 0.5], [1.5, 0], [2.0, 0]]),
+        c('ParamAnglePY', [[0, 0], [0.09, 4], [0.28, 3], [0.68, -1.2], [1.1, 0], [2.0, 0]]),
+        // 表情：先是一惊（闭眼、张嘴、挑眉），接着瞪你
+        c('ParamEyeLOpen', [[0, 1], [0.07, 0.15], [0.3, 0.4], [0.62, 0.95], [1.0, 1], [2.0, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.07, 0.15], [0.3, 0.4], [0.62, 0.95], [1.0, 1], [2.0, 1]]),
+        c('ParamBrowLY', [[0, 0], [0.09, 0.9], [0.42, 0.7], [0.82, 0.2], [1.2, 0], [2.0, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.09, 0.9], [0.42, 0.7], [0.82, 0.2], [1.2, 0], [2.0, 0]]),
+        c('ParamMouthOpenY', [[0, 0], [0.09, 0.7], [0.3, 0.5], [0.6, 0.15], [1.0, 0], [2.0, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.12, -0.4], [0.5, -0.9], [1.0, -0.5], [1.6, 0], [2.0, 0]]),
+        c('ParamEyeBallY', [[0, 0], [0.12, -0.4], [0.5, -0.2], [1.0, 0], [2.0, 0]]),
       ]
     },
   },
   {
-    // 摸腰：扭动——绕竖轴扭 + 侧倾，两个相位差 90° 的振荡合成 8 字形，频率比胸口快一档。
+    // 摸腰：怕痒的「抖」。
+    // 高频小幅度、指数衰减的冲量串：频率高于摆锤固有频率，物理跟不上 → 身体细密发颤、
+    // 胸部跟着碎抖，而不是整块转身。
     group: 'TapWaist',
     file: 'tap-waist.motion3.json',
-    duration: 2.6,
+    duration: 2.0,
     loop: false,
     build: () => {
-      const d = 2.6
-      const steps = 30
-      const env = (tau, pow = 0.7) => Math.pow(Math.sin(Math.PI * tau), pow)
-      const c = (id, fn) => buildCurve(id, periodic(d, steps, fn), { loop: false, duration: d })
+      const d = 2.0
+      const steps = 120
+      const env = (tau) => Math.exp(-2.6 * tau)
+      const sampled = (fn) => {
+        const keys = []
+        for (let i = 0; i <= steps; i++) {
+          const tau = i / steps
+          keys.push({ t: round(tau * d), v: round(fn(tau * d, tau)) })
+        }
+        keys[0].v = 0
+        keys[keys.length - 1].v = 0
+        return keys
+      }
       return [
-        c('ParamAngleY', (t) => 9 * Math.sin(TAU * 2.2 * t) * env(t)),
-        c('ParamBodyAngleY0', (t) => 28 * Math.sin(TAU * 2.2 * t + Math.PI / 6) * env(t)),
-        c('ParamAngleZ', (t) => 10 * Math.sin(TAU * 2.2 * t + Math.PI / 2) * env(t)),
-        c('ParamBodyAngleZ0', (t) => 26 * Math.sin(TAU * 2.2 * t + Math.PI / 2) * env(t)),
-        c('ParamAngleX', (t) => 7 * Math.sin(TAU * 2.2 * t + Math.PI) * env(t)),
-        c('ParamBodyAngleX0', (t) => 22 * Math.sin(TAU * 2.2 * t + Math.PI) * env(t)),
-        c('ParamAnglePY', (t) => 4 * Math.sin(TAU * 4.4 * t) * env(t, 0.9)),
-        c('ParamEyeLSmile', (t) => 0.6 * env(t, 0.6)),
-        c('ParamEyeRSmile', (t) => 0.6 * env(t, 0.6)),
-        c('ParamCheekPuff', (t) => 0.55 * env(t, 0.6)),
-        c('ParamMouthOpenY', (t) => 0.25 * env(t)),
-        c('ParamMouthForm', (t) => -0.5 * env(t, 0.6)),
+        buildCurve('ParamAngleZ', sampled((t, tau) => 4.8 * Math.sin(TAU * 4.5 * t) * env(tau)), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sampled((t, tau) => 3.4 * Math.sin(TAU * 4.5 * t + Math.PI) * env(tau)), { loop: false, duration: d }),
+        buildCurve('ParamAngleY', sampled((t, tau) => 2.6 * Math.sin(TAU * 4.8 * t + Math.PI / 2) * env(tau)), { loop: false, duration: d }),
+        buildCurve('ParamAnglePX', sampled((t, tau) => 2.5 * Math.sin(TAU * 3 * t) * env(tau)), { loop: false, duration: d }),
+        buildCurve('ParamEyeLSmile', kf([[0, 1], [d, 1]]), { loop: false, duration: d }),
+        buildCurve('ParamEyeRSmile', kf([[0, 1], [d, 1]]), { loop: false, duration: d }),
+        buildCurve('ParamCheekPuff', kf([[0, 0.55], [d, 0.55]]), { loop: false, duration: d }),
+        buildCurve('ParamMouthOpenY', kf([[0, 0.2], [d, 0.2]]), { loop: false, duration: d }),
+        buildCurve('ParamMouthForm', kf([[0, -0.55], [d, -0.55]]), { loop: false, duration: d }),
       ]
     },
   },
   {
-    // 摸臀：胯部被撞——下盘 X 轴来回摆 + 上身反向转，绕竖轴的幅度比胸口小、节奏更慢。
+    // 摸臀：侧面被拍一下——单次横向冲量（头部转向 + 平移），下半身摆锤自己回弹；
+    // 之后抬头瞪人，胸部余振自然收束。
     group: 'TapHip',
     file: 'tap-hip.motion3.json',
-    duration: 3.0,
+    duration: 2.2,
     loop: false,
     build: () => {
-      const d = 3.0
-      const steps = 30
-      const env = (tau, pow = 0.8) => Math.pow(Math.sin(Math.PI * tau), pow)
-      const c = (id, fn) => buildCurve(id, periodic(d, steps, fn), { loop: false, duration: d })
+      const d = 2.2
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
       return [
-        c('ParamAngleX', (t) => 10 * Math.sin(TAU * 1.0 * t) * env(t)),
-        c('ParamBodyAngleX0', (t) => 30 * Math.sin(TAU * 1.0 * t - Math.PI / 8) * env(t)),
-        c('ParamAnglePX', (t) => 8 * Math.sin(TAU * 1.0 * t) * env(t)),
-        c('ParamAngleZ', (t) => 8 * Math.sin(TAU * 1.0 * t + Math.PI / 2) * env(t)),
-        c('ParamBodyAngleZ0', (t) => 20 * Math.sin(TAU * 1.0 * t + Math.PI / 2) * env(t)),
-        c('ParamAngleY', (t) => 5 * Math.sin(TAU * 1.0 * t + Math.PI) * env(t)),
-        c('ParamBodyAngleY0', (t) => 16 * Math.sin(TAU * 1.0 * t + Math.PI) * env(t)),
-        c('ParamEyeBallX', (t) => -0.6 * env(t, 0.6)),
-        c('ParamBrowLY', (t) => -0.55 * env(t, 0.5)),
-        c('ParamBrowRY', (t) => -0.9 * env(t, 0.5)),
-        c('ParamEyeLOpen', (t) => 1 - 0.3 * env(t, 0.5)),
-        c('ParamEyeROpen', (t) => 1 - 0.3 * env(t, 0.5)),
-        c('ParamMouthOpenY', (t) => 0.4 * env(t, 0.6)),
-        c('ParamMouthForm', (t) => -0.75 * env(t, 0.5)),
+        c('ParamAngleX', [[0, 0], [0.07, -10], [0.15, -10], [0.38, 4.2], [0.72, -2], [1.15, 0.8], [1.6, 0], [2.2, 0]]),
+        c('ParamAnglePX', [[0, 0], [0.07, -8], [0.18, -6.5], [0.5, 2], [0.9, -0.8], [1.4, 0], [2.2, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.1, 5], [0.28, 4], [0.6, -1.6], [1.0, 0], [2.2, 0]]),
+        c('ParamAngleY', [[0, 0], [0.12, 3], [0.4, 1.5], [0.9, 0], [2.2, 0]]),
+        c('ParamEyeBallX', [[0, 0], [0.1, -0.6], [0.6, -0.5], [1.2, 0], [2.2, 0]]),
+        c('ParamBrowLY', [[0, 0], [0.1, -0.5], [0.5, -0.55], [1.2, 0], [2.2, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.1, -0.9], [0.5, -0.95], [1.2, 0], [2.2, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.1, 0.7], [0.5, 0.8], [1.0, 1], [2.2, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.1, 0.7], [0.5, 0.8], [1.0, 1], [2.2, 1]]),
+        c('ParamMouthOpenY', [[0, 0], [0.1, 0.4], [0.4, 0.3], [0.9, 0], [2.2, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.12, -0.6], [0.5, -0.75], [1.2, 0], [2.2, 0]]),
       ]
     },
   },
