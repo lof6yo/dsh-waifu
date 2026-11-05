@@ -213,6 +213,33 @@ function buildMotion(def) {
   }
 }
 
+
+/** 逐帧采样：fn(t) 直接给值，每 1/30s 一点。比稀疏贝塞尔更平滑——手点关键帧在
+ *  AreBeziersRestricted 下控制点值被夹在端点之间，容易在峰值处出现平顶拐点（显得生硬）。 */
+function sample(duration, fn) {
+  const steps = Math.max(2, Math.round(duration * FPS))
+  const keys = []
+  for (let i = 0; i <= steps; i++) {
+    const t = round((i / steps) * duration)
+    keys.push({ t, v: round(fn(t)) })
+  }
+  keys[keys.length - 1].t = round(duration)
+  return keys
+}
+
+/** 汉宁脉冲：中心 c、半宽 w，区间外为 0，峰值 1（用于「一次动作」的起落）。 */
+function pulse(t, c, w) {
+  const u = (t - (c - w)) / (2 * w)
+  if (u <= 0 || u >= 1) return 0
+  return 0.5 * (1 - Math.cos(TAU * u))
+}
+
+/** 0→1 平滑阶跃（用于「到位并停住」）。 */
+function smoothstep(t, a, b) {
+  const u = Math.min(1, Math.max(0, (t - a) / (b - a)))
+  return u * u * (3 - 2 * u)
+}
+
 // ---------------------------------------------------------------------------
 // 自建动作设计（当前只保留 Idle；原始 Scene1 不在此生成）
 // ---------------------------------------------------------------------------
@@ -291,345 +318,138 @@ const MOTION_DEFS = [
   {
     group: 'Nod',
     file: 'nod.motion3.json',
-    duration: 1.3,
+    duration: 1.5,
     loop: false,
-    build: () => [
-      // 两次点头：先浅后深（张弛），末尾上抬过冲再刹车回落（Live2D 官方「后坐力/踩刹车」）
-      buildCurve('ParamAngleY', kf([
-        [0, 0],
-        [0.08, 1.2],
-        [0.18, 7.2],
-        [0.28, 2.4],
-        [0.38, 8.6],
-        [0.5, 1.2],
-        [0.66, -1.6],
-        [0.9, 0.4],
-        [1.3, 0],
-      ]), { loop: false, duration: 1.3 }),
-      // 侧倾比俯仰晚一点到位，避免「机器人同帧」
-      buildCurve('ParamAngleZ', kf([
-        [0, 0],
-        [0.22, 1.1],
-        [0.52, -0.9],
-        [0.85, 0.4],
-        [1.3, 0],
-      ]), { loop: false, duration: 1.3 }),
-      buildCurve('ParamAnglePX', kf([
-        [0, 0],
-        [0.25, 0.6],
-        [0.8, -0.3],
-        [1.3, 0],
-      ]), { loop: false, duration: 1.3 }),
-      // 点头时眼睑跟着压，抬起来之前眨一次
-      buildCurve('ParamEyeLOpen', kf([
-        [0, 1],
-        [0.15, 0.66],
-        [0.27, 0.96],
-        [0.36, 0.6],
-        [0.55, 1],
-        [1.05, 1],
-        [1.14, 0.06],
-        [1.22, 0.04],
-        [1.3, 1],
-      ]), { loop: false, duration: 1.3 }),
-      buildCurve('ParamEyeROpen', kf([
-        [0, 1],
-        [0.15, 0.66],
-        [0.27, 0.96],
-        [0.36, 0.6],
-        [0.55, 1],
-        [1.05, 1],
-        [1.14, 0.06],
-        [1.22, 0.04],
-        [1.3, 1],
-      ]), { loop: false, duration: 1.3 }),
-      buildCurve('ParamBrowLY', kf([
-        [0, 0],
-        [0.2, -0.18],
-        [0.5, -0.05],
-        [1.1, 0.12],
-        [1.3, 0],
-      ]), { loop: false, duration: 1.3 }),
-      buildCurve('ParamBrowRY', kf([
-        [0, 0],
-        [0.2, -0.18],
-        [0.5, -0.05],
-        [1.1, 0.12],
-        [1.3, 0],
-      ]), { loop: false, duration: 1.3 }),
-      buildCurve('ParamMouthForm', kf([
-        [0, 0],
-        [0.3, 0.18],
-        [0.9, 0.1],
-        [1.3, 0],
-      ]), { loop: false, duration: 1.3 }),
-    ],
+    build: () => {
+      const d = 1.5
+      // 两次点头：14° → 20°，收尾上抬 3° 过冲再落回（后坐力/踩刹车）
+      const headY = (t) => 14 * pulse(t, 0.24, 0.12) + 20 * pulse(t, 0.66, 0.14) - 3 * pulse(t, 1.04, 0.1)
+      const headZ = (t) => 2.6 * pulse(t, 0.3, 0.16) - 2.0 * pulse(t, 0.72, 0.16) + 1.2 * pulse(t, 1.14, 0.12)
+      const headPX = (t) => 1.8 * pulse(t, 0.3, 0.18) - 1.3 * pulse(t, 0.74, 0.18)
+      const eye = (t) => 1 - 0.38 * pulse(t, 0.24, 0.1) - 0.44 * pulse(t, 0.66, 0.11) - 0.96 * pulse(t, 1.26, 0.05)
+      const brow = (t) => -0.22 * pulse(t, 0.3, 0.2) + 0.14 * pulse(t, 1.12, 0.16)
+      const mouth = (t) => 0.24 * pulse(t, 0.42, 0.28)
+      return [
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamMouthForm', sample(d, mouth), { loop: false, duration: d }),
+      ]
+    },
   },
   {
     group: 'ShakeHead',
     file: 'shake-head.motion3.json',
-    duration: 1.4,
+    duration: 1.6,
     loop: false,
-    build: () => [
-      // 左右摇头：三次幅度递减（大→中→小），收尾轻微过冲
-      buildCurve('ParamAngleX', kf([
-        [0, 0],
-        [0.1, -2.4],
-        [0.2, -8.4],
-        [0.32, 8],
-        [0.44, -6.2],
-        [0.56, 4],
-        [0.7, -1.8],
-        [0.92, 0.6],
-        [1.4, 0],
-      ]), { loop: false, duration: 1.4 }),
-      buildCurve('ParamAngleZ', kf([
-        [0, 0],
-        [0.16, 1.6],
-        [0.32, -2.2],
-        [0.5, 1.6],
-        [0.72, -0.8],
-        [1, 0.2],
-        [1.4, 0],
-      ]), { loop: false, duration: 1.4 }),
-      buildCurve('ParamAngleY', kf([
-        [0, 0],
-        [0.18, 1.6],
-        [0.6, 1.2],
-        [1, 0.2],
-        [1.4, 0],
-      ]), { loop: false, duration: 1.4 }),
-      buildCurve('ParamEyeLOpen', kf([
-        [0, 1],
-        [0.72, 1],
-        [0.8, 0.06],
-        [0.88, 0.05],
-        [0.98, 1],
-        [1.4, 1],
-      ]), { loop: false, duration: 1.4 }),
-      buildCurve('ParamEyeROpen', kf([
-        [0, 1],
-        [0.72, 1],
-        [0.8, 0.06],
-        [0.88, 0.05],
-        [0.98, 1],
-        [1.4, 1],
-      ]), { loop: false, duration: 1.4 }),
-      buildCurve('ParamBrowLY', kf([
-        [0, 0],
-        [0.25, -0.26],
-        [0.8, -0.2],
-        [1.2, 0],
-        [1.4, 0],
-      ]), { loop: false, duration: 1.4 }),
-      buildCurve('ParamBrowRY', kf([
-        [0, 0],
-        [0.25, -0.26],
-        [0.8, -0.2],
-        [1.2, 0],
-        [1.4, 0],
-      ]), { loop: false, duration: 1.4 }),
-      buildCurve('ParamMouthForm', kf([
-        [0, 0],
-        [0.3, -0.2],
-        [1, -0.12],
-        [1.4, 0],
-      ]), { loop: false, duration: 1.4 }),
-    ],
+    build: () => {
+      const d = 1.6
+      // 左右摇头：1.7Hz 正弦 × 中段抬升的包络（头尾自然归零），侧倾迟 0.9rad 跟随
+      const env = (t) => Math.pow(Math.sin(Math.PI * (t / d)), 0.55)
+      const headX = (t) => 26 * Math.sin(TAU * 1.7 * t) * env(t)
+      const headZ = (t) => 4.0 * Math.sin(TAU * 1.7 * t - 0.9) * env(t)
+      const headY = (t) => 3.2 * env(t)
+      const eye = (t) => 1 - 0.95 * pulse(t, 0.92, 0.05)
+      const brow = (t) => -0.3 * Math.pow(Math.sin(Math.PI * (t / d)), 0.4)
+      const mouth = (t) => -0.22 * Math.pow(Math.sin(Math.PI * (t / d)), 0.4)
+      return [
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamMouthForm', sample(d, mouth), { loop: false, duration: d }),
+      ]
+    },
   },
   {
     group: 'Tilt',
     file: 'tilt.motion3.json',
-    duration: 1.8,
+    duration: 2.0,
     loop: false,
-    build: () => [
-      // 歪头：慢起 → 停住看一会儿 → 回正时过冲一次
-      buildCurve('ParamAngleZ', kf([
-        [0, 0],
-        [0.3, 6.5],
-        [0.46, 9.2],
-        [0.95, 8.8],
-        [1.25, 1.6],
-        [1.5, -1.2],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamAngleX', kf([
-        [0, 0],
-        [0.35, 2.6],
-        [1, 2.1],
-        [1.45, 0.3],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamAngleY', kf([
-        [0, 0],
-        [0.3, -1.6],
-        [0.95, -1.3],
-        [1.45, 0.4],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamAnglePX', kf([
-        [0, 0],
-        [0.35, 0.8],
-        [1.1, 0.7],
-        [1.6, 0],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamEyeBallY', kf([
-        [0, 0],
-        [0.3, 0.34],
-        [1, 0.28],
-        [1.4, 0],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamEyeLOpen', kf([
-        [0, 1],
-        [0.28, 1],
-        [1.12, 1],
-        [1.2, 0.06],
-        [1.3, 0.05],
-        [1.4, 1],
-        [1.8, 1],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamEyeROpen', kf([
-        [0, 1],
-        [0.28, 1],
-        [1.12, 1],
-        [1.2, 0.06],
-        [1.3, 0.05],
-        [1.4, 1],
-        [1.8, 1],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamBrowLY', kf([
-        [0, 0],
-        [0.32, -0.22],
-        [1.05, -0.16],
-        [1.5, 0],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamBrowRY', kf([
-        [0, 0],
-        [0.32, -0.22],
-        [1.05, -0.16],
-        [1.5, 0],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamMouthForm', kf([
-        [0, 0],
-        [0.34, 0.28],
-        [1.1, 0.22],
-        [1.6, 0],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-      buildCurve('ParamCheekPuff', kf([
-        [0, 0],
-        [0.4, 0.15],
-        [1.2, 0.1],
-        [1.8, 0],
-      ]), { loop: false, duration: 1.8 }),
-    ],
+    build: () => {
+      const d = 2.0
+      // 歪头 22°：平滑到位 → 停住 → 回正反向过冲 2.5°
+      const hold = (t) => smoothstep(t, 0.18, 0.55) - smoothstep(t, 1.25, 1.65)
+      const headZ = (t) => 22 * hold(t) - 2.5 * pulse(t, 1.82, 0.12)
+      const headX = (t) => 6 * hold(t)
+      const headY = (t) => -4.5 * hold(t)
+      const headPX = (t) => 2.2 * hold(t)
+      const eyeBallY = (t) => 0.45 * hold(t)
+      const eye = (t) => 1 - 0.95 * pulse(t, 1.5, 0.05)
+      const brow = (t) => -0.3 * hold(t)
+      const mouth = (t) => 0.34 * hold(t)
+      const cheek = (t) => 0.18 * hold(t)
+      return [
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
+        buildCurve('ParamEyeBallY', sample(d, eyeBallY), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamMouthForm', sample(d, mouth), { loop: false, duration: d }),
+        buildCurve('ParamCheekPuff', sample(d, cheek), { loop: false, duration: d }),
+      ]
+    },
   },
   {
     group: 'Sway',
     file: 'sway.motion3.json',
-    duration: 2.8,
+    duration: 3.0,
     loop: false,
     build: () => {
-      // 左右晃动：两个来回的正弦，加 10% 的头尾包络，保证从静止起、回静止收。
-      const duration = 2.8
-      const env = (tau) => Math.min(1, tau / 0.12, (1 - tau) / 0.12)
-      const wave = (amp, phase) =>
-        periodic(duration, 56, (tau) => amp * env(tau) * Math.sin(2 * TAU * 2 * tau + phase))
+      const d = 3.0
+      // 左右晃动：两个来回，侧倾 ±12°、转头 ±9°（相位滞后）、头部位移 ±5°；头尾包络归零
+      const env = (t) => Math.pow(Math.sin(Math.PI * (t / d)), 0.5)
+      const headZ = (t) => 12 * Math.sin(TAU * 2 * (t / d)) * env(t)
+      const headX = (t) => 9 * Math.sin(TAU * 2 * (t / d) - 0.55) * env(t)
+      const headY = (t) => 2.8 * Math.sin(TAU * 2 * (t / d) - 1.1) * env(t)
+      const headPX = (t) => 5 * Math.sin(TAU * 2 * (t / d) - 0.3) * env(t)
+      const eye = (t) => 1 - 0.95 * pulse(t, 0.95, 0.05) - 0.95 * pulse(t, 2.25, 0.05)
       return [
-        buildCurve('ParamAngleZ', wave(6.5, 0), { loop: false, duration }),
-        buildCurve('ParamAngleX', wave(4.2, -0.55), { loop: false, duration }),
-        buildCurve('ParamAngleY', wave(1.1, -1.1), { loop: false, duration }),
-        buildCurve('ParamAnglePX', wave(2.4, -0.3), { loop: false, duration }),
-        buildCurve('ParamEyeLOpen', kf([
-          [0, 1],
-          [0.86, 1],
-          [0.94, 0.06],
-          [1.02, 0.05],
-          [1.12, 1],
-          [2.1, 1],
-          [2.18, 0.06],
-          [2.26, 0.05],
-          [2.36, 1],
-          [2.8, 1],
-        ]), { loop: false, duration }),
-        buildCurve('ParamEyeROpen', kf([
-          [0, 1],
-          [0.86, 1],
-          [0.94, 0.06],
-          [1.02, 0.05],
-          [1.12, 1],
-          [2.1, 1],
-          [2.18, 0.06],
-          [2.26, 0.05],
-          [2.36, 1],
-          [2.8, 1],
-        ]), { loop: false, duration }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
       ]
     },
   },
   {
     group: 'Hop',
     file: 'hop.motion3.json',
-    duration: 1.1,
+    duration: 1.2,
     loop: false,
-    build: () => [
-      // 上下轻跳：蓄力下蹲 → 腾空（client 侧同时给 canvas 位移做抛物线）→ 落地缓冲回弹
-      buildCurve('ParamAngleY', kf([
-        [0, 0],
-        [0.1, 2.6],
-        [0.16, 4.2],
-        [0.3, -2.2],
-        [0.45, -2.6],
-        [0.6, 3.4],
-        [0.72, 0.6],
-        [0.88, -0.6],
-        [1.1, 0],
-      ]), { loop: false, duration: 1.1 }),
-      buildCurve('ParamAngleZ', kf([
-        [0, 0],
-        [0.4, 0.8],
-        [0.8, -0.6],
-        [1.1, 0],
-      ]), { loop: false, duration: 1.1 }),
-      buildCurve('ParamEyeLOpen', kf([
-        [0, 1],
-        [0.14, 0.72],
-        [0.3, 1],
-        [0.55, 1],
-        [0.6, 0.5],
-        [0.68, 1],
-        [1.1, 1],
-      ]), { loop: false, duration: 1.1 }),
-      buildCurve('ParamEyeROpen', kf([
-        [0, 1],
-        [0.14, 0.72],
-        [0.3, 1],
-        [0.55, 1],
-        [0.6, 0.5],
-        [0.68, 1],
-        [1.1, 1],
-      ]), { loop: false, duration: 1.1 }),
-      buildCurve('ParamMouthOpenY', kf([
-        [0, 0],
-        [0.16, 0.1],
-        [0.35, 0.28],
-        [0.55, 0.22],
-        [0.7, 0.05],
-        [1.1, 0],
-      ]), { loop: false, duration: 1.1 }),
-      buildCurve('ParamCheekPuff', kf([
-        [0, 0],
-        [0.16, 0.2],
-        [0.5, 0.1],
-        [0.9, 0],
-        [1.1, 0],
-      ]), { loop: false, duration: 1.1 }),
-    ],
+    build: () => {
+      const d = 1.2
+      // 蓄力下蹲 → 腾空 → 落地缓冲 → 回弹；位移由客户端渲染层补抛物线
+      const headY = (t) =>
+        6.5 * pulse(t, 0.16, 0.08) - 5.0 * pulse(t, 0.44, 0.14) + 7.5 * pulse(t, 0.7, 0.09) + 1.8 * pulse(t, 0.95, 0.1)
+      const headZ = (t) => 2.0 * pulse(t, 0.45, 0.24) - 1.4 * pulse(t, 0.72, 0.12)
+      const eye = (t) => 1 - 0.32 * pulse(t, 0.16, 0.08) - 0.6 * pulse(t, 0.7, 0.07)
+      const mouthOpen = (t) => 0.34 * pulse(t, 0.42, 0.2)
+      const cheek = (t) => 0.24 * pulse(t, 0.18, 0.1)
+      return [
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamMouthOpenY', sample(d, mouthOpen), { loop: false, duration: d }),
+        buildCurve('ParamCheekPuff', sample(d, cheek), { loop: false, duration: d }),
+      ]
+    },
   },
+
 ]
 
 // ---------------------------------------------------------------------------

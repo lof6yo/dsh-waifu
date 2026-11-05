@@ -594,7 +594,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /**
    * 「Hop」的位移段：模型没有可驱动的根位移参数（位移类参数都被物理接管），
    * 纯靠动作只能做出头颈姿态，所以这里给渲染层补一段抛物线位移 + 起落压扁/拉伸。
-   * 只动渲染元素（不改 pos/命中判定），0.62s 后自动复位。
+   * 只动渲染元素（不改 pos/命中判定），0.8s 后自动复位。
    */
   function playHopBounce(): void {
     const targets: HTMLElement[] = []
@@ -602,8 +602,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (touchboxOverlay) targets.push(touchboxOverlay)
     if (hitLayer) targets.push(hitLayer)
     if (targets.length === 0) return
-    const height = Math.max(12, Math.round(pos.size * 0.1))
-    const duration = 620
+    const height = Math.max(18, Math.round(pos.size * 0.16))
+    const duration = 800
     const startedAt = performance.now()
     window.cancelAnimationFrame(hopRaf)
     for (const el of targets) el.style.transformOrigin = '50% 100%'
@@ -616,17 +616,17 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       }
       let lift = 0
       let squash = 1
-      if (t < 0.15) {
-        // 蓄力：压扁一点
-        squash = 1 - 0.07 * (t / 0.15)
-      } else if (t < 0.72) {
-        // 腾空：抛物线位移 + 轻微拉伸
-        const u = (t - 0.15) / 0.57
+      if (t < 0.18) {
+        // 蓄力：压扁
+        squash = 1 - 0.12 * (t / 0.18)
+      } else if (t < 0.78) {
+        // 腾空：抛物线位移 + 拉伸
+        const u = (t - 0.18) / 0.6
         lift = 4 * u * (1 - u) * height
         squash = 1 + 0.05 * Math.sin(Math.PI * u)
       } else {
         // 落地：短促回弹
-        squash = 1 - 0.05 * Math.sin(Math.PI * ((t - 0.72) / 0.28))
+        squash = 1 - 0.09 * Math.sin(Math.PI * ((t - 0.78) / 0.22))
       }
       const transform = `translateY(${(-lift).toFixed(2)}px) scaleY(${squash.toFixed(3)})`
       for (const el of targets) el.style.transform = transform

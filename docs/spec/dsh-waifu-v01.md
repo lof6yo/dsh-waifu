@@ -94,8 +94,8 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
   - 模型资源**随包分发**在 `assets/models/jian/`（moc3、纹理、physics3、cdi3、model3.json、motions）
   - 动作组共 **6 个**（`scripts/gen-jian-motions.mjs` 幂等生成；ADR-021）：
     - `Idle`（循环 5s）：呼吸 + 微摆 + 眨眼
-    - `Nod` 点头 1.3s / `ShakeHead` 摇头 1.4s / `Tilt` 歪头 1.8s / `Sway` 左右晃 2.8s：只驱动头部角度、头部平移与表情，身体由物理链自然跟随
-    - `Hop` 上下轻跳 1.1s：动作文件只做蓄力/腾空/落地姿态，竖直位移由客户端渲染层补抛物线（模型没有可驱动的根位移参数）
+    - `Nod` 点头 1.5s / `ShakeHead` 摇头 1.6s / `Tilt` 歪头 2.0s / `Sway` 左右晃 3.0s：只驱动头部角度、头部平移与表情，身体由物理链自然跟随
+    - `Hop` 上下轻跳 1.2s：动作文件只做蓄力/腾空/落地姿态，竖直位移由客户端渲染层补抛物线（模型没有可驱动的根位移参数）
     - ADR-018 那批「受击反应 / 人设小动作」已证明与物理打架（ADR-019/020），本轮不再包含
   - 动作只用 cdi3 白名单参数（角度 / 眼笑 / 眉毛 / 嘴形 / 嘟嘴 / 眼球），不驱动 `ParamSwitch*` 表情开关；`model3.json` 另声明 `EyeBlink`（ParamEyeLOpen/ROpen）与 `LipSync`（ParamMouthOpenY）参数组；身体/胸/胯参数是物理输出（Output Weight 30–100），**动作只驱动物理输入**（头部角度与平移，ADR-019）
   - 默认事件动画映射：`idle→Idle`、`thinking→Tilt`、`waiting→Sway`、`error→ShakeHead`、`done/delivered→Hop`；默认触摸部位不挂动作（只出气泡）。用户可在设置页逐项改
