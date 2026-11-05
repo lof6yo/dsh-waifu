@@ -61,6 +61,8 @@ export interface PetSettings {
   exprAngry2: number
   exprCry: number
   exprEye: number
+  /** 「脸红」表情的补强叠色强度（0–100，0 = 不叠）。 */
+  exprBlush: number
 }
 
 /** 设置文件视图（设置页读取用）。 */
@@ -173,6 +175,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     exprAngry2: opacity(record.exprAngry2, base.exprAngry2),
     exprCry: opacity(record.exprCry, base.exprCry),
     exprEye: opacity(record.exprEye, base.exprEye),
+    exprBlush: opacity(record.exprBlush, base.exprBlush),
   }
 }
 

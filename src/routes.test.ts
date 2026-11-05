@@ -65,6 +65,7 @@ const BASE_SETTINGS: PetSettings = {
   exprAngry2: 0,
   exprCry: 0,
   exprEye: 0,
+  exprBlush: 60,
 }
 
 function makeRoutes() {

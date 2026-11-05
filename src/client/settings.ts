@@ -70,6 +70,8 @@ export interface PetSettingsValue {
   exprAngry2: number
   exprCry: number
   exprEye: number
+  /** 「脸红」补强叠色强度（0–100）。 */
+  exprBlush: number
   /** 开发者选项总开关：开启后显示调试面板/触摸部位色块等开发者入口。 */
   developerMode: boolean
   /** 调试面板：显示调试面板（开发用）。 */
@@ -114,6 +116,7 @@ const DEFAULT_VALUE: PetSettingsValue = {
   exprAngry2: 0,
   exprCry: 0,
   exprEye: 0,
+  exprBlush: 60,
   model: 'jian',
   developerMode: false,
   debug: false,
@@ -2304,6 +2307,25 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         disabled: !writable,
         onChange: (next) => enqueueWrite(() => [{ op: 'set', path: ['expression'], value: next }]),
       }),
+    ),
+    createElement('div', { key: 'level-exprBlush', style: { ...formRowStyle, alignItems: 'start' } },
+      createElement('span', { style: { ...formLabelStyle, paddingTop: 4 } }, '脸红叠色'),
+      createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 } },
+        createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
+          createElement('input', {
+            type: 'range',
+            min: 0,
+            max: 100,
+            step: 1,
+            value: levelValue('exprBlush'),
+            disabled: !writable,
+            style: { flex: 1, minWidth: 0 },
+            onChange: (e: ChangeEvent<HTMLInputElement>) => pushLevel('exprBlush', Number(e.target.value)),
+          }),
+          createElement('span', { style: { ...statusTextStyle, color: C.textSecondary, width: 34, textAlign: 'right' } }, `${Math.round(levelValue('exprBlush'))}`),
+        ),
+        createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '模型自带脸红偏淡，这里额外叠一层腮红；0 = 只用模型自带的'),
+      ),
     ),
     ...EXPRESSION_LEVELS.map((level) => {
       const current = levelValue(level.key)
