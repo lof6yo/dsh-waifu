@@ -403,12 +403,13 @@ const MOTION_DEFS = [
     loop: false,
     build: () => {
       const d = 2.0
-      // 歪头 28°：平滑到位 → 停住 → 回正反向过冲 3.2°
-      const hold = (t) => smoothstep(t, 0.18, 0.55) - smoothstep(t, 1.25, 1.65)
-      const headZ = (t) => 28 * hold(t) - 3.2 * pulse(t, 1.82, 0.12)
-      const headX = (t) => 8.5 * hold(t)
-      const headY = (t) => -6 * hold(t)
-      const headPX = (t) => 3.4 * hold(t)
+      // 歪头 30°（头部侧倾的形变上限）：平滑到位 → 停住 → 回正反向过冲 3.6°；
+      // 头部位移给到 6°（±10 的 60%），靠物理链把肩/胸一起带歪
+      const hold = (t) => smoothstep(t, 0.16, 0.52) - smoothstep(t, 1.3, 1.72)
+      const headZ = (t) => 30 * hold(t) - 3.6 * pulse(t, 1.86, 0.12)
+      const headX = (t) => 11 * hold(t)
+      const headY = (t) => -7 * hold(t)
+      const headPX = (t) => 6 * hold(t)
       const eyeBallY = (t) => 0.45 * hold(t)
       const eye = (t) => 1 - 0.95 * pulse(t, 1.5, 0.05)
       const brow = (t) => -0.3 * hold(t)
