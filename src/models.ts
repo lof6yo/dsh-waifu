@@ -497,3 +497,30 @@ export function hitTestTouchParts(parts: readonly TouchPart[], nx: number, ny: n
   }
   return null
 }
+
+/** 时间戳样式：`[2026-11-05 14:57:16]`、`【14:57】`、`(22:04)`、`[2026-11-05]` 这类整块方括号时间。 */
+const BRACKETED_TIMESTAMP = /[[【(（]\s*(?:\d{2,4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}:\d{2}(?::\d{2})?)\s*[\]】)）]/g
+
+/** 裸 ISO 时间戳：`2026-11-05T14:57:16Z`、`2026-11-05 14:57:16`。 */
+const ISO_TIMESTAMP = /\b\d{4}-\d{1,2}-\d{1,2}[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?\b/g
+
+/** 行首的裸时间戳（`14:57:16 哼…`）与行尾孤零零的时间戳。 */
+const LEADING_TIMESTAMP = /^\s*\d{1,2}:\d{2}(?::\d{2})?\s*[,，:：、.·-]?\s*/
+const TRAILING_TIMESTAMP = /\s*[,，:：、.·-]?\s*\d{1,2}:\d{2}(?::\d{2})?\s*$/
+
+/**
+ * 过滤台词里混进来的时间戳（模型偶尔会像聊天记录那样给回复加时间）。
+ * 只处理「整块时间」与行首/行尾孤立的 `HH:MM(:SS)`，句子中间的时间（「已经 3:00 了」）不动；
+ * 全部删空时回退原文，避免气泡变成空白。
+ */
+export function stripTimestamps(input: string): string {
+  if (!input) return input
+  const stripped = input
+    .replace(BRACKETED_TIMESTAMP, '')
+    .replace(ISO_TIMESTAMP, '')
+    .replace(LEADING_TIMESTAMP, '')
+    .replace(TRAILING_TIMESTAMP, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+  return stripped.length > 0 ? stripped : input
+}

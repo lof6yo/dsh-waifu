@@ -37,6 +37,8 @@
 - **AI 回复失败不再「无声无息」**（ADR-028）：`generateReply()` 失败时返回原因，`/api/dsh-waifu/interact` 回 `no-reply: <原因>`（如 openrouter 未配 `OPENROUTER_API_KEY`、模型名不存在、超时、模型只吐空白）；桌宠仍回落到预置台词，不会把错误显示给用户
 - **AI 默认 provider 回退为 `deepseek-official` / `deepseek-flash`**：`openrouter` 依赖 `OPENROUTER_API_KEY` 环境变量，缺 key 时整条 provider 不可用，默认值不该指向它
 
+- **气泡过滤时间戳**：模型偶尔会像聊天记录那样给回复加上 `[14:57]`、`2026-11-05T14:57:16Z` 之类的时间，现在台词进气泡前统一滤掉（`stripTimestamps`，AI 台词、语音逐段显示、固定台词池都覆盖；句子中间的时间不动，只剩时间戳时保留原文）
+
 ## [0.4.0] - 2026-11-05
 
 > 本版把「简」日常使用的那套配置定为插件默认值：尺寸 240、中心距右/下 15/24（视口百分比）、

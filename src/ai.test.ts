@@ -56,6 +56,9 @@ describe('sanitizeLine', () => {
 
   it('空文本返回空串', () => {
     expect(sanitizeLine('\n  \n')).toBe('')
+    // 模型偶尔会给回复加时间戳：进气泡前就得滤掉（否则气泡里会冒出「[14:57]」）
+    expect(sanitizeLine('[14:57] 哼，才不要呢')).toBe('哼，才不要呢')
+    expect(sanitizeLine('2026-11-05T14:57:16Z 「别乱戳」')).toBe('别乱戳')
   })
 })
 

@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { AI_HISTORY_LIMITS, normalizeHistoryCount } from './defaults.ts'
+import { stripTimestamps } from './models.ts'
 
 export { AI_HISTORY_LIMITS, normalizeHistoryCount }
 
@@ -242,7 +243,8 @@ export function buildSceneMessage(context: ReplyContext, options: { forHistory?:
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */
 export function sanitizeLine(raw: string): string {
   const firstLine = raw.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? ''
-  const stripped = firstLine
+  // 有的模型会给回复加「[14:57] 哼…」这类时间戳，进气泡前先滤掉
+  const stripped = stripTimestamps(firstLine)
     .replace(/^["'“”‘’「」『』]+/, '')
     .replace(/["'“”‘’「」『』]+$/, '')
     .trim()

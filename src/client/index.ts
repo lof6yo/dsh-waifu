@@ -28,6 +28,7 @@ import type { ReactNode } from 'react'
 import type { PetState, PetStateView } from '../service.ts'
 import { PetSettingsSection } from './settings.ts'
 import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
+import { stripTimestamps } from '../models.ts'
 import { clientLog } from './client-log.ts'
 import {
   DEFAULT_EVENT_BINDINGS,
@@ -670,7 +671,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function setBubbleText(text: string): void {
     if (!bubble) return
     clearBubbleHideTimer()
-    bubble.textContent = text
+    bubble.textContent = stripTimestamps(text)
     bubble.style.opacity = '1'
     if (!bubbleVisible) {
       bubbleVisible = true

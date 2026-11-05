@@ -28,6 +28,7 @@ import {
   normalizeTouchBox,
   normalizeTouchParts,
   pointToBoundsRatio,
+  stripTimestamps,
   type TouchPart,
 } from './models.ts'
 
@@ -304,5 +305,29 @@ describe('pointToBoundsRatio', () => {
     expect(pointToBoundsRatio(5, 120, bounds)).toBeNull()
     expect(pointToBoundsRatio(60, 500, bounds)).toBeNull()
     expect(pointToBoundsRatio(60, 120, { x: 0, y: 0, width: 0, height: 0 })).toBeNull()
+  })
+})
+
+describe('stripTimestamps', () => {
+  it('去掉方括号里的时间与日期', () => {
+    expect(stripTimestamps('[14:57] 哼，才不是呢')).toBe('哼，才不是呢')
+    expect(stripTimestamps('【2026-11-05 14:57:16】你回来了')).toBe('你回来了')
+    expect(stripTimestamps('(22:04) 别闹啦')).toBe('别闹啦')
+    expect(stripTimestamps('[2026-11-05] 今天也要好好干')).toBe('今天也要好好干')
+  })
+
+  it('去掉行首行尾的裸时间戳与 ISO 时间', () => {
+    expect(stripTimestamps('14:57:16 别乱戳')).toBe('别乱戳')
+    expect(stripTimestamps('别乱戳 14:57')).toBe('别乱戳')
+    expect(stripTimestamps('2026-11-05T14:57:16Z 又来了')).toBe('又来了')
+  })
+
+  it('句子中间的时间不动', () => {
+    expect(stripTimestamps('都已经 3:00 了还不睡觉')).toBe('都已经 3:00 了还不睡觉')
+  })
+
+  it('只有时间戳时不把台词删空', () => {
+    expect(stripTimestamps('[14:57]')).toBe('[14:57]')
+    expect(stripTimestamps('')).toBe('')
   })
 })
