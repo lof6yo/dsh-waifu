@@ -2359,27 +2359,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '最长显示（秒）'),
-        createElement('div', { style: formControlInlineStyle },
-          createElement('input', {
-            type: 'number',
-            min: 0,
-            max: 600,
-            step: 5,
-            value: bubbleMaxSeconds,
-            disabled: !writable,
-            style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
-              const next = normalizeBubbleMax(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['bubbleMaxSeconds'], value: next }])
-            },
-          }),
-          createElement('span', { style: { ...formLabelInlineStyle, flex: '0 0 auto' } }, bubbleMaxSeconds === 0 ? '不限' : ''),
-        ),
-      ),
       // 背景色 / 文字色 同一行：两个色块并排，右侧跟当前色值
-      createElement('div', { style: { ...formRowInlineStyle, marginBottom: 0 } },
+      createElement('div', { style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '背景色 / 文字色'),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
@@ -2405,6 +2386,24 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             },
           }),
           createElement('span', { style: { ...formLabelInlineStyle, flex: '0 0 auto' } }, `${bubbleBgColor} / ${bubbleTextColor}`),
+        ),
+      ),
+      createElement('div', { style: { ...formRowInlineStyle, marginBottom: 0 } },
+        createElement('span', { style: formLabelInlineStyle }, '最长显示（秒，0 = 不限）'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 600,
+            step: 5,
+            value: bubbleMaxSeconds,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeBubbleMax(e.target.value, 0)
+              enqueueWrite(() => [{ op: 'set', path: ['bubbleMaxSeconds'], value: next }])
+            },
+          }),
         ),
       ),
     ),
