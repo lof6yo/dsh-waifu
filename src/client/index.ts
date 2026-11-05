@@ -32,6 +32,10 @@ import { clientLog } from './client-log.ts'
 import {
   DEFAULT_EVENT_BINDINGS,
   EVENT_STAGE_DELAYS,
+  EXPRESSIONS,
+  EXPRESSION_LEVELS,
+  EXPRESSION_SWITCH_PARAMS,
+  normalizeExpressionId,
   hitTestTouchParts,
   pointToBoundsRatio,
   type EventBindings,
@@ -114,6 +118,11 @@ const TOUCHBOX_PALETTE = [
   { fill: 'rgba(100,225,225,.24)', stroke: 'rgba(170,255,255,.9)' },
 ] as const
 
+/** 表情淡入淡出时长（ms）：切换表情时开关参数按该时长线性逼近目标值。 */
+const EXPRESSION_FADE_MS = 280
+/** 触摸部位表情的临时保持时长（ms）：到点自动回到事件/基础表情。 */
+const EXPRESSION_TEMP_MS = 2200
+
 /** 归一化配置帧率档（非法值回落默认 30）。 */
 function normalizeMaxFps(raw: unknown): number {
   if (raw === 60 || raw === 0) return raw
@@ -187,6 +196,10 @@ interface ModelLike {
   /** 模型在舞台/画布坐标下的包围盒（触摸部位 box 归一化换算用，spec §4）。 */
   getBounds?: () => { x: number; y: number; width: number; height: number }
   internalModel?: {
+    /** Cubism4 模型：每帧写入参数（表情开关 / 连续参数）用。 */
+    coreModel?: { setParameterValueById?(id: string, value: number, weight?: number): void }
+    /** InternalModel.update(dt, now)：包装它，在动作与物理生效前写入表情参数。 */
+    update?(dt: number, now: number): void
     focusController?: { focus(x: number, y: number, instant?: boolean): void }
     motionManager?: {
       /** MotionManager 事件：motionFinish 是动作真正播完的信号（motion() 的 Promise 只代表开始）。 */
@@ -395,6 +408,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
   let canvasPadXPct = DEFAULT_CANVAS_PAD_X
   let canvasPadYPct = DEFAULT_CANVAS_PAD_Y
+  // 表情：基础表情（settings.expression）+ 连续参数强度 + 触摸临时表情（spec §5）
+  let baseExpression = 'none'
+  let expressionLevels: Record<string, number> = {}
+  let tempExpression = ''
+  let tempExpressionUntil = 0
+  /** 表达式开关参数当前混合值（每帧向目标逼近 → 淡入淡出）。 */
+  const expressionMix = new Map<string, number>()
+  /** 连续参数当前混合值。 */
+  const expressionLevelMix = new Map<string, number>()
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
   let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
@@ -974,6 +996,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         detachMotionFinish?.()
         detachMotionFinish = () => motionManager.off?.('motionFinish', handleMotionFinish)
       }
+      // 表情：包装 InternalModel.update，在动作/物理生效前写入开关与连续参数（spec §5）
+      const internal = loaded.internalModel
+      if (internal && typeof internal.update === 'function') {
+        const originalUpdate = internal.update.bind(internal)
+        internal.update = (dt = 1 / 60, now = performance.now()) => {
+          applyExpressionParams(internal.coreModel, dt)
+          return originalUpdate(dt, now)
+        }
+      }
       refreshDebugMotionGroups()
       fitModel(pos.size)
       // 首帧尺寸未知时延迟适配
@@ -1456,6 +1487,46 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
+  /** 当前应显示的表情 id：触摸临时表情 > 当前事件绑定 > 基础表情（spec §5）。 */
+  function desiredExpression(): string {
+    if (tempExpression) {
+      if (Date.now() < tempExpressionUntil) return tempExpression
+      tempExpression = ''
+    }
+    const bound = lastState ? eventBindings[lastState]?.expression : undefined
+    return normalizeExpressionId(bound ?? baseExpression)
+  }
+
+  /**
+   * 写入表情参数：布尔开关按「当前表情」目标值 0/1、连续参数按滑杆强度，均带淡入淡出。
+   * 在 InternalModel.update 之前调用——动作/物理不会写这些参数，先写即生效。
+   */
+  function applyExpressionParams(
+    coreModel: { setParameterValueById?(id: string, value: number, weight?: number): void } | undefined,
+    dt: number,
+  ): void {
+    const set = coreModel?.setParameterValueById
+    if (typeof set !== 'function') return
+    const fade = Math.min(1, Math.max(0.02, dt * 1000 / EXPRESSION_FADE_MS))
+    const def = EXPRESSIONS.find((expression) => expression.id === desiredExpression())
+    const targets = def?.params ?? {}
+    for (const param of EXPRESSION_SWITCH_PARAMS) {
+      const target = targets[param] ?? 0
+      const current = expressionMix.get(param) ?? 0
+      const next = Math.abs(target - current) < 0.004 ? target : current + (target - current) * fade
+      expressionMix.set(param, next)
+      try { set.call(coreModel, param, next, 1) } catch { /* 模型没有该参数 */ }
+    }
+    for (const level of EXPRESSION_LEVELS) {
+      const target = Math.min(1, Math.max(0, expressionLevels[level.key] ?? 0))
+      const current = expressionLevelMix.get(level.key) ?? 0
+      const next = Math.abs(target - current) < 0.004 ? target : current + (target - current) * fade
+      expressionLevelMix.set(level.key, next)
+      if (next <= 0.0001 && target === 0) continue
+      try { set.call(coreModel, level.param, next, 1) } catch { /* 模型没有该参数 */ }
+    }
+  }
+
   /** 运行时应用配置变化（spec §2/§3/§6/§7）：开关 / 尺寸 / 帧率 / 调试 / 触摸部位 / 事件绑定 / 模型。 */
   function applyConfig(next: PetStateView): void {
     const cfg = next.config
@@ -1518,6 +1589,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     bubbleTextColor = typeof cfg.bubbleTextColor === 'string' && cfg.bubbleTextColor.trim()
       ? cfg.bubbleTextColor
       : DEFAULT_BUBBLE_TEXT_COLOR
+    baseExpression = normalizeExpressionId(cfg.expression)
+    expressionLevels = {
+      exprAngry: (Number(cfg.exprAngry) || 0) / 100,
+      exprAngry2: (Number(cfg.exprAngry2) || 0) / 100,
+      exprCry: (Number(cfg.exprCry) || 0) / 100,
+      exprEye: (Number(cfg.exprEye) || 0) / 100,
+    }
     applyBubbleStyle()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -1611,6 +1689,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           showBubble(line)
         }
       }
+      // 表情：该部位配置了表情时短暂切过去（EXPRESSION_TEMP_MS 后回到事件/基础表情，spec §5）
+      if (part.expression && part.expression !== 'none') {
+        tempExpression = normalizeExpressionId(part.expression)
+        tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
+      }
       // 动作：该部位动作组随机打乱后逐个尝试；空列表不播动作（spec §4）。
       void playInteractionMotion(shuffled(part.motions))
     } catch {
@@ -1656,6 +1739,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         bubbleTextColor = typeof view.config.bubbleTextColor === 'string' && view.config.bubbleTextColor.trim()
           ? view.config.bubbleTextColor
           : DEFAULT_BUBBLE_TEXT_COLOR
+        baseExpression = normalizeExpressionId(view.config.expression)
+        expressionLevels = {
+          exprAngry: (Number(view.config.exprAngry) || 0) / 100,
+          exprAngry2: (Number(view.config.exprAngry2) || 0) / 100,
+          exprCry: (Number(view.config.exprCry) || 0) / 100,
+          exprEye: (Number(view.config.exprEye) || 0) / 100,
+        }
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)
 

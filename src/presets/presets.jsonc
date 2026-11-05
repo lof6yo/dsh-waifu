@@ -37,6 +37,7 @@
           "name": "脸",
           "boxes": [{ "left": 0.38, "top": 0.11, "right": 0.6, "bottom": 0.2 }],
           "motions": [],
+          "expression": "blush",
           "lines": ["别捏脸啦～", "脸要被你捏变形了…", "呀…别戳脸！"]
         },
         {

@@ -53,6 +53,70 @@ export const DEFAULT_MOTION_MAP: MotionMap = {
   delivered: ['Idle'],
 }
 
+/**
+ * 内置表情：模型里的布尔开关参数（`ParamSwitch*`）组合。
+ *
+ * 这些开关不是动作，而是常驻参数——需要每帧把「当前表情」对应的开关写成 1、其余写成 0，
+ * 切换时做几百毫秒的淡入淡出（见 client 的 ExpressionMixer）。`ParamSwitch10/11` 是
+ * 左右手姿势开关，不属于表情，未收录。
+ */
+export interface ExpressionDef {
+  id: string
+  name: string
+  /** 参数 → 目标值（未列出的开关按 0 处理，即关闭）。 */
+  params: Record<string, number>
+}
+
+/** 全部内置表情（设置页下拉、事件绑定、触摸部位共用；`none` 表示恢复无表情）。 */
+export const EXPRESSIONS: readonly ExpressionDef[] = [
+  { id: 'none', name: '无', params: {} },
+  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 } },
+  { id: 'angry', name: '生气', params: { ParamSwitch4: 1 } },
+  { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 } },
+  { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 } },
+  { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 } },
+  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 } },
+  { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 } },
+  { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 } },
+  { id: 'blood', name: '血', params: { ParamSwitch3: 1 } },
+  { id: 'dim', name: '高光消失', params: { ParamSwitch21: 1 } },
+]
+
+/** 表情会触及的全部开关参数（未选中的一律淡出到 0，避免多个表情叠着）。 */
+export const EXPRESSION_SWITCH_PARAMS: readonly string[] = [
+  'ParamSwitch1', 'ParamSwitch2', 'ParamSwitch3', 'ParamSwitch4', 'ParamSwitch5',
+  'ParamSwitch6', 'ParamSwitch7', 'ParamSwitch8', 'ParamSwitch9', 'ParamSwitch21',
+]
+
+/**
+ * 连续表情参数（设置页滑杆调强度，实时预览）：
+ * 取值 0–1，与布尔开关叠加使用（例如「生气」+「生气抖动 0.4」）。
+ */
+export interface ExpressionLevelDef {
+  /** 设置键（settings.jsonc 里的字段名）。 */
+  key: 'exprAngry' | 'exprAngry2' | 'exprCry' | 'exprEye'
+  name: string
+  /** 模型参数 id。 */
+  param: string
+  /** 说明文案（设置页提示）。 */
+  hint: string
+}
+
+/** 全部连续表情参数。 */
+export const EXPRESSION_LEVELS: readonly ExpressionLevelDef[] = [
+  { key: 'exprAngry', name: '生气抖动', param: 'AnimeAngry', hint: '配合「生气」表情：身体/头部发抖的强度' },
+  { key: 'exprAngry2', name: '生气冒火', param: 'AnimeAngry2', hint: '配合「生气」表情：冒火特效的强度' },
+  { key: 'exprCry', name: '眼泪流动', param: 'Anime_Cry', hint: '配合「泪花 / 眼泪」表情：流泪动画强度' },
+  { key: 'exprEye', name: '转圈眼', param: 'Anime_Eye', hint: '眼睛转圈（晕乎乎）的强度' },
+]
+
+/** 表情 id 是否合法（未知 id 回退 `none`）。 */
+export function normalizeExpressionId(value: unknown): string {
+  if (typeof value !== 'string') return 'none'
+  const id = value.trim()
+  return EXPRESSIONS.some((expression) => expression.id === id) ? id : 'none'
+}
+
 /** 宠物事件键（与状态动画槽位同构：空闲/思考/出错/完成/交付/等审批）。 */
 export type PetEventKey = AnimationSlot
 
@@ -68,6 +132,8 @@ export const PET_EVENTS: readonly PetEventKey[] = ANIMATION_SLOTS
 export interface EventBinding {
   motions: string[]
   lines: string[][]
+  /** 进入该事件时切换到的表情 id（见 EXPRESSIONS）；缺省/`none` = 不改变表情。 */
+  expression?: string
 }
 
 /** 六个事件的绑定表。 */
@@ -102,14 +168,17 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
   error: {
     motions: ['ShakeHead', 'Idle'],
     lines: [['出错了…我再试一次。', '唔，好像不太顺利。']],
+    expression: 'angry',
   },
   done: {
     motions: ['Idle'],
     lines: [['搞定！', '完成了。', '做完啦。']],
+    expression: 'star',
   },
   delivered: {
     motions: ['Idle'],
     lines: [['文件放这儿了。', '交付完成，请查收。']],
+    expression: 'heart',
   },
   waiting: {
     motions: ['Sway', 'Idle'],
@@ -124,7 +193,7 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
 /** 归一化单个事件绑定：motions 去空去重；lines 清洗为「阶段 → 台词数组」，至少 1 组。 */
 function normalizeEventBinding(raw: unknown): EventBinding | null {
   if (typeof raw !== 'object' || raw === null) return null
-  const record = raw as { motions?: unknown; lines?: unknown }
+  const record = raw as { motions?: unknown; lines?: unknown; expression?: unknown }
   const motions = Array.isArray(record.motions)
     ? [...new Set(record.motions.filter((m): m is string => typeof m === 'string' && m.trim().length > 0).map((m) => m.trim()))]
     : []
@@ -142,7 +211,8 @@ function normalizeEventBinding(raw: unknown): EventBinding | null {
     if (lines.length >= 3) break
   }
   if (lines.length === 0) lines.push([])
-  return { motions, lines }
+  const expression = normalizeExpressionId(record.expression)
+  return expression === 'none' ? { motions, lines } : { motions, lines, expression }
 }
 
 /** 归一化用户事件绑定（只保留合法事件键；缺失事件不出现，由调用方回退默认/内置）。 */
@@ -198,6 +268,8 @@ export interface TouchPart {
   motions: string[]
   /** 可选：该部位的自定义台词（随机选一条）；空/缺省 = 只播动作、不显示气泡。 */
   lines?: string[]
+  /** 可选：点该部位时切到的表情 id（短时预览后回到事件/基础表情）；缺省/`none` = 不改表情。 */
+  expression?: string
 }
 
 /** 无默认触摸部位时的空表（用户未创建部位 → 点击不触发互动，spec §4）。 */
@@ -281,6 +353,8 @@ export function normalizeTouchParts(raw: unknown): TouchPart[] {
     seen.add(id)
     const part: TouchPart = { id, name, boxes, motions }
     if (lines.length > 0) part.lines = lines
+    const expression = normalizeExpressionId(record.expression)
+    if (expression !== 'none') part.expression = expression
     out.push(part)
   }
   return out

@@ -27,3 +27,4 @@
 | [019](019-physics-driven-touch-motions.md) | 触摸动作改为驱动物理输入（不直接写躯干/胸参数） | Superseded（ADR-020 的动作集部分） |
 | [020](020-motion-set-reverted-to-idle.md) | 动作集回退为只有 Idle，其余动作待重新设计 | Superseded（ADR-021） |
 | [021](021-basic-motion-set-nod-shake-tilt-sway-hop.md) | 基础动作组：点头 / 摇头 / 歪头 / 左右晃 | Accepted（取代 ADR-020 的「只留 Idle」） |
+| [022](022-expressions.md) | 表情系统：参数开关（脸黑/脸红/生气/星星眼/白眼/泪花/爱心眼/眼泪/血/高光消失）+ 连续参数强度滑杆 | Accepted |

@@ -29,6 +29,8 @@ import {
   MAX_LINES_PER_PART,
   MAX_LINES_PER_POOL,
   PET_EVENTS,
+  EXPRESSIONS,
+  EXPRESSION_LEVELS,
   mergeEventBindings,
   normalizeEventBindings,
 } from '../models.ts'
@@ -61,6 +63,13 @@ export interface PetSettingsValue {
   /** 气泡文字颜色（#rrggbb）。 */
   bubbleTextColor: string
   model: string
+  /** 基础表情 id（EXPRESSIONS）。 */
+  expression: string
+  /** 连续表情参数强度（0–100）。 */
+  exprAngry: number
+  exprAngry2: number
+  exprCry: number
+  exprEye: number
   /** 开发者选项总开关：开启后显示调试面板/触摸部位色块等开发者入口。 */
   developerMode: boolean
   /** 调试面板：显示调试面板（开发用）。 */
@@ -100,6 +109,11 @@ const DEFAULT_VALUE: PetSettingsValue = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
+  expression: 'none',
+  exprAngry: 0,
+  exprAngry2: 0,
+  exprCry: 0,
+  exprEye: 0,
   model: 'jian',
   developerMode: false,
   debug: false,
@@ -796,6 +810,20 @@ interface ThemeSwitchProps {
   onChange: (next: boolean) => void
 }
 
+/** 表情下拉（单选）：选项来自 EXPRESSIONS，「无」= 不改表情。 */
+function ExpressionSelect(props: {
+  value: string
+  disabled?: boolean
+  onChange(next: string): void
+}): ReactElement {
+  return createElement('select', {
+    style: { ...inputStyle, flex: 1, minWidth: 0 },
+    value: props.value || 'none',
+    disabled: props.disabled,
+    onChange: (e: ChangeEvent<HTMLSelectElement>) => props.onChange(e.target.value),
+  }, ...EXPRESSIONS.map((expression) => createElement('option', { key: expression.id, value: expression.id }, expression.name)))
+}
+
 /** 自绘 switch：用于开发者选项总开关等“组标题右侧开关”场景。 */
 function ThemeSwitch(props: ThemeSwitchProps): ReactElement {
   const { checked, disabled, onChange } = props
@@ -1042,6 +1070,26 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const nextSize = draftSize
     enqueueWrite(() => [{ op: 'set', path: ['size'], value: nextSize }])
     setDraftSize(null)
+  }
+
+  // 表情强度滑杆：拖动中本地草稿 + 90ms 防抖写入，让角色实时跟随（不逐帧写盘）
+  const [levelDrafts, setLevelDrafts] = useState<Record<string, number>>({})
+  const levelTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (levelTimer.current !== null) clearTimeout(levelTimer.current) }, [])
+  const levelValue = (key: string): number => levelDrafts[key] ?? (Number(value[key as keyof PetSettingsValue]) || 0)
+  const pushLevel = (key: string, next: number): void => {
+    setLevelDrafts((prev) => ({ ...prev, [key]: next }))
+    if (levelTimer.current !== null) clearTimeout(levelTimer.current)
+    levelTimer.current = setTimeout(() => {
+      levelTimer.current = null
+      enqueueWrite(() => [{ op: 'set', path: [key], value: next }])
+      setLevelDrafts((prev) => {
+        if (!(key in prev)) return prev
+        const copy = { ...prev }
+        delete copy[key]
+        return copy
+      })
+    }, 90)
   }
 
   // 归位提示（约 2 秒后消失）
@@ -1541,6 +1589,16 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     updateTouchPart(partId, (part) => ({ ...part, motions: [...next] }))
   }
 
+  /** 部位表情变更：`none` 时删除字段（不改变表情）。 */
+  const setPartExpression = (partId: string, expression: string | undefined): void => {
+    updateTouchPart(partId, (part) => {
+      const next = { ...part }
+      if (expression) next.expression = expression
+      else delete next.expression
+      return next
+    })
+  }
+
   /** 部位台词变更：一行一条；全空时删除 lines 字段（回退全局默认台词）。 */
   const setPartLines = (partId: string, raw: string): void => {
     const lines = parsePartLines(raw)
@@ -1622,6 +1680,20 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             onChange: (next) => {
               const current = eventBindingsRef.current[event]
               setEventBinding(event, { ...current, motions: [...next] })
+            },
+          }),
+        ),
+        createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+          createElement('span', { style: formLabelStyle }, '表情'),
+          createElement(ExpressionSelect, {
+            value: binding.expression ?? 'none',
+            disabled: readOnly,
+            onChange: (next) => {
+              const current = eventBindingsRef.current[event]
+              const rest = { ...current }
+              if (next === 'none') delete rest.expression
+              else rest.expression = next
+              setEventBinding(event, rest)
             },
           }),
         ),
@@ -1828,6 +1900,14 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                   placeholder: '不选 = 只出气泡',
                   onChange: (next: string[]) => setPartMotions(part.id, next),
                 }),
+        ),
+        createElement('div', { key: 'part-expression', style: { ...formRowStyle, marginBottom: 0 } },
+          createElement('span', { style: formLabelStyle }, '表情'),
+          createElement(ExpressionSelect, {
+            value: part.expression ?? 'none',
+            disabled: readOnly,
+            onChange: (next) => setPartExpression(part.id, next === 'none' ? undefined : next),
+          }),
         ),
       ),
     )
@@ -2209,6 +2289,44 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       disabled: readOnly,
       onClick: addTouchPart,
     }, '+ 新建部位'),
+  ))
+
+  // 6. 表情：基础表情 + 连续参数强度（拖动即时预览）
+  children.push(createElement('div', { key: 'expressions', style: sectionStyle },
+    createElement(SectionHeader, {
+      title: '表情',
+      description: '基础表情常驻；事件与触摸部位可在各自卡片里单独指定。「强度」滑杆实时作用于角色。',
+    }),
+    createElement('div', { style: formRowStyle },
+      createElement('span', { style: formLabelStyle }, '基础表情'),
+      createElement(ExpressionSelect, {
+        value: value.expression,
+        disabled: !writable,
+        onChange: (next) => enqueueWrite(() => [{ op: 'set', path: ['expression'], value: next }]),
+      }),
+    ),
+    ...EXPRESSION_LEVELS.map((level) => {
+      const current = levelValue(level.key)
+      return createElement('div', { key: `level-${level.key}`, style: { ...formRowStyle, alignItems: 'start' } },
+        createElement('span', { style: { ...formLabelStyle, paddingTop: 4 } }, level.name),
+        createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 } },
+          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
+            createElement('input', {
+              type: 'range',
+              min: 0,
+              max: 100,
+              step: 1,
+              value: current,
+              disabled: !writable,
+              style: { flex: 1, minWidth: 0 },
+              onChange: (e: ChangeEvent<HTMLInputElement>) => pushLevel(level.key, Number(e.target.value)),
+            }),
+            createElement('span', { style: { ...statusTextStyle, color: C.textSecondary, width: 34, textAlign: 'right' } }, `${Math.round(current)}`),
+          ),
+          createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, level.hint),
+        ),
+      )
+    }),
   ))
 
   // 6. 开发者选项

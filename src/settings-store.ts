@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { stripJsonComments } from './jsonc.ts'
+import { normalizeExpressionId } from './models.ts'
 
 /** 设置文件名（$DSH_HOME/waifu 下）。 */
 export const SETTINGS_FILENAME = 'settings.jsonc'
@@ -53,6 +54,13 @@ export interface PetSettings {
   bubbleBgOpacity: number
   /** 气泡文字颜色（#rrggbb）。 */
   bubbleTextColor: string
+  /** 基础表情 id（EXPRESSIONS）：无事件/触摸表情时保持它。 */
+  expression: string
+  /** 连续表情参数强度（0–100）：生气抖动 / 生气冒火 / 眼泪流动 / 转圈眼。 */
+  exprAngry: number
+  exprAngry2: number
+  exprCry: number
+  exprEye: number
 }
 
 /** 设置文件视图（设置页读取用）。 */
@@ -72,7 +80,8 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 路径：$DSH_HOME/waifu/settings.jsonc
 // 建议通过设置页「桌宠配置」修改；直接编辑保存后刷新页面生效。
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
-//        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor`
+//        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
+//        expression / exprAngry / exprAngry2 / exprCry / exprEye`
 
 /**
  * 设置文件结构版本：
@@ -159,6 +168,11 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     bubbleBgColor: color(record.bubbleBgColor, base.bubbleBgColor),
     bubbleBgOpacity: opacity(record.bubbleBgOpacity, base.bubbleBgOpacity),
     bubbleTextColor: color(record.bubbleTextColor, base.bubbleTextColor),
+    expression: normalizeExpressionId(record.expression ?? base.expression),
+    exprAngry: opacity(record.exprAngry, base.exprAngry),
+    exprAngry2: opacity(record.exprAngry2, base.exprAngry2),
+    exprCry: opacity(record.exprCry, base.exprCry),
+    exprEye: opacity(record.exprEye, base.exprEye),
   }
 }
 

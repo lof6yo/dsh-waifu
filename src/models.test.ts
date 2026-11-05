@@ -10,6 +10,9 @@ import {
   DEFAULT_EVENT_BINDINGS,
   DEFAULT_MOTION_MAP,
   EVENT_STAGE_DELAYS,
+  EXPRESSIONS,
+  EXPRESSION_SWITCH_PARAMS,
+  normalizeExpressionId,
   hitTestTouchParts,
   mergeEventBindings,
   normalizeEventBindings,
@@ -183,6 +186,45 @@ describe('EventBindings（事件绑定）', () => {
     expect(merged.thinking.lines).toEqual([['自定台词']])
     expect(merged.idle).toBe(DEFAULT_EVENT_BINDINGS.idle)
     expect(merged.error).toBe(DEFAULT_EVENT_BINDINGS.error)
+  })
+})
+
+describe('表情（expressions）', () => {
+  it('注册表覆盖 10 个开关参数且 id 唯一', () => {
+    const ids = EXPRESSIONS.map((expression) => expression.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(EXPRESSIONS.some((expression) => expression.id === 'none')).toBe(true)
+    const params = EXPRESSIONS.flatMap((expression) => Object.keys(expression.params))
+    expect(new Set(params).size).toBeGreaterThanOrEqual(10)
+    for (const param of params) expect(EXPRESSION_SWITCH_PARAMS).toContain(param)
+  })
+
+  it('normalizeExpressionId 未知 id 回退 none', () => {
+    expect(normalizeExpressionId('blush')).toBe('blush')
+    expect(normalizeExpressionId('  angry ')).toBe('angry')
+    expect(normalizeExpressionId('bogus')).toBe('none')
+    expect(normalizeExpressionId(undefined)).toBe('none')
+  })
+
+  it('事件绑定与触摸部位能保存表情，未知值被丢弃', () => {
+    const events = normalizeEventBindings({
+      error: { motions: [], lines: [['啊']], expression: 'angry' },
+      done: { motions: [], lines: [['好']], expression: 'bogus' },
+    })
+    expect(events.error?.expression).toBe('angry')
+    expect(events.done?.expression).toBeUndefined()
+    const parts = normalizeTouchParts([
+      { id: 'head', name: '头', boxes: [], motions: [], expression: 'star' },
+      { id: 'hand', name: '手', boxes: [], motions: [], expression: 'nope' },
+    ])
+    expect(parts[0].expression).toBe('star')
+    expect(parts[1].expression).toBeUndefined()
+  })
+
+  it('默认事件绑定自带三个表情', () => {
+    expect(DEFAULT_EVENT_BINDINGS.error.expression).toBe('angry')
+    expect(DEFAULT_EVENT_BINDINGS.done.expression).toBe('star')
+    expect(DEFAULT_EVENT_BINDINGS.delivered.expression).toBe('heart')
   })
 })
 

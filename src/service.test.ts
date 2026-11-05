@@ -24,6 +24,11 @@ const BASE_SETTINGS: PetSettings = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
+  expression: 'none',
+  exprAngry: 0,
+  exprAngry2: 0,
+  exprCry: 0,
+  exprEye: 0,
 }
 
 function makeHarness(overrides: Partial<PetSettings> = {}) {
