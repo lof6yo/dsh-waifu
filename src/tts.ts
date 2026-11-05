@@ -177,59 +177,134 @@ export class OpenRouterTtsEngine implements TtsEngine {
   async synthesize(text: string, options: TtsVoiceOptions, signal?: AbortSignal): Promise<TtsAudio> {
     const trimmed = text.trim()
     if (!trimmed) throw new Error('empty-text')
-    const key = ttsCacheKey(trimmed, options)
-    const dir = ttsCacheDir(this.cacheHome)
-    const hit = await readCache(dir, key)
-    if (hit) return { mime: 'audio/mpeg', audio: hit, cached: true }
-
     const apiKey = await this.resolveKey()
     if (!apiKey) throw new Error('tts-key-missing')
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS)
-    const abort = () => controller.abort()
-    signal?.addEventListener('abort', abort, { once: true })
-    try {
-      const body: Record<string, unknown> = {
-        model: options.model,
-        input: trimmed,
-        response_format: 'mp3',
-      }
-      if (options.voice) body.voice = options.voice
-      if (options.instructions) body.instructions = options.instructions
-      if (options.reference) {
-        body.input_references = [{ type: 'input_audio', input_audio: { data: options.reference } }]
-      }
-      const response = await this.fetcher(this.endpoint, {
-        method: 'POST',
+    const body: Record<string, unknown> = {
+      model: options.model,
+      input: trimmed,
+      response_format: 'mp3',
+    }
+    if (options.voice) body.voice = options.voice
+    if (options.instructions) body.instructions = options.instructions
+    if (options.reference) {
+      body.input_references = [{ type: 'input_audio', input_audio: { data: options.reference } }]
+    }
+    return synthesizeWithCache(
+      {
+        url: this.endpoint,
         headers: {
           authorization: `Bearer ${apiKey}`,
           'content-type': 'application/json',
           'http-referer': 'https://github.com/lof6yo/dsh-waifu',
           'x-title': 'dsh-waifu',
         },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      })
-      if (!response.ok) {
-        // 非 200 时返回 JSON 错误体，尽量把原因带出来（ADR-028 的排查思路）
-        let detail = ''
-        try {
-          const payload = await response.json() as { error?: { message?: string } | string }
-          detail = typeof payload.error === 'string' ? payload.error : payload.error?.message ?? ''
-        } catch {
-          detail = ''
-        }
-        throw new Error(`tts-http ${response.status}${detail ? `: ${detail}` : ''}`)
+        body,
+      },
+      this.cacheHome,
+      this.fetcher,
+      trimmed,
+      options,
+      signal,
+    )
+  }
+}
+
+/** Fish Audio 的语音端点（`model` 放在请求头里，`reference_id` 固定音色）。 */
+export const FISH_TTS_URL = 'https://api.fish.audio/v1/tts'
+
+/** 一次请求的原始形态：两个供应商只是 URL/头/字段不同。 */
+interface TtsRequest {
+  url: string
+  headers: Record<string, string>
+  body: Record<string, unknown>
+}
+
+/** 供应商的错误体形状：OpenRouter 是 `{error:{message}}`，Fish 是 `{status,message}`。 */
+function errorDetail(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return ''
+  const record = payload as { error?: { message?: string } | string; message?: string }
+  if (typeof record.error === 'string') return record.error
+  if (record.error && typeof record.error === 'object') return record.error.message ?? ''
+  return typeof record.message === 'string' ? record.message : ''
+}
+
+/**
+ * 带磁盘缓存的通用合成流程：缓存命中直接返回；否则发一次请求、校验字节、写缓存。
+ * 两个引擎共用，避免超时/中止/错误透传三处各写一遍（ADR-028 的错误透传规则）。
+ */
+async function synthesizeWithCache(
+  request: TtsRequest,
+  cacheHome: string,
+  fetcher: typeof fetch,
+  text: string,
+  options: TtsVoiceOptions,
+  signal?: AbortSignal,
+): Promise<TtsAudio> {
+  const key = ttsCacheKey(text, options)
+  const dir = ttsCacheDir(cacheHome)
+  const hit = await readCache(dir, key)
+  if (hit) return { mime: 'audio/mpeg', audio: hit, cached: true }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS)
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    const response = await fetcher(request.url, {
+      method: 'POST',
+      headers: request.headers,
+      body: JSON.stringify(request.body),
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      let detail = ''
+      try {
+        detail = errorDetail(await response.json())
+      } catch {
+        detail = ''
       }
-      const audio = Buffer.from(await response.arrayBuffer())
-      if (audio.byteLength === 0) throw new Error('tts-empty-audio')
-      const mime = response.headers.get('content-type') ?? 'audio/mpeg'
-      await writeCache(dir, key, audio)
-      return { mime, audio, cached: false }
-    } finally {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', abort)
+      throw new Error(`tts-http ${response.status}${detail ? `: ${detail}` : ''}`)
     }
+    const audio = Buffer.from(await response.arrayBuffer())
+    if (audio.byteLength === 0) throw new Error('tts-empty-audio')
+    await writeCache(dir, key, audio)
+    return { mime: response.headers.get('content-type') ?? 'audio/mpeg', audio, cached: false }
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
+  }
+}
+
+/** Fish Audio 引擎：原生 `reference_id` 固定音色（比无状态克隆更省流量、更稳）。 */
+export class FishTtsEngine implements TtsEngine {
+  constructor(
+    private readonly resolveKey: ApiKeyResolver,
+    private readonly cacheHome: string,
+    private readonly fetcher: typeof fetch = fetch,
+    private readonly endpoint: string = FISH_TTS_URL,
+  ) {}
+
+  async synthesize(text: string, options: TtsVoiceOptions, signal?: AbortSignal): Promise<TtsAudio> {
+    const trimmed = text.trim()
+    if (!trimmed) throw new Error('empty-text')
+    const apiKey = await this.resolveKey()
+    if (!apiKey) throw new Error('tts-key-missing')
+    const body: Record<string, unknown> = { text: trimmed, format: 'mp3' }
+    if (options.voice) body.reference_id = options.voice
+    return synthesizeWithCache(
+      {
+        url: this.endpoint,
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          model: options.model,
+        },
+        body,
+      },
+      this.cacheHome,
+      this.fetcher,
+      trimmed,
+      options,
+      signal,
+    )
   }
 }

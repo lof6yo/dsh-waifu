@@ -44,6 +44,9 @@ const BASE: PetSettings = {
   lipsyncEnabled: true,
   lipsyncGain: 100,
   ttsReference: '',
+  fishModel: 'drama-3',
+  fishVoice: '',
+  fishApiKey: '',
 }
 
 let home: string
@@ -344,5 +347,24 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
     expect(current.ttsVoice).toBe('')
     expect(current.ttsReference).toBe('reference.mp3')
     expect(normalizeSettings({ version: 6, ttsReference: 42 }, BASE).ttsReference).toBe(BASE.ttsReference)
+  })
+})
+
+describe('normalizeSettings · 语音引擎（ADR-033 修订三）', () => {
+  it('Fish 字段默认与可写，未知引擎回落 openrouter', () => {
+    const base = normalizeSettings({}, BASE)
+    expect(base.ttsEngine).toBe('openrouter')
+    expect(base.fishModel).toBe('drama-3')
+    expect(base.fishVoice).toBe('')
+    expect(base.fishApiKey).toBe('')
+    const custom = normalizeSettings(
+      { ttsEngine: 'fish', fishModel: 's2.1-pro-free', fishVoice: ' b0c9 ', fishApiKey: '  sk-fish-x  ' },
+      BASE,
+    )
+    expect(custom.ttsEngine).toBe('fish')
+    expect(custom.fishModel).toBe('s2.1-pro-free')
+    expect(custom.fishVoice).toBe('b0c9')
+    expect(custom.fishApiKey).toBe('sk-fish-x')
+    expect(normalizeSettings({ ttsEngine: 'nope' }, BASE).ttsEngine).toBe('openrouter')
   })
 })

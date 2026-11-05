@@ -82,6 +82,9 @@ const BASE_SETTINGS: PetSettings = {
   lipsyncEnabled: true,
   lipsyncGain: 100,
   ttsReference: '',
+  fishModel: 'drama-3',
+  fishVoice: '',
+  fishApiKey: '',
 }
 
 function makeRoutes(

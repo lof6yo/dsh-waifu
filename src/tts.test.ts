@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  FishTtsEngine,
   OpenRouterTtsEngine,
   splitClauses,
   ttsCacheKey,
@@ -45,7 +46,6 @@ describe('ttsCacheKey', () => {
   })
 })
 
-describe('OpenRouterTtsEngine', () => {
   function withTempHome(run: (home: string) => Promise<void>): () => Promise<void> {
     return async () => {
       const home = mkdtempSync(join(tmpdir(), 'waifu-tts-'))
@@ -57,6 +57,7 @@ describe('OpenRouterTtsEngine', () => {
     }
   }
 
+describe('OpenRouterTtsEngine', () => {
   it('合成一次后命中本地缓存', withTempHome(async (home) => {
     let calls = 0
     const fetcher = (async () => {
@@ -114,5 +115,53 @@ describe('OpenRouterTtsEngine', () => {
     })) as unknown as typeof fetch
     const engine = new OpenRouterTtsEngine(async () => 'sk-test', home, fetcher)
     await expect(engine.synthesize('你好', VOICE)).rejects.toThrow('tts-http 400: bad voice')
+  }))
+})
+
+describe('FishTtsEngine', () => {
+  it('把模型放进请求头，reference_id 放进请求体', withTempHome(async (home) => {
+    let seen: { url: string; headers: Record<string, string>; body: any } | null = null
+    const fetcher = (async (url: unknown, init?: RequestInit) => {
+      seen = {
+        url: String(url),
+        headers: init?.headers as Record<string, string>,
+        body: JSON.parse(String(init?.body ?? '{}')),
+      }
+      return new Response(Buffer.from('ID3fish'), {
+        status: 200,
+        headers: { 'content-type': 'audio/mpeg' },
+      })
+    }) as unknown as typeof fetch
+    const engine = new FishTtsEngine(async () => 'sk-fish-test', home, fetcher)
+    const result = await engine.synthesize('哼。', {
+      model: 'drama-3',
+      voice: 'b0c9f71fbfa84584a65e08ac5a600be4',
+    })
+    expect(result.audio.toString()).toBe('ID3fish')
+    expect(seen!.url).toBe('https://api.fish.audio/v1/tts')
+    expect(seen!.headers.model).toBe('drama-3')
+    expect(seen!.headers.authorization).toBe('Bearer sk-fish-test')
+    expect(seen!.body).toEqual({
+      text: '哼。',
+      format: 'mp3',
+      reference_id: 'b0c9f71fbfa84584a65e08ac5a600be4',
+    })
+  }))
+
+  it('没有音色时不带 reference_id；额度不足把 Fish 的原因带出来', withTempHome(async (home) => {
+    const bodies: any[] = []
+    const ok = (async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')))
+      return new Response(Buffer.from('ID3'), { status: 200, headers: { 'content-type': 'audio/mpeg' } })
+    }) as unknown as typeof fetch
+    await new FishTtsEngine(async () => 'k', home, ok).synthesize('嗯。', { model: 's2.1-pro-free' })
+    expect(bodies[0].reference_id).toBeUndefined()
+
+    const denied = (async () => new Response(
+      JSON.stringify({ status: 402, message: 'Insufficient API credit for this model.' }),
+      { status: 402, headers: { 'content-type': 'application/json' } },
+    )) as unknown as typeof fetch
+    await expect(new FishTtsEngine(async () => 'k', home, denied).synthesize('嗯。', { model: 'drama-3' }))
+      .rejects.toThrow('tts-http 402: Insufficient API credit for this model.')
   }))
 })
