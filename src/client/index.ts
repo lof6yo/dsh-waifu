@@ -72,10 +72,20 @@ export const inject = ['slots']
 const DRAG_THRESHOLD = 6
 /** 点击互动防抖（ms）：仅挡同一次 pointer 误触双发，不等气泡播完（spec §4）。 */
 const TAP_DEBOUNCE_MS = 80
+/**
+ * 判定「这是点击」的容差（px）：指针按下到抬起的位移不超过它就算点击（位置回滚）。
+ * 触屏/触控板按一下常带 6–10px 抖动，若按 `DRAG_THRESHOLD` 直接算拖拽，点击就会被吞掉。
+ */
+const TAP_SLOP_PX = 12
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
 /** 气泡最长连续可见时长兜底（秒）：默认 30；0 = 不限（spec §3，ADR-027）。 */
 const BUBBLE_MAX_DEFAULT = DEFAULT_BUBBLE_MAX_SECONDS
+/**
+ * 与 Host 的 `AI_COOLDOWN_MS` 对齐的客户端冷却：冷却内的点击**不发请求**（Host 会直接拒），
+ * 也不能顺手 `stopSpeaking()` 把上一条已经说了一半的台词掐掉——否则连点两下等于「什么都没发生」。
+ */
+const AI_REQUEST_COOLDOWN_MS = 1200
 /** AI 台词最短可见时长：状态切换再快，也要让这句露一脸（ADR-025 补丁）。 */
 const AI_BUBBLE_HOLD_MS = 1400
 /**
@@ -356,7 +366,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let disposed = false
   pushCleanup(() => { disposed = true })
   // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
-  pushCleanup(() => { clearLongState(); clearTapHold(); clearBubbleHideTimer(); stopSpeaking() })
+  pushCleanup(() => { clearLongState(); clearTapHold(); clearBubbleHideTimer(); clearPendingTap(); stopSpeaking() })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
@@ -527,6 +537,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let waitingAiMax = 3
   /** AI 回复请求序号：只采用最后一次请求的结果，避免连点时旧回复覆盖新回复。 */
   let aiRequestSeq = 0
+  /** 上一次真正发出的 AI 请求时间戳（与 Host 冷却同源，避免发出注定被拒的请求）。 */
+  let lastAiRequestAt = 0
+  /** 冷却期内被挡下的点击：到点再补一次，让「点快了」不至于白点。 */
+  let pendingTap: { part: string; hint?: string } | null = null
+  let pendingTapTimer: number | undefined
   /** AI 台词的最短可见时间截止点：其间状态/预置台词先排队，避免「刚到就被状态切走」。 */
   let aiTextUntil = 0
   /** 被 AI 台词短暂压住的预置台词（等 AI 台词显示够久再换上）。 */
@@ -858,6 +873,33 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     longAiTimers = []
     longState = null
     bubbleStickyText = null
+  }
+
+  /** 距离下次允许发 AI 请求还有多久（ms）。 */
+  function aiCooldownLeft(): number {
+    const left = AI_REQUEST_COOLDOWN_MS - (Date.now() - lastAiRequestAt)
+    return left > 0 ? left : 0
+  }
+
+  /** 冷却期内的点击：记下最后一下，等冷却结束补发（新的点击覆盖旧的）。 */
+  function deferTapRequest(input: { part: string; hint?: string }, delay: number): void {
+    pendingTap = input
+    if (pendingTapTimer !== undefined) window.clearTimeout(pendingTapTimer)
+    pendingTapTimer = window.setTimeout(() => {
+      pendingTapTimer = undefined
+      const next = pendingTap
+      pendingTap = null
+      if (!next || disposed) return
+      void requestSpeak({ kind: 'tap', part: next.part, hint: next.hint })
+    }, delay + 30)
+  }
+
+  function clearPendingTap(): void {
+    pendingTap = null
+    if (pendingTapTimer !== undefined) {
+      window.clearTimeout(pendingTapTimer)
+      pendingTapTimer = undefined
+    }
   }
 
   /** 触摸是否还处于「保持窗口」内（窗口内由 interactionMode 决定谁优先）。 */
@@ -2165,12 +2207,19 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
   function handlePointerUp(e: PointerEvent): void {
     if (!down) return
-    if (dragging) {
+    const distance = Math.hypot(e.clientX - down.x, e.clientY - down.y)
+    // 位移在容差内 = 点击（哪怕中途被判定成拖拽过，也把位置回滚回去）
+    if (distance <= TAP_SLOP_PX) {
+      if (dragging) {
+        pos.right = down.startRight
+        pos.bottom = down.startBottom
+        applyPosToBox()
+      }
+      handleTap(e)
+    } else if (dragging) {
       api.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {})
       // 拖拽中隐藏的常驻气泡恢复当前文案（spec §4：拖拽中暂停、结束恢复）
       showStickyText()
-    } else {
-      handleTap(e)
     }
     down = null
     dragging = false
@@ -2201,13 +2250,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    */
   async function requestAiReply(
     input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
-    options?: { sticky?: boolean },
+    options?: { sticky?: boolean; ignoreCooldown?: boolean },
   ): Promise<string | null> {
     if (!aiEnabled) return null
     // 仅触摸：状态变化只用预置台词，不打扰模型（状态切换往往只有几百毫秒）
     if (aiTouchOnly && input.kind === 'state') return null
     // 触摸优先/互相打断：触摸保持窗口内不让状态类演绎抢气泡（ADR-032）
     if (input.kind === 'state' && interactionMode !== 'event-first' && tapActive()) return null
+    // 冷却内不发（Host 会直接回 cooldown），否则白白作废上一条还在说的台词
+    if (!options?.ignoreCooldown && aiCooldownLeft() > 0) return null
+    lastAiRequestAt = Date.now()
     const seq = ++aiRequestSeq
     const targetState = input.state
     try {
@@ -2237,8 +2289,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!aiEnabled) return null
     if (aiTouchOnly && input.kind === 'state') return null
     if (input.kind === 'state' && interactionMode !== 'event-first' && tapActive()) return null
+    // 冷却内直接返回：**不能**先 stopSpeaking() 再发请求，那会把上一条说了一半的台词掐掉
+    if (aiCooldownLeft() > 0) return null
     // 语音关掉：走一次性回复（少一条长连接，行为与 ADR-025 完全一致）
-    if (!ttsEnabled) return requestAiReply(input, options)
+    if (!ttsEnabled) {
+      lastAiRequestAt = Date.now()
+      return requestAiReply(input, { ...options, ignoreCooldown: true })
+    }
+    lastAiRequestAt = Date.now()
     const seq = ++speakSeq
     // 新的一轮先掐掉上一轮的播放与合成
     stopSpeaking()
@@ -2293,8 +2351,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (seq !== speakSeq) return null
     if (targetState !== undefined && targetState !== lastState) return null
     if (!sawClause && finalText === null) {
-      // 禁用/冷却/失败/零文本：与改造前一致，回落一次性回复
-      return requestAiReply(input, options)
+      // 禁用/冷却/失败/零文本：与改造前一致，回落一次性回复（冷却已在上方可判，这里强制放行）
+      return requestAiReply(input, { ...options, ignoreCooldown: true })
     }
     // 合成失败被跳过的段也要补上文字
     revealAllClauses()
@@ -2342,8 +2400,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           spoken = line
         }
       }
-      // AI 回复（ADR-025）：预置台词先出、AI 台词到了再替换（失败即保持预置台词）
-      void requestSpeak({ kind: 'tap', part: part.name, hint: takeover ? undefined : spoken })
+      // AI 回复（ADR-025/033）：预置台词先出、AI 台词到了再替换（失败即保持预置台词）。
+      // 冷却期内的点击不丢弃——记下最后一下，冷却结束补发；期间上一条台词继续播完。
+      const tapHint = takeover ? undefined : spoken
+      const cooldownLeft = aiEnabled ? aiCooldownLeft() : 0
+      if (cooldownLeft > 0) deferTapRequest({ part: part.name, hint: tapHint }, cooldownLeft)
+      else void requestSpeak({ kind: 'tap', part: part.name, hint: tapHint })
       // 动作组 / 表情：部位混选里 1 个动作组 + 若干表情；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
       const selection = splitMotionSelection(part.motions)
       if (selection.expressions.length > 0) {
