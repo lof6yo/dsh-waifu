@@ -13,6 +13,7 @@
 
 ### Changed
 
+- 设置页的说明文字一律挂在 **label 下方**（`FormLabel` 的 `hint`），不再跟在输入框 / 开关 / 下拉后面：仅触摸、全 AI 接管、音色、口型跟随、试听、人设六处（控件的实时值/状态仍留在控件旁）
 - **默认值跟维护者日常配置对齐**：尺寸 300、中心距 12% / 31%、全 AI 接管默认开启、`openrouter` + `google/gemma-4-31b-it`、注入历史 20 条、等确认节奏 5s / 20s / 3 次、语音 `qwen/qwen-audio-3.0-tts-flash` + `longanxiaoxin`、口型强度 140%、开发者选项默认关闭、默认触摸部位直接用维护者当前的 10 个部位（含「私处」）与其台词/动作，默认事件绑定也换成当前一套（出错 = 摇头 + 白眼 + 脸黑、完成 = 点头 + 星星眼、交付 = 歪头 + 星星眼）。
 - 语音模型目录只保留通义千问 TTS 的两个模型：`qwen/qwen-audio-3.0-tts-plus`（旗舰音色，`longanlingxin` 龙安灵心）与 `qwen/qwen-audio-3.0-tts-flash`（默认，女声更多：龙安元妃 / 龙安风悦 / 龙安灵希 / 龙安小昕 / 龙安欢 / 龙泡泡 / loongmary / loongeva）。音色只收女性，取自[千问 TTS 音色列表](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；`fish-audio/drama-3`、`hexgrad/kokoro-82m`、`microsoft/mai-voice-2.1-flash` 从目录移除。设置文件版本升到 7，旧文件里的目录外模型自动回落到新默认。
 - `src/ai.ts` 抽出 `assembleRequest()`（`generateReply` / `streamReply` 共用同一套人设 + 历史 + 场景拼装与载荷回报）；`src/index.ts` 抽出 `beginAiTurn` / `aiRequest` / `recordAiTurn`（`/interact` 与 `/speak` 共用冷却、接管兜底与历史记录）。

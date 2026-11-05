@@ -462,6 +462,14 @@ const cardHeadingStyle: CSSProperties = {
 }
 
 /** 统一 SectionHeader：标题 + 说明（放标题下方）+ 右侧可选操作。 */
+/** 表单行左侧的 label：标题一行，说明（可选）挂在下面——说明永远在控件**前面**，不在后面。 */
+function FormLabel(props: { title: string; hint?: ReactNode }): ReactElement {
+  return createElement('div', { style: formLabelColumnStyle },
+    createElement('span', { style: { ...formLabelInlineStyle, flex: 'none' } }, props.title),
+    props.hint ? createElement('span', { style: formLabelHintStyle }, props.hint) : null,
+  )
+}
+
 function SectionHeader(props: { title: string; description?: ReactNode; action?: ReactNode }): ReactElement {
   const { title, description, action } = props
   return createElement('div', { style: sectionHeaderStyle },
@@ -670,6 +678,20 @@ const formLabelInlineStyle: CSSProperties = {
   color: C.textSecondary,
   lineHeight: 1.5,
   whiteSpace: 'nowrap',
+}
+/** label 列：标题 + 可选说明（说明挂在标题下方，不放到控件后面）。 */
+const formLabelColumnStyle: CSSProperties = {
+  flex: '1 1 auto',
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+}
+const formLabelHintStyle: CSSProperties = {
+  fontSize: 11,
+  color: C.textSecondary,
+  lineHeight: 1.5,
+  whiteSpace: 'normal',
 }
 /** 行内控件组：靠右、不参与 label 的拉伸。 */
 const formControlInlineStyle: CSSProperties = {
@@ -2567,9 +2589,14 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       }),
     }),
     !!value.aiEnabled && createElement('div', null,
-      createElement('div', { style: formRowStyle },
-        createElement('label', { style: formLabelStyle }, '仅触摸'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, {
+          title: '仅触摸',
+          hint: value.aiTouchOnly
+            ? '状态变化只用预置台词（状态切换太快，AI 来不及说完）'
+            : '状态变化也会请 AI 说一句',
+        }),
+        createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
             checked: !!value.aiTouchOnly,
             disabled: !writable,
@@ -2577,14 +2604,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['aiTouchOnly'], value: next }])
             },
           }),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
-            value.aiTouchOnly ? '状态变化只用预置台词（状态切换太快，AI 来不及说完）' : '状态变化也会请 AI 说一句'),
         ),
       ),
       // 全 AI 接管（ADR-031）：固定对白一律不出，气泡全靠模型；长状态的「延迟」随之失效
-      createElement('div', { style: formRowStyle },
-        createElement('label', { style: formLabelStyle }, '全 AI 接管'),
-        createElement('div', { style: formControlStyle },
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, {
+          title: '全 AI 接管',
+          hint: value.aiTakeover
+            ? '不显示固定对白，气泡只等模型（人设 + 场景 + 历史）；长状态入态即请求，延迟失效'
+            : '固定对白先出、AI 台词到了再替换',
+        }),
+        createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
             checked: !!value.aiTakeover,
             disabled: !writable,
@@ -2592,10 +2622,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['aiTakeover'], value: next }])
             },
           }),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
-            value.aiTakeover
-              ? '不显示固定对白，气泡只等模型（人设 + 场景 + 历史）；长状态入态即请求，延迟失效'
-              : '固定对白先出、AI 台词到了再替换'),
         ),
       ),
       // 长状态 AI 演绎节奏（ADR-026）：思考/等确认各自一套「延迟 / 间隔 / 次数」
@@ -2739,7 +2765,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         }, aiCheckStatus.text),
       ),
       createElement('div', { style: formRowStartStyle },
-        createElement('label', { style: formLabelStartStyle }, '人设'),
+        createElement(FormLabel, { title: '人设', hint: '保存后立即写入 persona.md，下一次触摸生效' }),
         createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
           createElement('textarea', {
             key: 'ai-persona',
@@ -2757,8 +2783,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               disabled: !writable || personaSaving || personaDraft === null,
               onClick: () => savePersona(),
             }, personaSaving ? '保存中…' : '保存人设'),
-            createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } },
-              personaStatus ?? '保存后立即写入 persona.md，下一次触摸生效'),
+            personaStatus
+              ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, personaStatus)
+              : null,
           ),
         ),
       ),
@@ -2812,7 +2839,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '音色'),
+        createElement(FormLabel, {
+          title: '音色',
+          hint: randomVoice ? '该模型没有固定音色，每句都会换人声' : '固定音色，改完点「试听一句」确认',
+        }),
         createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
           createElement('select', {
             value: value.ttsVoice,
@@ -2833,12 +2863,13 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             )
             .map((item) => createElement('option', { key: item.id, value: item.id }, item.label)),
           ),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
-            randomVoice ? '该模型没有固定音色，每句都会换人声' : '固定音色，改完点「试听一句」确认'),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '口型跟随'),
+        createElement(FormLabel, {
+          title: '口型跟随',
+          hint: value.lipsyncEnabled ? '按正在播放的音频能量张嘴' : '不驱动口型（ParamMouthOpenY）',
+        }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
             checked: !!value.lipsyncEnabled,
@@ -2847,8 +2878,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['lipsyncEnabled'], value: next }])
             },
           }),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginLeft: 8 } },
-            value.lipsyncEnabled ? '按正在播放的音频能量张嘴' : '不驱动口型（ParamMouthOpenY）'),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
@@ -2871,7 +2900,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '试听'),
+        createElement(FormLabel, { title: '试听', hint: '用当前的模型 / 音色合成一句话' }),
         createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
           createElement('button', {
             type: 'button',
@@ -2879,8 +2908,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             disabled: !writable || ttsBusy,
             onClick: () => { void auditionVoice() },
           }, ttsBusy ? '合成中…' : '试听一句'),
-          createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } },
-            ttsStatus ?? '用当前的模型 / 音色合成一句话'),
+          ttsStatus
+            ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, ttsStatus)
+            : null,
         ),
       ),
     ),
