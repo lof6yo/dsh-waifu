@@ -37,7 +37,27 @@ const MODEL3_FILE = resolve(MODEL_DIR, '简.model3.json')
 const CDI3_FILE = resolve(MODEL_DIR, '简.cdi3.json')
 
 const FPS = 30
-const EXPECTED_GROUPS = ['Idle']
+/**
+ * 动作组清单（顺序即 model3.json 的声明顺序，第 0 组为默认待机）。
+ * Idle / Thinking / Waiting / Smug 为循环动作；其余为一次性动作（播完回 Idle）。
+ */
+const EXPECTED_GROUPS = [
+  'Idle',
+  'Thinking',
+  'Error',
+  'Done',
+  'Waiting',
+  'TapHead',
+  'TapFace',
+  'TapHand',
+  'TapBody',
+  'TapLeg',
+  'Charm',
+  'Smug',
+  'Shy',
+  'Taunt',
+  'Stretch',
+]
 
 /**
  * 允许在动作里驱动的参数白名单 + 量纲守护范围。
@@ -84,7 +104,7 @@ function kf(pairs) {
 
 /**
  * 周期采样关键帧：fn(tau) 在 tau∈[0,1] 上取值；首尾值强制一致，保证循环无缝。
- * 用于 Idle / Thinking / Waiting 这类纯循环动作。
+ * 用于 Idle / Thinking / Waiting / Smug 这类纯循环动作。
  */
 function periodic(duration, steps, fn) {
   const keys = []
@@ -212,12 +232,18 @@ function buildMotion(def) {
 }
 
 // ---------------------------------------------------------------------------
-// 自建动作设计（当前只保留 Idle；原始 Scene1 不在此生成）
+// 自建动作设计
 // ---------------------------------------------------------------------------
 
 /**
  * 动作清单。build() 返回 [{id, ...}]（见 buildCurve 返回结构）。
- * 幅度保守：角度用度（±10 以内），开关/表情用 0~1 或 -1~1。
+ * 幅度保守：角度用度（±12 以内），开关/表情用 0~1 或 -1~1。
+ *
+ * 角色设定：绝区零「简·杜」——鼠耳/尾巴的魅魔系美人，慵懒、爱撩、爱挑衅，
+ * 被冒犯时会炸毛。动作分三类：
+ *   1. 状态：Idle / Thinking / Error / Done / Waiting（供事件绑定使用）
+ *   2. 触摸反馈：TapHead / TapFace / TapHand / TapBody / TapLeg（供触摸部位使用）
+ *   3. 人设小动作：Charm 撩人 / Smug 得意 / Shy 害羞 / Taunt 挑衅 / Stretch 伸懒腰
  */
 const MOTION_DEFS = [
   {
@@ -284,6 +310,317 @@ const MOTION_DEFS = [
         [5, 1],
       ]), { loop: true, duration: 5 }),
     ],
+  },
+  {
+    // 思考：眼珠往上飘、一边挑眉（「在想坏主意」），头慢慢歪。
+    group: 'Thinking',
+    file: 'thinking.motion3.json',
+    duration: 3.2,
+    loop: true,
+    build: () => {
+      const d = 3.2
+      const p = (id, steps, fn) => buildCurve(id, periodic(d, steps, fn), { loop: true, duration: d })
+      return [
+        p('ParamAngleX', 16, (t) => 2.5 * Math.sin(TAU * t)),
+        p('ParamAngleZ', 16, (t) => 3.2 * Math.sin(TAU * t + Math.PI / 3)),
+        p('ParamAngleY', 16, (t) => 1.5 - 1.5 * Math.cos(TAU * t)),
+        p('ParamEyeBallY', 16, (t) => 0.35 + 0.12 * Math.sin(TAU * t)),
+        p('ParamEyeBallX', 16, (t) => 0.18 * Math.sin(TAU * t + Math.PI / 2)),
+        p('ParamBrowLY', 16, () => 0.22),
+        p('ParamBrowRY', 16, () => -0.12),
+        p('ParamMouthForm', 16, (t) => -0.12 + 0.06 * Math.sin(TAU * t)),
+        p('ParamBreath', 16, (t) => 0.25 * (1 - Math.cos(TAU * t))),
+        p('ParamEyeLOpen', 16, () => 0.92),
+        p('ParamEyeROpen', 16, () => 0.92),
+      ]
+    },
+  },
+  {
+    // 出错/惹到了：瞪眼、倒竖眉、张嘴、头往后一仰、身体一颤，然后缓缓收回。
+    group: 'Error',
+    file: 'error.motion3.json',
+    duration: 2.0,
+    loop: false,
+    build: () => {
+      const d = 2.0
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamEyeLOpen', [[0, 1], [0.18, 1], [0.32, 0.78], [1.5, 0.82], [2.0, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.18, 1], [0.32, 0.78], [1.5, 0.82], [2.0, 1]]),
+        c('ParamBrowLY', [[0, 0], [0.25, -0.6], [1.4, -0.55], [2.0, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.25, -0.6], [1.4, -0.55], [2.0, 0]]),
+        c('ParamMouthOpenY', [[0, 0], [0.28, 0.5], [0.9, 0.42], [1.6, 0.1], [2.0, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.28, -0.55], [1.4, -0.4], [2.0, 0]]),
+        c('ParamAngleY', [[0, 0], [0.3, 6], [0.9, 4.5], [2.0, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.35, 3], [1.0, -2], [2.0, 0]]),
+        c('ParamBodyAngleY0', [[0, 0], [0.3, -2.5], [1.0, -1.5], [2.0, 0]]),
+      ]
+    },
+  },
+  {
+    // 完成/交付：开心地点头两下，眼睛笑弯、嘴角上扬、张嘴。
+    group: 'Done',
+    file: 'done.motion3.json',
+    duration: 2.0,
+    loop: false,
+    build: () => {
+      const d = 2.0
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamEyeLSmile', [[0, 0], [0.3, 0.85], [1.5, 0.8], [2.0, 0]]),
+        c('ParamEyeRSmile', [[0, 0], [0.3, 0.85], [1.5, 0.8], [2.0, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.3, 0.55], [1.5, 0.6], [2.0, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.3, 0.55], [1.5, 0.6], [2.0, 1]]),
+        c('ParamMouthOpenY', [[0, 0], [0.35, 0.42], [1.5, 0.3], [2.0, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.3, 0.6], [1.6, 0.55], [2.0, 0]]),
+        c('ParamAngleY', [[0, 0], [0.3, -4], [0.6, 2.5], [0.95, -3], [1.3, 0], [2.0, 0]]),
+        c('ParamBodyAngleY0', [[0, 0], [0.35, 3], [0.9, 0], [1.3, 1.5], [2.0, 0]]),
+      ]
+    },
+  },
+  {
+    // 等审批：左看右看、眼珠来回扫、眉微皱（有点不耐烦）。
+    group: 'Waiting',
+    file: 'waiting.motion3.json',
+    duration: 3.0,
+    loop: true,
+    build: () => {
+      const d = 3.0
+      const p = (id, steps, fn) => buildCurve(id, periodic(d, steps, fn), { loop: true, duration: d })
+      return [
+        p('ParamAngleX', 16, (t) => 5 * Math.sin(TAU * t)),
+        p('ParamEyeBallX', 16, (t) => 0.5 * Math.sin(TAU * t)),
+        p('ParamAngleZ', 16, (t) => 2 * Math.sin(2 * TAU * t)),
+        p('ParamAngleY', 16, (t) => 1 - Math.cos(2 * TAU * t) * 0.5),
+        p('ParamBrowLY', 16, () => -0.12),
+        p('ParamBrowRY', 16, () => -0.12),
+        p('ParamMouthForm', 16, () => -0.08),
+        p('ParamBodyAngleZ0', 16, (t) => 1.2 * Math.sin(TAU * t + Math.PI)),
+        p('ParamEyeLOpen', 16, () => 0.95),
+        p('ParamEyeROpen', 16, () => 0.95),
+      ]
+    },
+  },
+  {
+    // 摸头：被摸得很舒服——眯眼笑、头往手心歪、微微嘟嘴。
+    group: 'TapHead',
+    file: 'tap-head.motion3.json',
+    duration: 2.2,
+    loop: false,
+    build: () => {
+      const d = 2.2
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamEyeLSmile', [[0, 0], [0.45, 0.85], [1.4, 0.8], [2.2, 0]]),
+        c('ParamEyeRSmile', [[0, 0], [0.45, 0.85], [1.4, 0.8], [2.2, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.45, 0.45], [1.4, 0.5], [2.2, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.45, 0.45], [1.4, 0.5], [2.2, 1]]),
+        c('ParamAngleZ', [[0, 0], [0.5, 7], [1.3, 8], [2.2, 0]]),
+        c('ParamAngleY', [[0, 0], [0.5, 3], [1.3, 2.5], [2.2, 0]]),
+        c('ParamCheekPuff', [[0, 0], [0.6, 0.25], [1.5, 0.2], [2.2, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.5, 0.55], [1.4, 0.5], [2.2, 0]]),
+        c('ParamBrowLY', [[0, 0], [0.6, 0.35], [1.5, 0.3], [2.2, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.6, 0.35], [1.5, 0.3], [2.2, 0]]),
+      ]
+    },
+  },
+  {
+    // 捏脸：嘟嘴 + 皱眉 + 头往反方向躲，眼睛半闭着嫌弃。
+    group: 'TapFace',
+    file: 'tap-face.motion3.json',
+    duration: 1.9,
+    loop: false,
+    build: () => {
+      const d = 1.9
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamCheekPuff', [[0, 0], [0.4, 0.75], [1.15, 0.7], [1.9, 0]]),
+        c('ParamAngleX', [[0, 0], [0.5, -9], [1.2, -6], [1.9, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.5, -6], [1.2, -4], [1.9, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.4, 0.55], [1.3, 0.6], [1.9, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.4, 0.55], [1.3, 0.6], [1.9, 1]]),
+        c('ParamEyeBallX', [[0, 0], [0.55, -0.4], [1.3, -0.3], [1.9, 0]]),
+        c('ParamBrowLY', [[0, 0], [0.5, -0.4], [1.3, -0.35], [1.9, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.5, -0.4], [1.3, -0.35], [1.9, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.5, -0.45], [1.3, -0.4], [1.9, 0]]),
+      ]
+    },
+  },
+  {
+    // 摸手：低头看手、眯眼笑、脸颊微红般的轻嘟嘴（害羞但受用）。
+    group: 'TapHand',
+    file: 'tap-hand.motion3.json',
+    duration: 2.0,
+    loop: false,
+    build: () => {
+      const d = 2.0
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamAngleY', [[0, 0], [0.5, -5], [1.3, -4], [2.0, 0]]),
+        c('ParamEyeBallY', [[0, 0], [0.5, -0.5], [1.4, -0.4], [2.0, 0]]),
+        c('ParamEyeLSmile', [[0, 0], [0.5, 0.7], [1.4, 0.65], [2.0, 0]]),
+        c('ParamEyeRSmile', [[0, 0], [0.5, 0.7], [1.4, 0.65], [2.0, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.5, 0.5], [1.4, 0.45], [2.0, 0]]),
+        c('ParamCheekPuff', [[0, 0], [0.7, 0.15], [1.5, 0.12], [2.0, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.6, -3], [1.4, -2], [2.0, 0]]),
+      ]
+    },
+  },
+  {
+    // 被占便宜（胸/臀/腰/大腿）：炸毛——倒竖眉、张嘴凶一句、头后仰、身体一缩。
+    group: 'TapBody',
+    file: 'tap-body.motion3.json',
+    duration: 1.7,
+    loop: false,
+    build: () => {
+      const d = 1.7
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamBrowLY', [[0, 0], [0.3, -0.55], [1.2, -0.5], [1.7, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.3, -0.55], [1.2, -0.5], [1.7, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.3, 0.8], [1.2, 0.85], [1.7, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.3, 0.8], [1.2, 0.85], [1.7, 1]]),
+        c('ParamMouthOpenY', [[0, 0], [0.35, 0.45], [0.9, 0.35], [1.5, 0.1], [1.7, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.35, -0.6], [1.2, -0.5], [1.7, 0]]),
+        c('ParamAngleY', [[0, 0], [0.35, 6], [1.0, 4], [1.7, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.45, 5], [1.2, 3], [1.7, 0]]),
+        c('ParamBodyAngleY0', [[0, 0], [0.4, -3], [1.1, -2], [1.7, 0]]),
+      ]
+    },
+  },
+  {
+    // 小腿/脚：怕痒——猛地一缩、闭眼、脑袋左右抖两下、嘟嘴。
+    group: 'TapLeg',
+    file: 'tap-leg.motion3.json',
+    duration: 1.5,
+    loop: false,
+    build: () => {
+      const d = 1.5
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamAngleZ', [[0, 0], [0.3, -8], [0.6, 6], [0.9, -4], [1.2, 2], [1.5, 0]]),
+        c('ParamAngleY', [[0, 0], [0.3, -3], [0.9, -2], [1.5, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.25, 0.3], [0.8, 0.45], [1.5, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.25, 0.3], [0.8, 0.45], [1.5, 1]]),
+        c('ParamCheekPuff', [[0, 0], [0.3, 0.35], [1.0, 0.3], [1.5, 0]]),
+        c('ParamMouthOpenY', [[0, 0], [0.3, 0.3], [1.0, 0.15], [1.5, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.35, -0.3], [1.1, -0.25], [1.5, 0]]),
+        c('ParamBodyAngleZ0', [[0, 0], [0.35, 3], [0.9, -1.5], [1.5, 0]]),
+      ]
+    },
+  },
+  {
+    // 撩人：慢慢侧头、眼皮压低、一边挑眉、嘴角一勾——魅魔式的「你在看我？」。
+    group: 'Charm',
+    file: 'charm.motion3.json',
+    duration: 3.2,
+    loop: false,
+    build: () => {
+      const d = 3.2
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamAngleZ', [[0, 0], [0.8, 9], [2.2, 8], [3.2, 0]]),
+        c('ParamAngleX', [[0, 0], [1.0, 5], [2.2, 4], [3.2, 0]]),
+        c('ParamAngleY', [[0, 0], [1.0, 2], [2.2, 1.5], [3.2, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.9, 0.62], [2.2, 0.6], [3.2, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.9, 0.62], [2.2, 0.6], [3.2, 1]]),
+        c('ParamEyeLSmile', [[0, 0], [1.0, 0.8], [2.2, 0.75], [3.2, 0]]),
+        c('ParamEyeRSmile', [[0, 0], [1.0, 0.8], [2.2, 0.75], [3.2, 0]]),
+        c('ParamBrowLY', [[0, 0], [1.0, 0.45], [2.2, 0.4], [3.2, 0]]),
+        c('ParamBrowRY', [[0, 0], [1.0, -0.15], [2.2, -0.12], [3.2, 0]]),
+        c('ParamMouthForm', [[0, 0], [1.0, 0.65], [2.2, 0.6], [3.2, 0]]),
+        c('ParamMouthOpenY', [[0, 0], [1.2, 0.12], [2.2, 0.1], [3.2, 0]]),
+      ]
+    },
+  },
+  {
+    // 得意：小幅摇晃 + 眼笑 + 嘴角上扬，循环播放时像在晃着尾巴炫耀。
+    group: 'Smug',
+    file: 'smug.motion3.json',
+    duration: 2.6,
+    loop: true,
+    build: () => {
+      const d = 2.6
+      const p = (id, steps, fn) => buildCurve(id, periodic(d, steps, fn), { loop: true, duration: d })
+      return [
+        p('ParamAngleZ', 16, (t) => 5 * Math.sin(TAU * t)),
+        p('ParamAngleX', 16, (t) => 2 * Math.cos(TAU * t)),
+        p('ParamBodyAngleZ0', 16, (t) => 2.5 * Math.sin(TAU * t + Math.PI / 2)),
+        p('ParamEyeLSmile', 16, () => 0.5),
+        p('ParamEyeRSmile', 16, () => 0.5),
+        p('ParamEyeLOpen', 16, () => 0.75),
+        p('ParamEyeROpen', 16, () => 0.75),
+        p('ParamMouthForm', 16, () => 0.45),
+        p('ParamBrowLY', 16, () => 0.2),
+        p('ParamBrowRY', 16, (t) => -0.1 + 0.1 * Math.sin(TAU * t)),
+      ]
+    },
+  },
+  {
+    // 害羞：低头、眼珠往下躲、眯眼笑、腮帮子微鼓。
+    group: 'Shy',
+    file: 'shy.motion3.json',
+    duration: 2.4,
+    loop: false,
+    build: () => {
+      const d = 2.4
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamAngleY', [[0, 0], [0.7, -9], [1.7, -8], [2.4, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.7, -5], [1.7, -4], [2.4, 0]]),
+        c('ParamAngleX', [[0, 0], [0.7, -4], [1.7, -3], [2.4, 0]]),
+        c('ParamEyeBallY', [[0, 0], [0.7, -0.6], [1.7, -0.5], [2.4, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.7, 0.5], [1.7, 0.55], [2.4, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.7, 0.5], [1.7, 0.55], [2.4, 1]]),
+        c('ParamEyeLSmile', [[0, 0], [0.8, 0.6], [1.7, 0.55], [2.4, 0]]),
+        c('ParamEyeRSmile', [[0, 0], [0.8, 0.6], [1.7, 0.55], [2.4, 0]]),
+        c('ParamCheekPuff', [[0, 0], [0.8, 0.3], [1.7, 0.28], [2.4, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.8, 0.35], [1.7, 0.3], [2.4, 0]]),
+      ]
+    },
+  },
+  {
+    // 挑衅：下巴微抬、半眯着眼、挑眉歪嘴笑——「就这点本事？」。
+    group: 'Taunt',
+    file: 'taunt.motion3.json',
+    duration: 2.2,
+    loop: false,
+    build: () => {
+      const d = 2.2
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamAngleY', [[0, 0], [0.6, 5], [1.5, 4.5], [2.2, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.6, -7], [1.5, -6], [2.2, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.6, 0.45], [1.5, 0.5], [2.2, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.6, 0.45], [1.5, 0.5], [2.2, 1]]),
+        c('ParamEyeLSmile', [[0, 0], [0.7, 0.35], [1.6, 0.3], [2.2, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.6, 0.5], [1.6, 0.45], [2.2, 0]]),
+        c('ParamBrowLY', [[0, 0], [0.6, 0.1], [1.6, 0.08], [2.2, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.6, -0.5], [1.6, -0.45], [2.2, 0]]),
+        c('ParamEyeBallY', [[0, 0], [0.7, 0.25], [1.6, 0.2], [2.2, 0]]),
+      ]
+    },
+  },
+  {
+    // 伸懒腰：闭眼、张嘴打哈欠、头往后仰、身体向上抻一下。
+    group: 'Stretch',
+    file: 'stretch.motion3.json',
+    duration: 3.0,
+    loop: false,
+    build: () => {
+      const d = 3.0
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamEyeLOpen', [[0, 1], [0.7, 0.05], [1.7, 0.05], [2.6, 1], [3.0, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.7, 0.05], [1.7, 0.05], [2.6, 1], [3.0, 1]]),
+        c('ParamMouthOpenY', [[0, 0], [0.9, 0.55], [1.6, 0.5], [2.4, 0.08], [3.0, 0]]),
+        c('ParamMouthForm', [[0, 0], [1.0, -0.2], [2.2, -0.1], [3.0, 0]]),
+        c('ParamAngleY', [[0, 0], [0.9, 7], [1.8, 6], [3.0, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.9, -3], [1.8, -2.5], [3.0, 0]]),
+        c('ParamBodyAngleX0', [[0, 0], [0.9, 2.5], [1.8, 2], [3.0, 0]]),
+        c('ParamBreath', [[0, 0], [1.0, 0.6], [2.2, 0.35], [3.0, 0]]),
+      ]
+    },
   },
 ]
 

@@ -14,6 +14,104 @@
 					"FadeInTime": 0.5,
 					"FadeOutTime": 0.5
 				}
+			],
+			"Thinking": [
+				{
+					"File": "motions/thinking.motion3.json",
+					"FadeInTime": 0.4,
+					"FadeOutTime": 0.4
+				}
+			],
+			"Error": [
+				{
+					"File": "motions/error.motion3.json",
+					"FadeInTime": 0.2,
+					"FadeOutTime": 0.4
+				}
+			],
+			"Done": [
+				{
+					"File": "motions/done.motion3.json",
+					"FadeInTime": 0.2,
+					"FadeOutTime": 0.4
+				}
+			],
+			"Waiting": [
+				{
+					"File": "motions/waiting.motion3.json",
+					"FadeInTime": 0.4,
+					"FadeOutTime": 0.4
+				}
+			],
+			"TapHead": [
+				{
+					"File": "motions/tap-head.motion3.json",
+					"FadeInTime": 0.2,
+					"FadeOutTime": 0.3
+				}
+			],
+			"TapFace": [
+				{
+					"File": "motions/tap-face.motion3.json",
+					"FadeInTime": 0.2,
+					"FadeOutTime": 0.3
+				}
+			],
+			"TapHand": [
+				{
+					"File": "motions/tap-hand.motion3.json",
+					"FadeInTime": 0.2,
+					"FadeOutTime": 0.3
+				}
+			],
+			"TapBody": [
+				{
+					"File": "motions/tap-body.motion3.json",
+					"FadeInTime": 0.15,
+					"FadeOutTime": 0.3
+				}
+			],
+			"TapLeg": [
+				{
+					"File": "motions/tap-leg.motion3.json",
+					"FadeInTime": 0.15,
+					"FadeOutTime": 0.3
+				}
+			],
+			"Charm": [
+				{
+					"File": "motions/charm.motion3.json",
+					"FadeInTime": 0.3,
+					"FadeOutTime": 0.5
+				}
+			],
+			"Smug": [
+				{
+					"File": "motions/smug.motion3.json",
+					"FadeInTime": 0.3,
+					"FadeOutTime": 0.4
+				}
+			],
+			"Shy": [
+				{
+					"File": "motions/shy.motion3.json",
+					"FadeInTime": 0.3,
+					"FadeOutTime": 0.4
+				}
+			],
+			"Taunt": [
+				{
+					"File": "motions/taunt.motion3.json",
+					"FadeInTime": 0.25,
+					"FadeOutTime": 0.4
+				}
+			],
+			"Stretch": [
+				{
+					"File": "motions/stretch.motion3.json",
+					"FadeInTime": 0.3,
+					"FadeOutTime": 0.5
+				}
 			]
 		}
 	},
