@@ -108,8 +108,30 @@ export const AI_HISTORY_MAX_ENTRIES: number = AI_HISTORY_LIMITS.max
 export interface AiHistoryEntry {
   role: 'user' | 'assistant'
   text: string
+  /** 这条对话发生的时间（epoch ms）；注入时作为时间戳前缀，模型靠它判断「多久以前」。 */
+  at: number
   provider?: string
   model?: string
+}
+
+const pad2 = (value: number) => String(value).padStart(2, '0')
+
+/**
+ * 历史条目的时间戳前缀：同一天只给 `[21:03]`，跨天补上 `[11/04 21:03]`。
+ * 只用于提示模型时间感，不进台词、不显示在气泡里。
+ */
+export function formatStamp(at: number, now = Date.now()): string {
+  const then = new Date(at)
+  const today = new Date(now)
+  const clock = `${pad2(then.getHours())}:${pad2(then.getMinutes())}`
+  return then.toDateString() === today.toDateString() ? clock : `${then.getMonth() + 1}/${then.getDate()} ${clock}`
+}
+
+/** 当前时间的口语描述（「11月5日 周四 21:10」），每次请求都重新取值。 */
+export function formatNow(now = Date.now()): string {
+  const date = new Date(now)
+  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()]
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${weekday} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
 }
 
 /** 历史消息的 `source`：assistant 必须是模型来源，user 可以是任何来源（这里用 user）。 */
@@ -138,7 +160,10 @@ export function historyMessages(
     .map((entry, index) => ({
       id: `history-${index}`,
       role: entry.role,
-      content: [{ type: 'text' as const, text: entry.text }],
+      content: [{
+        type: 'text' as const,
+        text: entry.at > 0 ? `[${formatStamp(entry.at)}] ${entry.text}` : entry.text,
+      }],
       source: entry.role === 'assistant'
         ? { kind: 'model' as const, provider: entry.provider || fallback.provider, model: entry.model || fallback.model }
         : { kind: 'user' as const },
@@ -211,7 +236,7 @@ export function buildSceneMessage(context: ReplyContext, options: { forHistory?:
   const hint = !options.forHistory && context.hint
     ? `你下意识想说的是「${context.hint}」，但别照搬，也不必复述。`
     : ''
-  return `（${where}。${hint}）按你的人设即兴演一下这一刻的反应，一句话。`
+  return `（现在是 ${formatNow()}。${where}。${hint}）按你的人设即兴演一下这一刻的反应，一句话。`
 }
 
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */

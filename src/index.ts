@@ -236,13 +236,15 @@ export function apply(ctx: Context, config: Config): void {
       if (attempt.text) {
         // 只记录成功的往来：失败的请求不该污染上下文
         // 历史只记真实发生的事：去掉参考台词（它没有上屏），避免模型把预置对白当成自己说过的话
+        const at = Date.now()
         aiHistory = appendHistory(aiHistory, {
           role: 'user',
           text: buildSceneMessage(context, { forHistory: true }),
+          at,
         })
         aiHistory = appendHistory(
           aiHistory,
-          { role: 'assistant', text: attempt.text, provider: settings.aiProvider, model: settings.aiModel },
+          { role: 'assistant', text: attempt.text, at: Date.now(), provider: settings.aiProvider, model: settings.aiModel },
           AI_HISTORY_MAX_ENTRIES,
         )
         return { ok: true, text: attempt.text }

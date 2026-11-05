@@ -7,6 +7,8 @@ import {
   AI_HISTORY_MAX_ENTRIES,
   DEFAULT_PERSONA,
   MAX_PERSONA_CHARS,
+  formatNow,
+  formatStamp,
   MAX_REPLY_CHARS,
   PERSONA_FILENAME,
   appendHistory,
@@ -176,11 +178,12 @@ describe('savePersona', () => {
 
 describe('最近对话注入（ADR-030）', () => {
   const FALLBACK = { provider: 'p', model: 'm' }
+  const T = new Date('2026-11-05T21:00:00').getTime()
   const history: AiHistoryEntry[] = [
-    { role: 'user', text: '第 1 句' },
-    { role: 'assistant', text: '第 2 句' },
-    { role: 'user', text: '第 3 句' },
-    { role: 'assistant', text: '第 4 句' },
+    { role: 'user', text: '第 1 句', at: T - 4000 },
+    { role: 'assistant', text: '第 2 句', at: T - 3000, provider: 'p', model: 'm' },
+    { role: 'user', text: '第 3 句', at: T - 2000 },
+    { role: 'assistant', text: '第 4 句', at: T - 1000, provider: 'p', model: 'm' },
   ]
 
   it('条数为 0 时不注入', () => {
@@ -194,6 +197,20 @@ describe('最近对话注入（ADR-030）', () => {
     // 取 1 条时末尾是 assistant → 整段丢弃（避免以 assistant 开头的上下文）
     expect(historyMessages(history, 1, FALLBACK)).toHaveLength(0)
     expect(historyMessages(history, 99, FALLBACK)).toHaveLength(4)
+  })
+
+  it('注入的历史带时间戳前缀（同一天只给时分，跨天补日期）', () => {
+    const rows = historyMessages(history, 2, FALLBACK)
+    expect(rows[0].content[0].text).toMatch(/^\[\d{2}:\d{2}\] 第 3 句$/)
+    const now = new Date('2026-11-05T21:10:00').getTime()
+    expect(formatStamp(new Date('2026-11-05T20:03:00').getTime(), now)).toBe('20:03')
+    expect(formatStamp(new Date('2026-11-04T20:03:00').getTime(), now)).toBe('11/4 20:03')
+  })
+
+  it('场景描述注入当前时间', () => {
+    const text = buildSceneMessage({ kind: 'tap', part: '头' })
+    expect(text).toMatch(/现在是 \d+月\d+日 周[一二三四五六日] \d{2}:\d{2}/)
+    expect(formatNow(new Date('2026-11-05T21:10:00').getTime())).toBe('11月5日 周四 21:10')
   })
 
   it('onPayload 回报实际发出的 system 与逐条 messages', async () => {
@@ -250,7 +267,7 @@ describe('最近对话注入（ADR-030）', () => {
     expect(AI_HISTORY_MAX_ENTRIES).toBe(AI_HISTORY_LIMITS.max)
     let list: AiHistoryEntry[] = []
     for (let i = 0; i < AI_HISTORY_LIMITS.max + 20; i += 1) {
-      list = appendHistory(list, { role: i % 2 === 0 ? 'user' : 'assistant', text: `t${i}` })
+      list = appendHistory(list, { role: i % 2 === 0 ? 'user' : 'assistant', text: `t${i}`, at: 1_700_000_000_000 + i })
     }
     expect(list).toHaveLength(AI_HISTORY_LIMITS.max)
     expect(list[list.length - 1].text).toBe(`t${AI_HISTORY_LIMITS.max + 19}`)
