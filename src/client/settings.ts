@@ -225,16 +225,16 @@ function orderTouchBox(box: TouchBox): TouchBox {
  * 存储仍是相对左上角的归一化 {left, top, right, bottom}，只在这一层做互补换算。
  */
 function boxFieldPercent(box: TouchBox, key: keyof TouchBox): number {
-  if (key === 'top') return Math.round((1 - box.bottom) * 100)
-  if (key === 'bottom') return Math.round((1 - box.top) * 100)
+  if (key === 'top') return Math.round((1 - box.top) * 100)
+  if (key === 'bottom') return Math.round((1 - box.bottom) * 100)
   return toPercent(box[key])
 }
 
 /** 以左下角为原点的百分比输入 → 归一化 box（写回存储前照旧校正左右/上下顺序）。 */
 function applyBoxField(box: TouchBox, key: keyof TouchBox, raw: string): TouchBox {
   const value = fromPercentInput(raw)
-  if (key === 'top') return orderTouchBox({ ...box, bottom: 1 - value })
-  if (key === 'bottom') return orderTouchBox({ ...box, top: 1 - value })
+  if (key === 'top') return orderTouchBox({ ...box, top: 1 - value })
+  if (key === 'bottom') return orderTouchBox({ ...box, bottom: 1 - value })
   return orderTouchBox({ ...box, [key]: value })
 }
 
