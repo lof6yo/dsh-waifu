@@ -89,10 +89,10 @@ interface SettingsState {
 
 const DEFAULT_VALUE: PetSettingsValue = {
   enabled: true,
-  size: 160,
+  size: 200,
   maxFps: 30,
-  canvasPadX: 130,
-  canvasPadY: 70,
+  canvasPadX: 125,
+  canvasPadY: 50,
   homeRight: 300,
   homeBottom: 260,
   bubbleOffsetX: 0,
@@ -100,7 +100,7 @@ const DEFAULT_VALUE: PetSettingsValue = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
-  model: 'hiyori',
+  model: 'jian',
   developerMode: false,
   debug: false,
   showTapZones: false,
@@ -1876,8 +1876,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
 
   // 1. 显示（Section）：基础显示 / 画布与位置 / 对白气泡
   const maxFps = normalizeMaxFps(value.maxFps)
-  const canvasPadX = normalizeCanvasPad(state.value?.canvasPadX, 130)
-  const canvasPadY = normalizeCanvasPad(state.value?.canvasPadY, 70)
+  const canvasPadX = normalizeCanvasPad(state.value?.canvasPadX, 125)
+  const canvasPadY = normalizeCanvasPad(state.value?.canvasPadY, 50)
   const homeRight = normalizeHomePosition(state.value?.homeRight, 300)
   const homeBottom = normalizeHomePosition(state.value?.homeBottom, 260)
   const bubbleOffsetX = normalizeBubbleOffset(state.value?.bubbleOffsetX, 0)

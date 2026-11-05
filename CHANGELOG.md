@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- **插件默认值与「简」日常配置对齐**：尺寸默认 200px（原 160）、画布留白默认 125/50（原 130/70，每侧占尺寸百分比）；schema 默认、设置页兜底、客户端首帧兜底与 `waifu.json` 显示默认一并同步
 - **动作集精简**：删除自建的 Thinking / Error / Done / Waiting / TapHead / TapFace / TapBody，只保留 `Idle`；原始资产 `Scene1` 经调研确认缺失参数（9 条曲线 7 条无效）几乎无可见表演，未采用（ADR-017）。默认映射仅 `idle → Idle`，其余事件/默认触摸部位不挂动作；`scripts/gen-jian-motions.mjs` 改为只生成 Idle
 - 调试面板改为浮在角色模型上方的绝对定位浮层（不再占据布局把画布往下推）；调试面板可见时对白气泡避让叠在其上方
 - **插件更名**：包名/插件 id/bundle 行统一为 `dsh-waifu`；API 前缀改为 `/api/dsh-waifu`、素材路由 `/waifu-assets`、插件私有目录 `$DSH_HOME/waifu/`（ADR-016）
@@ -23,7 +24,7 @@
 
 ### Added
 - 事件绑定配置与 API：`EventBindings`（6 事件 × 动作组 × 台词池，长状态 3 阶段）、`DEFAULT_EVENT_BINDINGS`、`EVENT_STAGE_DELAYS`；用户覆盖存 `touch-parts.jsonc` 的 `models[<id>].events`；设置页「恢复默认」
-- 内置「简」默认触摸部位升级为 脸 / 头 / 胸 / 臀（按实际构图调好，含示例台词与部位动作）
+- 内置「简」默认触摸部位升级为 **九个**（按图层从上到下：脸 / 头发 / 胸 / 臀 / 腰 / 大腿 / 手 / 小腿 / 脚），按实际构图调好 box，且**每个部位都带 3 条示例台词**（触摸时随机一条；默认不挂动作）
 - 内置「简」的 8 个自建动作（Idle / Thinking / Error / Done / Waiting / TapHead / TapFace / TapBody）+ `scripts/gen-jian-motions.mjs` 幂等生成与校验脚本；model3.json 声明 EyeBlink / LipSync 参数组
 - 设置页「触摸部位」分组：编辑态（宠物实时显示 box）、新建部位、一个部位多个 box、左上右下百分比输入、按部位多选触摸动作组、debounce 自动保存
 - 触摸部位文件 `$DSH_HOME/waifu/touch-parts.jsonc` 与对应 API `GET/POST /api/dsh-waifu/touch-parts`

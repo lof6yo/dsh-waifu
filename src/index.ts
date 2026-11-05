@@ -69,7 +69,7 @@ export interface Config extends Omit<PetSettings, 'maxFps'> {
 
 export const Config: Schema<Config> = Schema.object({
   enabled: Schema.boolean().default(true),
-  size: Schema.number().min(40).max(400).default(160),
+  size: Schema.number().min(40).max(400).default(200),
   maxFps: Schema.union([
     Schema.const(30),
     Schema.const(60),
@@ -79,8 +79,8 @@ export const Config: Schema<Config> = Schema.object({
   developerMode: Schema.boolean().default(false),
   debug: Schema.boolean().default(false),
   showTapZones: Schema.boolean().default(false),
-  canvasPadX: Schema.number().min(0).max(300).default(130),
-  canvasPadY: Schema.number().min(0).max(300).default(70),
+  canvasPadX: Schema.number().min(0).max(300).default(125),
+  canvasPadY: Schema.number().min(0).max(300).default(50),
   homeRight: Schema.number().min(0).max(4000).default(300),
   homeBottom: Schema.number().min(0).max(4000).default(260),
   bubbleOffsetX: Schema.number().min(-1000).max(1000).default(0),

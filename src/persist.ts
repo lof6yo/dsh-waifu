@@ -14,7 +14,7 @@ export interface PetDisplay {
   size: number
 }
 
-export const DEFAULT_DISPLAY: PetDisplay = { right: 24, bottom: 20, size: 160 }
+export const DEFAULT_DISPLAY: PetDisplay = { right: 24, bottom: 20, size: 200 }
 
 const DISPLAY_MIN = 40
 const DISPLAY_MAX = 400

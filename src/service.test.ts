@@ -9,14 +9,14 @@ import { TouchPartsStore } from './touch-parts.ts'
 
 const BASE_SETTINGS: PetSettings = {
   enabled: true,
-  size: 160,
+  size: 200,
   maxFps: 30,
   model: 'jian',
   developerMode: false,
   debug: false,
   showTapZones: false,
-  canvasPadX: 130,
-  canvasPadY: 70,
+  canvasPadX: 125,
+  canvasPadY: 50,
   homeRight: 24,
   homeBottom: 20,
   bubbleOffsetX: 0,
@@ -82,10 +82,10 @@ describe('PetService 状态机', () => {
     expect(view.config.events.error.lines[0].length).toBeGreaterThan(0)
   })
 
-  it('内置「简」默认触摸部位：脸/头/胸/臀，且 box 为 0–1 归一化', () => {
+  it('内置「简」默认触摸部位：九个部位且都带台词，box 为 0–1 归一化', () => {
     const { service } = makeHarness()
     const parts = service.snapshot().config.touchParts
-    expect(parts.map((p) => p.name)).toEqual(['脸', '头', '胸', '臀'])
+    expect(parts.map((p) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
     for (const part of parts) {
       expect(part.boxes.length).toBeGreaterThan(0)
       for (const box of part.boxes) {
@@ -246,7 +246,7 @@ describe('PetService 显示配置', () => {
   it('resetDisplay 回到内置默认显示（归位由客户端按中心点计算）', () => {
     const { service } = makeHarness({ homeRight: 40, homeBottom: 30 })
     service.setDisplay({ size: 300, right: -120, bottom: 800 })
-    expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 160 })
+    expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 200 })
   })
 
   it('snapshot 解析模型 URL：内置同源路径；失效 id 回退内置', () => {

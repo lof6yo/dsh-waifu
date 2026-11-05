@@ -57,14 +57,14 @@ const BUBBLE_DISPLAY_MS = 2500
 const DEFAULT_MAX_FPS = 30
 
 /**
- * 画布四周留白（模型可见尺寸之外，每侧）：百分比来自 settings.canvasPadX/Y（0–300，默认 130/70），
+ * 画布四周留白（模型可见尺寸之外，每侧）：百分比来自 settings.canvasPadX/Y（0–300，默认 125/50），
  * 实际留白 = max(CANVAS_PAD_MIN, size * pct / 100)。动作/物理甩尾（尾巴等）会超出模型静止包围盒，
  * 留白不足会被 canvas 裁切（spec §7）。
  */
 const CANVAS_PAD_MIN = 40
-/** 留白默认百分比（每侧）：Host 默认 130/70；首帧/旧快照缺字段时兜底。 */
-const DEFAULT_CANVAS_PAD_X = 130
-const DEFAULT_CANVAS_PAD_Y = 70
+/** 留白默认百分比（每侧）：Host 默认 125/50；首帧/旧快照缺字段时兜底。 */
+const DEFAULT_CANVAS_PAD_X = 125
+const DEFAULT_CANVAS_PAD_Y = 50
 
 /** 气泡默认偏移（相对模型包围盒顶部中心）与默认配色（Host 默认 0/-10、#ffffff/92%/#222222）。 */
 const DEFAULT_BUBBLE_OFFSET_X = 0
@@ -391,8 +391,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let lastState: PetState | null = null
   let demoState: PetState | null = null
   let view: PetStateView | null = null
-  let pos: DisplayLike = { right: 24, bottom: 20, size: 160 }
-  // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 130/70；spec §7）
+  let pos: DisplayLike = { right: 24, bottom: 20, size: 200 }
+  // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
   let canvasPadXPct = DEFAULT_CANVAS_PAD_X
   let canvasPadYPct = DEFAULT_CANVAS_PAD_Y
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）

@@ -45,14 +45,14 @@ function fakeRes() {
 
 const BASE_SETTINGS: PetSettings = {
   enabled: true,
-  size: 160,
+  size: 200,
   maxFps: 30,
   model: 'jian',
   developerMode: false,
   debug: false,
   showTapZones: false,
-  canvasPadX: 130,
-  canvasPadY: 70,
+  canvasPadX: 125,
+  canvasPadY: 50,
   homeRight: 24,
   homeBottom: 20,
   bubbleOffsetX: 0,
@@ -110,9 +110,9 @@ describe('makePetRoutes API 路由', () => {
     expect(res.state.status).toBe(200)
     const body = JSON.parse(res.state.body.toString('utf8'))
     expect(body.state).toBe('idle')
-    expect(body.config.size).toBe(160)
+    expect(body.config.size).toBe(200)
     expect(body.config.spatialTap).toBeUndefined()
-    expect(body.config.touchParts.map((p: { name: string }) => p.name)).toEqual(['脸', '头', '胸', '臀'])
+    expect(body.config.touchParts.map((p: { name: string }) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
     cleanup()
   })
 
@@ -133,7 +133,7 @@ describe('makePetRoutes API 路由', () => {
     const body = JSON.parse(res.state.body.toString('utf8'))
     expect(body.model).toBe('jian')
     expect(body.saved).toBe(false)
-    expect(body.parts.length).toBe(4)
+    expect(body.parts.length).toBe(9)
     // 事件绑定（当前模型生效值，供设置页初始化）
     expect(body.events.idle.motions).toEqual(['Idle'])
     expect(body.events.thinking.lines.length).toBe(3)
