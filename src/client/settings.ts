@@ -1746,8 +1746,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           : null,
       expanded && createElement('div', { style: cardBodyStyle },
         createElement('div', { style: hintStyle },
-          '坐标以角色包围盒的左下角为原点（0–100%）：「上」变大 = box 往上长，「下」变小 = box 往下长；',
-          '一个部位可有多个 box，命中任一即算该部位。'),
+          '原点在角色左下角（0–100%）：调大「上」= 往上长，调小「下」= 往下长；多个 box 命中任一即算该部位。'),
         part.boxes.length === 0
           ? createElement('div', { style: { ...hintStyle, marginBottom: GAP.sm } }, '还没有 box，点「+ 添加 box」画出点击区域。')
           : createElement('div', { key: 'box-table', style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: GAP.sm } },
@@ -1908,7 +1907,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   children.push(createElement('div', { key: 'display-section', style: sectionStyle },
     createElement(SectionHeader, {
       title: '显示',
-      description: '基础显示、画布与默认位置，以及对白气泡的位置与配色。',
+      description: '基础显示、画布与位置、对白气泡。',
     }),
     // A. 基础显示
     createElement('div', { key: 'basic-display', style: rowStyle },
@@ -2148,9 +2147,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     createElement(SectionHeader, {
       title: '事件绑定（当前模型）',
       description: createElement('div', null,
-        '每个事件可配置动作组与台词池：动作组来自当前模型 Motions（不选 = 不播动作）；',
-        createElement('br'),
-        '台词一行一条，留空 = 该阶段不显示气泡；修改后点击对应事件卡里的「保存」写入。',
+        '每个事件 = 动作组 + 分阶段台词池；改完点卡片内的「保存」。',
         motionGroupsStatus === 'error'
           ? createElement('div', { style: { ...noticeErrorStyle, marginTop: 8, marginBottom: 0 } },
             '无法解析当前模型的动作组，动作多选暂不可用（可稍后重试）。',
@@ -2170,16 +2167,14 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     createElement(SectionHeader, {
       title: '触摸部位（当前模型）',
       description: createElement('div', null,
-        '部位列表从上到下 = 从顶层到底层（#1 最上层），box 重叠时上层部位优先；用卡片上的 ↑ / ↓ 调整。',
-        createElement('br'),
-        '预览只控制角色上的 box 叠加/强制可见，不影响编辑与保存。'),
+        '#1 在最上层，box 重叠时上层优先，用 ↑ / ↓ 调层级；预览只控制角色上的 box 显示，不影响编辑与保存。'),
       action: createElement('button', {
         type: 'button',
         className: 'dsh-btn dsh-btn-secondary',
         style: buttonSecondaryStyle,
         disabled: readOnly,
         onClick: toggleTouchEditing,
-      }, touchEditing ? '退出预览' : '预览 box（在角色上显示）'),
+      }, touchEditing ? '退出预览' : '预览 box'),
     }),
     structureDirty
       ? saveRow('touch-structure-save-row', '部位顺序/新增/删除未保存', 'warn', saveStructureNow)
