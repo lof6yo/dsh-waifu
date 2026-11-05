@@ -968,8 +968,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function enterLongState(state: LongState, hint: string | undefined): void {
     clearLongState()
     longState = state
-    // 全 AI 接管：预置对白整段不出（连常驻底稿也留空），气泡只等模型那句
-    const takeover = aiTakeover && aiEnabled
+    // 全 AI 接管：预置对白整段不出（连常驻底稿也留空），气泡只等模型那句。
+    // 例外：开了「仅触摸」时状态事件根本不会问模型（下面直接 return），死守接管等于让状态彻底哑掉，
+    // 所以此时固定台词照旧显示（ADR-031 修订）。
+    const takeover = aiTakeover && aiEnabled && !aiTouchOnly
     bubbleStickyText = takeover ? null : hint ?? null
     if (bubbleStickyText === null) hideBubble()
     else showStickyText()
@@ -1118,8 +1120,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         }
       } else {
         clearLongState()
-        // 全 AI 接管：预置对白不显示，气泡留给模型（失败也不回落到固定台词）
-        const takeover = aiTakeover && aiEnabled
+        // 全 AI 接管：预置对白不显示，气泡留给模型（失败也不回落到固定台词）。
+        // 同 enterLongState：开了「仅触摸」就不接管，否则状态事件会一句台词都没有。
+        const takeover = aiTakeover && aiEnabled && !aiTouchOnly
         if (touchHolding) {
           // 触摸优先：短状态不抢正在显示的触摸台词，也不另发一次状态请求
         } else if (takeover) hideBubble()
