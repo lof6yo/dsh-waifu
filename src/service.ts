@@ -56,12 +56,6 @@ export interface PetStateView {
     bubbleBgColor: string
     bubbleBgOpacity: number
     bubbleTextColor: string
-    /** 基础表情 id（EXPRESSIONS）+ 连续表情参数强度（0–100）。 */
-    expression: string
-    exprAngry: number
-    exprAngry2: number
-    exprCry: number
-    exprEye: number
     /** 六个事件的绑定（动画组候选 + 台词池；内置/自定义默认 → 用户覆盖）。 */
     events: EventBindings
     /** 当前模型生效的触摸部位（用户自定义优先，其次内置默认；spec §4）。 */
@@ -208,11 +202,6 @@ export class PetService {
         bubbleBgColor: settings.bubbleBgColor,
         bubbleBgOpacity: settings.bubbleBgOpacity,
         bubbleTextColor: settings.bubbleTextColor,
-        expression: settings.expression,
-        exprAngry: settings.exprAngry,
-        exprAngry2: settings.exprAngry2,
-        exprCry: settings.exprCry,
-        exprEye: settings.exprEye,
         events: this.effectiveEvents(settings.model),
         touchParts: this.touchPartsFor(settings.model),
       },

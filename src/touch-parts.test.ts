@@ -63,12 +63,12 @@ describe('TouchPartsStore', () => {
     const store = new TouchPartsStore()
     store.save('jian', [], {
       idle: { motions: ['Idle'], lines: [['在的。']] },
-      thinking: { motions: ['Thinking', 'TapHead'], lines: [['想…'], ['还在想…']] },
+      thinking: { motions: ['Thinking', 'angry'], lines: [['想…'], ['还在想…']] },
       bogus: { motions: ['X'], lines: [] },
     } as never)
     const events = store.load().models.jian?.events
     expect(events?.idle).toEqual({ motions: ['Idle'], lines: [['在的。']] })
-    expect(events?.thinking?.motions).toEqual(['Thinking', 'TapHead'])
+    expect(events?.thinking?.motions).toEqual(['Thinking', 'angry'])
     expect(events?.thinking?.lines).toEqual([['想…'], ['还在想…']])
     expect(events && 'bogus' in events).toBe(false)
   })

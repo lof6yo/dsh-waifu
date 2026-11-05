@@ -12,7 +12,7 @@
  * @module dsh-waifu/client/settings
  */
 
-import { createElement, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, createElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent, MouseEvent, ReactNode, ReactElement } from 'react'
 import type {
   EventBinding,
@@ -30,7 +30,9 @@ import {
   MAX_LINES_PER_POOL,
   PET_EVENTS,
   EXPRESSIONS,
-  EXPRESSION_LEVELS,
+  isExpressionId,
+  normalizeMotionSelection,
+  splitMotionSelection,
   mergeEventBindings,
   normalizeEventBindings,
 } from '../models.ts'
@@ -63,13 +65,6 @@ export interface PetSettingsValue {
   /** 气泡文字颜色（#rrggbb）。 */
   bubbleTextColor: string
   model: string
-  /** 基础表情 id（EXPRESSIONS）。 */
-  expression: string
-  /** 连续表情参数强度（0–100）。 */
-  exprAngry: number
-  exprAngry2: number
-  exprCry: number
-  exprEye: number
   /** 开发者选项总开关：开启后显示调试面板/触摸部位色块等开发者入口。 */
   developerMode: boolean
   /** 调试面板：显示调试面板（开发用）。 */
@@ -109,11 +104,6 @@ const DEFAULT_VALUE: PetSettingsValue = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
-  expression: 'none',
-  exprAngry: 0,
-  exprAngry2: 0,
-  exprCry: 0,
-  exprEye: 0,
   model: 'jian',
   developerMode: false,
   debug: false,
@@ -644,6 +634,8 @@ const stickyRowStyle: CSSProperties = {
 interface ThemeSelectOption {
   id: string
   name: string
+  /** 分组名：有值时下拉列表里按组显示小标题（组内单选，见 ThemeMultiSelect.singlePerGroup）。 */
+  group?: string
 }
 
 const MAX_FPS_OPTIONS: ThemeSelectOption[] = [
@@ -656,6 +648,34 @@ const MAX_FPS_OPTIONS: ThemeSelectOption[] = [
 function normalizeMaxFps(raw: unknown): number {
   if (raw === 60 || raw === 0) return raw
   return 30
+}
+
+/**
+ * 「动作 / 表情」混选选项（ADR-023）：动作组与表情各成一组，组内单选。
+ * extra 是当前值里可能出现、但模型没解析到的旧名字（保证 tag 能显示）。
+ */
+function motionSelectionOptions(motionGroups: readonly string[], current: readonly string[] = []): ThemeSelectOption[] {
+  const motions = [...new Set([
+    ...motionGroups,
+    ...current.filter((id) => !isExpressionId(id)),
+  ])]
+  return [
+    ...motions.map((id) => ({ id, name: id, group: '动作' })),
+    ...EXPRESSIONS
+      .filter((expression) => expression.id !== 'none')
+      .map((expression) => ({ id: expression.id, name: expression.name, group: '表情' })),
+  ]
+}
+
+/** 混选标签文案（卡片摘要用）：动作组 / 表情各取一个。 */
+function motionSelectionLabel(selection: readonly string[]): string {
+  const { motion, expression } = splitMotionSelection(selection)
+  const parts: string[] = []
+  if (motion) parts.push(motion)
+  if (expression !== 'none') {
+    parts.push(EXPRESSIONS.find((item) => item.id === expression)?.name ?? expression)
+  }
+  return parts.join(' + ')
 }
 
 /** 画布留白（%）：clamp 到 0–300 的整数；非法值回落 fallback。 */
@@ -810,20 +830,6 @@ interface ThemeSwitchProps {
   onChange: (next: boolean) => void
 }
 
-/** 表情下拉（单选）：选项来自 EXPRESSIONS，「无」= 不改表情。 */
-function ExpressionSelect(props: {
-  value: string
-  disabled?: boolean
-  onChange(next: string): void
-}): ReactElement {
-  return createElement('select', {
-    style: { ...inputStyle, flex: 1, minWidth: 0 },
-    value: props.value || 'none',
-    disabled: props.disabled,
-    onChange: (e: ChangeEvent<HTMLSelectElement>) => props.onChange(e.target.value),
-  }, ...EXPRESSIONS.map((expression) => createElement('option', { key: expression.id, value: expression.id }, expression.name)))
-}
-
 /** 自绘 switch：用于开发者选项总开关等“组标题右侧开关”场景。 */
 function ThemeSwitch(props: ThemeSwitchProps): ReactElement {
   const { checked, disabled, onChange } = props
@@ -869,12 +875,14 @@ interface ThemeMultiSelectProps {
   options: ThemeSelectOption[]
   disabled?: boolean
   placeholder?: string
+  /** 组内单选：点同组另一项时替换掉原来的（动作组 / 表情各只留 1 项）。 */
+  singlePerGroup?: boolean
   onChange: (next: string[]) => void
 }
 
 /** 多选下拉：选中项以 tag 展示在主按钮内；点击下拉项切换选中，保持打开以支持连续多选。 */
 function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
-  const { value, options, disabled, placeholder, onChange } = props
+  const { value, options, disabled, placeholder, singlePerGroup, onChange } = props
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
@@ -893,6 +901,29 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
   }, [open])
 
   const nameOf = (id: string) => options.find((o) => o.id === id)?.name ?? id
+  /** 按 group 首次出现顺序切块；无 group 的选项归到空标题组（不渲染标题）。 */
+  const blocks: { label: string; items: ThemeSelectOption[] }[] = []
+  for (const option of options) {
+    const label = option.group ?? ''
+    const last = blocks[blocks.length - 1]
+    if (last && last.label === label) last.items.push(option)
+    else blocks.push({ label, items: [option] })
+  }
+  const toggle = (option: ThemeSelectOption): void => {
+    const selected = value.includes(option.id)
+    if (selected) {
+      onChange(value.filter((id) => id !== option.id))
+      return
+    }
+    if (!singlePerGroup) {
+      onChange([...value, option.id])
+      return
+    }
+    // 组内单选：先剔除同组旧选项（无 group 时整组视为一组）
+    const sameGroup = blocks.find((block) => block.items.some((item) => item.id === option.id))
+    const keep = value.filter((id) => !(sameGroup?.items.some((item) => item.id === id) ?? false))
+    onChange([...keep, option.id])
+  }
 
   return createElement('div', {
     ref: rootRef,
@@ -962,17 +993,25 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
         overflowY: 'auto',
       },
     },
-      options.map((o) => {
+      blocks.map((block, blockIndex) => createElement(Fragment, { key: `block-${blockIndex}` },
+        block.label
+          ? createElement('div', {
+            style: {
+              padding: '6px 10px 2px',
+              fontSize: 11,
+              letterSpacing: '.08em',
+              color: C.textSecondary,
+            },
+          }, block.label)
+          : null,
+        block.items.map((o) => {
         const selected = value.includes(o.id)
         return createElement('button', {
           key: o.id,
           type: 'button',
           role: 'option',
           'aria-selected': selected,
-          onClick: () => {
-            const next = selected ? value.filter((v) => v !== o.id) : [...value, o.id]
-            onChange(next)
-          },
+          onClick: () => toggle(o),
           style: {
             display: 'flex',
             alignItems: 'center',
@@ -1000,6 +1039,7 @@ function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
           o.name,
         )
       }),
+      )),
     ),
   )
 }
@@ -1070,26 +1110,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const nextSize = draftSize
     enqueueWrite(() => [{ op: 'set', path: ['size'], value: nextSize }])
     setDraftSize(null)
-  }
-
-  // 表情强度滑杆：拖动中本地草稿 + 90ms 防抖写入，让角色实时跟随（不逐帧写盘）
-  const [levelDrafts, setLevelDrafts] = useState<Record<string, number>>({})
-  const levelTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (levelTimer.current !== null) clearTimeout(levelTimer.current) }, [])
-  const levelValue = (key: string): number => levelDrafts[key] ?? (Number(value[key as keyof PetSettingsValue]) || 0)
-  const pushLevel = (key: string, next: number): void => {
-    setLevelDrafts((prev) => ({ ...prev, [key]: next }))
-    if (levelTimer.current !== null) clearTimeout(levelTimer.current)
-    levelTimer.current = setTimeout(() => {
-      levelTimer.current = null
-      enqueueWrite(() => [{ op: 'set', path: [key], value: next }])
-      setLevelDrafts((prev) => {
-        if (!(key in prev)) return prev
-        const copy = { ...prev }
-        delete copy[key]
-        return copy
-      })
-    }, 90)
   }
 
   // 归位提示（约 2 秒后消失）
@@ -1585,18 +1605,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     updateTouchPart(partId, (part) => ({ ...part, boxes: part.boxes.filter((_box, index) => index !== boxIndex) }))
   }
 
+  /** 部位「动作 / 表情」混选（最多各 1 项，见 ADR-023）。 */
   const setPartMotions = (partId: string, next: string[]): void => {
-    updateTouchPart(partId, (part) => ({ ...part, motions: [...next] }))
-  }
-
-  /** 部位表情变更：`none` 时删除字段（不改变表情）。 */
-  const setPartExpression = (partId: string, expression: string | undefined): void => {
-    updateTouchPart(partId, (part) => {
-      const next = { ...part }
-      if (expression) next.expression = expression
-      else delete next.expression
-      return next
-    })
+    updateTouchPart(partId, (part) => ({ ...part, motions: normalizeMotionSelection(next) }))
   }
 
   /** 部位台词变更：一行一条；全空时删除 lines 字段（回退全局默认台词）。 */
@@ -1619,11 +1630,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const stages = eventStageLabels(event)
     const expanded = expandedEventKeys.has(event)
     const dirty = dirtyEventKeys.has(event)
-    const summary = `${binding.motions.length} 个动作组 · ${stages.length} 阶段台词`
-    const options: ThemeSelectOption[] = [
-      ...motionGroups,
-      ...binding.motions.filter((motion) => !motionGroups.includes(motion)),
-    ].map((id) => ({ id, name: id }))
+    const summary = `${motionSelectionLabel(binding.motions) || '不触发'} · ${stages.length} 阶段台词`
+    const options = motionSelectionOptions(motionGroups, binding.motions)
     const toggleExpanded = (): void => {
       setExpandedEventKeys((prev) => {
         const next = new Set(prev)
@@ -1671,32 +1679,22 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       ),
       expanded && createElement('div', { style: cardBodyStyle },
         createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-          createElement('span', { style: formLabelStyle }, '动作组'),
+          createElement('span', { style: formLabelStyle }, '动作 / 表情'),
           createElement(ThemeMultiSelect, {
             value: binding.motions,
             options,
-            disabled: readOnly || motionGroupsStatus !== 'ready',
-            placeholder: '不选 = 不播动作',
-            onChange: (next) => {
-              const current = eventBindingsRef.current[event]
-              setEventBinding(event, { ...current, motions: [...next] })
-            },
-          }),
-        ),
-        createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
-          createElement('span', { style: formLabelStyle }, '表情'),
-          createElement(ExpressionSelect, {
-            value: binding.expression ?? 'none',
+            singlePerGroup: true,
             disabled: readOnly,
+            placeholder: '不选 = 只出气泡',
             onChange: (next) => {
               const current = eventBindingsRef.current[event]
-              const rest = { ...current }
-              if (next === 'none') delete rest.expression
-              else rest.expression = next
-              setEventBinding(event, rest)
+              setEventBinding(event, { ...current, motions: normalizeMotionSelection(next) })
             },
           }),
         ),
+        motionGroupsStatus !== 'ready' && createElement('div', {
+          style: { fontSize: 12, color: motionGroupsStatus === 'error' ? C.error : C.textSecondary },
+        }, motionGroupsStatus === 'loading' ? '正在解析动作列表…（表情现在就能选）' : '无法解析动作列表（表情仍可选）'),
         ...stages.map((stageLabel, stage) => {
           const draftKey = `${event}:${stage}`
           const pool = binding.lines[stage] ?? []
@@ -1886,29 +1884,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           ),
         ),
         createElement('div', { key: 'part-motions', style: { ...formRowStyle, marginBottom: 0 } },
-          createElement('span', { style: formLabelStyle }, '动作组'),
-          motionGroupsStatus === 'loading'
-            ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '正在解析动作列表…')
-            : motionGroupsStatus === 'error'
-              ? createElement('div', { style: { fontSize: 12, color: C.error } }, '无法解析动画列表（动作组可留空，部位仍会保存）')
-              : groups.length === 0
-                ? createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, '该模型没有定义动作组')
-                : createElement(ThemeMultiSelect, {
-                  value: part.motions,
-                  options: groups.map((group) => ({ id: group, name: group })),
-                  disabled: readOnly || motionGroupsStatus !== 'ready',
-                  placeholder: '不选 = 只出气泡',
-                  onChange: (next: string[]) => setPartMotions(part.id, next),
-                }),
-        ),
-        createElement('div', { key: 'part-expression', style: { ...formRowStyle, marginBottom: 0 } },
-          createElement('span', { style: formLabelStyle }, '表情'),
-          createElement(ExpressionSelect, {
-            value: part.expression ?? 'none',
+          createElement('span', { style: formLabelStyle }, '动作 / 表情'),
+          createElement(ThemeMultiSelect, {
+            value: part.motions,
+            options: motionSelectionOptions(groups, part.motions),
+            singlePerGroup: true,
             disabled: readOnly,
-            onChange: (next) => setPartExpression(part.id, next === 'none' ? undefined : next),
+            placeholder: '不选 = 只出气泡',
+            onChange: (next: string[]) => setPartMotions(part.id, next),
           }),
         ),
+        motionGroupsStatus !== 'ready' && createElement('div', { style: { fontSize: 12, color: motionGroupsStatus === 'error' ? C.error : C.textSecondary } },
+          motionGroupsStatus === 'loading' ? '正在解析动作列表…（表情现在就能选）' : '无法解析动作列表（表情仍可选，部位照常保存）'),
       ),
     )
   }
@@ -2222,7 +2209,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ),
   ))
 
-  // 4. 事件绑定（当前模型）：6 事件的动作组 + 分阶段台词池
+  // 4. 事件绑定（当前模型）：6 事件的「动作 / 表情」+ 分阶段台词池
   children.push(createElement('div', { key: 'event-bindings', style: sectionStyle },
     createElement(SectionHeader, {
       title: '事件绑定（当前模型）',
@@ -2289,44 +2276,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       disabled: readOnly,
       onClick: addTouchPart,
     }, '+ 新建部位'),
-  ))
-
-  // 6. 表情：基础表情 + 连续参数强度（拖动即时预览）
-  children.push(createElement('div', { key: 'expressions', style: sectionStyle },
-    createElement(SectionHeader, {
-      title: '表情',
-      description: '基础表情常驻；事件与触摸部位可在各自卡片里单独指定。「强度」滑杆实时作用于角色。',
-    }),
-    createElement('div', { style: formRowStyle },
-      createElement('span', { style: formLabelStyle }, '基础表情'),
-      createElement(ExpressionSelect, {
-        value: value.expression,
-        disabled: !writable,
-        onChange: (next) => enqueueWrite(() => [{ op: 'set', path: ['expression'], value: next }]),
-      }),
-    ),
-    ...EXPRESSION_LEVELS.map((level) => {
-      const current = levelValue(level.key)
-      return createElement('div', { key: `level-${level.key}`, style: { ...formRowStyle, alignItems: 'start' } },
-        createElement('span', { style: { ...formLabelStyle, paddingTop: 4 } }, level.name),
-        createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 } },
-          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
-            createElement('input', {
-              type: 'range',
-              min: 0,
-              max: 100,
-              step: 1,
-              value: current,
-              disabled: !writable,
-              style: { flex: 1, minWidth: 0 },
-              onChange: (e: ChangeEvent<HTMLInputElement>) => pushLevel(level.key, Number(e.target.value)),
-            }),
-            createElement('span', { style: { ...statusTextStyle, color: C.textSecondary, width: 34, textAlign: 'right' } }, `${Math.round(current)}`),
-          ),
-          createElement('div', { style: { fontSize: 12, color: C.textSecondary } }, level.hint),
-        ),
-      )
-    }),
   ))
 
   // 6. 开发者选项

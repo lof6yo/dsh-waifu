@@ -33,9 +33,9 @@ import {
   DEFAULT_EVENT_BINDINGS,
   EVENT_STAGE_DELAYS,
   EXPRESSIONS,
-  EXPRESSION_LEVELS,
   EXPRESSION_SWITCH_PARAMS,
   normalizeExpressionId,
+  splitMotionSelection,
   hitTestTouchParts,
   pointToBoundsRatio,
   type EventBindings,
@@ -120,7 +120,7 @@ const TOUCHBOX_PALETTE = [
 
 /** 表情淡入淡出时长（ms）：切换表情时开关参数按该时长线性逼近目标值。 */
 const EXPRESSION_FADE_MS = 280
-/** 触摸部位表情的临时保持时长（ms）：到点自动回到事件/基础表情。 */
+/** 触摸部位表情的临时保持时长（ms）：到点自动回到当前事件绑定的表情。 */
 const EXPRESSION_TEMP_MS = 2200
 
 /** 归一化配置帧率档（非法值回落默认 30）。 */
@@ -408,17 +408,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
   let canvasPadXPct = DEFAULT_CANVAS_PAD_X
   let canvasPadYPct = DEFAULT_CANVAS_PAD_Y
-  // 表情：基础表情（settings.expression）+ 连续参数强度 + 触摸临时表情（spec §5）
-  let baseExpression = 'none'
-  let expressionLevels: Record<string, number> = {}
+  // 表情：挂在事件绑定/触摸部位上（motions 混选里的表情 id）+ 触摸临时表情（spec §5）
   let tempExpression = ''
   let tempExpressionUntil = 0
   /** 调试面板「表情预览」强制显示的表情（null = 不干预）。 */
   let debugExpression: string | null = null
   /** 表达式开关参数当前混合值（每帧向目标逼近 → 淡入淡出）。 */
   const expressionMix = new Map<string, number>()
-  /** 连续参数当前混合值。 */
-  const expressionLevelMix = new Map<string, number>()
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
   let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
@@ -659,8 +655,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    */
   function playState(state: PetState): void {
     if (!model) return
-    const names = shuffled(eventBindings[state]?.motions ?? [])
-    if (names.length === 0) return
+    const motion = splitMotionSelection(eventBindings[state]?.motions ?? []).motion
+    if (!motion) return
+    const names = [motion]
     interactionGen += 1
     interactionActive = false
     const priority = state === 'idle' ? MotionPriority.IDLE : MotionPriority.FORCE
@@ -1516,19 +1513,19 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 当前应显示的表情 id：触摸临时表情 > 当前事件绑定 > 基础表情（spec §5）。 */
+  /** 当前应显示的表情 id：调试预览 > 触摸临时表情 > 当前事件绑定（spec §5）。 */
   function desiredExpression(): string {
     if (debugExpression) return normalizeExpressionId(debugExpression)
     if (tempExpression) {
       if (Date.now() < tempExpressionUntil) return tempExpression
       tempExpression = ''
     }
-    const bound = lastState ? eventBindings[lastState]?.expression : undefined
-    return normalizeExpressionId(bound ?? baseExpression)
+    const bound = lastState ? splitMotionSelection(eventBindings[lastState]?.motions ?? []).expression : 'none'
+    return normalizeExpressionId(bound)
   }
 
   /**
-   * 写入表情参数：布尔开关按「当前表情」目标值 0/1、连续参数按滑杆强度，均带淡入淡出。
+   * 写入表情参数：布尔开关按「当前表情」目标值 0/1，带淡入淡出。
    * 在 InternalModel.update 之前调用——动作/物理不会写这些参数，先写即生效。
    */
   function applyExpressionParams(
@@ -1546,14 +1543,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const next = Math.abs(target - current) < 0.004 ? target : current + (target - current) * fade
       expressionMix.set(param, next)
       try { set.call(coreModel, param, next, 1) } catch { /* 模型没有该参数 */ }
-    }
-    for (const level of EXPRESSION_LEVELS) {
-      const target = Math.min(1, Math.max(0, expressionLevels[level.key] ?? 0))
-      const current = expressionLevelMix.get(level.key) ?? 0
-      const next = Math.abs(target - current) < 0.004 ? target : current + (target - current) * fade
-      expressionLevelMix.set(level.key, next)
-      if (next <= 0.0001 && target === 0) continue
-      try { set.call(coreModel, level.param, next, 1) } catch { /* 模型没有该参数 */ }
     }
   }
 
@@ -1619,13 +1608,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     bubbleTextColor = typeof cfg.bubbleTextColor === 'string' && cfg.bubbleTextColor.trim()
       ? cfg.bubbleTextColor
       : DEFAULT_BUBBLE_TEXT_COLOR
-    baseExpression = normalizeExpressionId(cfg.expression)
-    expressionLevels = {
-      exprAngry: (Number(cfg.exprAngry) || 0) / 100,
-      exprAngry2: (Number(cfg.exprAngry2) || 0) / 100,
-      exprCry: (Number(cfg.exprCry) || 0) / 100,
-      exprEye: (Number(cfg.exprEye) || 0) / 100,
-    }
     applyBubbleStyle()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -1719,13 +1701,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           showBubble(line)
         }
       }
-      // 表情：该部位配置了表情时短暂切过去（EXPRESSION_TEMP_MS 后回到事件/基础表情，spec §5）
-      if (part.expression && part.expression !== 'none') {
-        tempExpression = normalizeExpressionId(part.expression)
+      // 动作组 / 表情：部位混选里最多各 1 项；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
+      const selection = splitMotionSelection(part.motions)
+      if (selection.expression !== 'none') {
+        tempExpression = selection.expression
         tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
       }
-      // 动作：该部位动作组随机打乱后逐个尝试；空列表不播动作（spec §4）。
-      void playInteractionMotion(shuffled(part.motions))
+      // 动作：有动作组才播（空 = 只出气泡，spec §4）
+      if (selection.motion) void playInteractionMotion([selection.motion])
     } catch {
       // 命中检测异常：忽略本次点击
     }
@@ -1769,13 +1752,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         bubbleTextColor = typeof view.config.bubbleTextColor === 'string' && view.config.bubbleTextColor.trim()
           ? view.config.bubbleTextColor
           : DEFAULT_BUBBLE_TEXT_COLOR
-        baseExpression = normalizeExpressionId(view.config.expression)
-        expressionLevels = {
-          exprAngry: (Number(view.config.exprAngry) || 0) / 100,
-          exprAngry2: (Number(view.config.exprAngry2) || 0) / 100,
-          exprCry: (Number(view.config.exprCry) || 0) / 100,
-          exprEye: (Number(view.config.exprEye) || 0) / 100,
-        }
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)
 

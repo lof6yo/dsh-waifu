@@ -88,11 +88,6 @@ export const Config: Schema<Config> = Schema.object({
   bubbleBgColor: Schema.string().default('#ffffff'),
   bubbleBgOpacity: Schema.number().min(0).max(100).default(92),
   bubbleTextColor: Schema.string().default('#222222'),
-  expression: Schema.string().default('none'),
-  exprAngry: Schema.number().min(0).max(100).default(0),
-  exprAngry2: Schema.number().min(0).max(100).default(0),
-  exprCry: Schema.number().min(0).max(100).default(0),
-  exprEye: Schema.number().min(0).max(100).default(0),
 })
 
 /** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）。 */
@@ -122,11 +117,6 @@ export function apply(ctx: Context, config: Config): void {
     bubbleBgColor: config.bubbleBgColor,
     bubbleBgOpacity: config.bubbleBgOpacity,
     bubbleTextColor: config.bubbleTextColor,
-    expression: config.expression,
-    exprAngry: config.exprAngry,
-    exprAngry2: config.exprAngry2,
-    exprCry: config.exprCry,
-    exprEye: config.exprEye,
   }
   const settingsStore = new SettingsStore(baseSettings)
 

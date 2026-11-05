@@ -11,8 +11,13 @@ import {
   DEFAULT_MOTION_MAP,
   EVENT_STAGE_DELAYS,
   EXPRESSIONS,
+  EXPRESSION_IDS,
   EXPRESSION_SWITCH_PARAMS,
+  isExpressionId,
+  joinMotionSelection,
   normalizeExpressionId,
+  normalizeMotionSelection,
+  splitMotionSelection,
   hitTestTouchParts,
   mergeEventBindings,
   normalizeEventBindings,
@@ -39,13 +44,13 @@ describe('listBuiltinPresets', () => {
     const jian = listBuiltinPresets()[0]
     expect(jian.animationMap?.idle).toEqual(['Idle'])
     expect(jian.animationMap?.thinking).toEqual(['Tilt'])
-    expect(jian.animationMap?.error).toEqual(['ShakeHead'])
-    expect(jian.animationMap?.done).toEqual([])
+    expect(jian.animationMap?.error).toEqual(['ShakeHead', 'angry'])
+    expect(jian.animationMap?.done).toEqual(['star'])
     expect(jian.animationMap?.waiting).toEqual(['Sway'])
-    expect(jian.animationMap?.delivered).toEqual([])
+    expect(jian.animationMap?.delivered).toEqual(['heart'])
     expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
     expect(jian.touchParts?.map((p) => p.motions)).toEqual([
-      [], [], [], [], [], [], [], [], [],
+      ['blush'], [], [], [], [], [], [], [], [],
     ])
     expect(resolveDefaultTouchParts('jian').length).toBe(9)
     expect(resolveDefaultTouchParts('nope')).toEqual([])
@@ -75,8 +80,8 @@ describe('resolveMotionMap', () => {
     const map = resolveMotionMap('jian')
     expect(map.idle).toEqual(['Idle'])
     expect(map.thinking).toEqual(['Tilt'])
-    expect(map.error).toEqual(['ShakeHead'])
-    expect(map.delivered).toEqual([])
+    expect(map.error).toEqual(['ShakeHead', 'angry'])
+    expect(map.delivered).toEqual(['heart'])
   })
 })
 
@@ -206,25 +211,48 @@ describe('表情（expressions）', () => {
     expect(normalizeExpressionId(undefined)).toBe('none')
   })
 
-  it('事件绑定与触摸部位能保存表情，未知值被丢弃', () => {
+  it('旧版 expression 字段并入 motions 混选，未知表情被丢弃', () => {
     const events = normalizeEventBindings({
       error: { motions: [], lines: [['啊']], expression: 'angry' },
       done: { motions: [], lines: [['好']], expression: 'bogus' },
     })
-    expect(events.error?.expression).toBe('angry')
-    expect(events.done?.expression).toBeUndefined()
+    expect(events.error?.motions).toEqual(['angry'])
+    expect(events.done?.motions).toEqual([])
     const parts = normalizeTouchParts([
       { id: 'head', name: '头', boxes: [], motions: [], expression: 'star' },
       { id: 'hand', name: '手', boxes: [], motions: [], expression: 'nope' },
     ])
-    expect(parts[0].expression).toBe('star')
-    expect(parts[1].expression).toBeUndefined()
+    expect(parts[0].motions).toEqual(['star'])
+    expect(parts[1].motions).toEqual([])
   })
 
-  it('默认事件绑定自带三个表情', () => {
-    expect(DEFAULT_EVENT_BINDINGS.error.expression).toBe('angry')
-    expect(DEFAULT_EVENT_BINDINGS.done.expression).toBe('star')
-    expect(DEFAULT_EVENT_BINDINGS.delivered.expression).toBe('heart')
+  it('默认事件绑定：动作组与表情混在同一条目里', () => {
+    expect(DEFAULT_EVENT_BINDINGS.error.motions).toEqual(['ShakeHead', 'angry'])
+    expect(DEFAULT_EVENT_BINDINGS.done.motions).toEqual(['star'])
+    expect(DEFAULT_EVENT_BINDINGS.delivered.motions).toEqual(['heart'])
+  })
+
+  it('isExpressionId 只认注册表里的表情', () => {
+    expect(isExpressionId('blush')).toBe(true)
+    expect(isExpressionId(' angry ')).toBe(true)
+    expect(isExpressionId('Idle')).toBe(false)
+    expect(EXPRESSION_IDS).not.toContain('none')
+  })
+
+  it('混选拆解：最多 1 个动作组 + 1 个表情，顺序固定', () => {
+    expect(splitMotionSelection(['Tilt', 'angry'])).toEqual({ motion: 'Tilt', expression: 'angry' })
+    expect(splitMotionSelection(['angry', 'Tilt'])).toEqual({ motion: 'Tilt', expression: 'angry' })
+    expect(splitMotionSelection(['Tilt', 'Sway', 'angry', 'blush'])).toEqual({ motion: 'Tilt', expression: 'blush' })
+    expect(splitMotionSelection([])).toEqual({ motion: '', expression: 'none' })
+    expect(joinMotionSelection('Sway', 'none')).toEqual(['Sway'])
+    expect(joinMotionSelection('', 'heart')).toEqual(['heart'])
+    expect(joinMotionSelection('', 'none')).toEqual([])
+  })
+
+  it('normalizeMotionSelection 收敛旧数组（多余项/重复项被裁掉）', () => {
+    expect(normalizeMotionSelection(['Tilt', 'Idle', 'angry'])).toEqual(['Tilt', 'angry'])
+    expect(normalizeMotionSelection(['angry', 'nope-expression'])).toEqual(['nope-expression', 'angry'])
+    expect(normalizeMotionSelection('oops')).toEqual([])
   })
 })
 

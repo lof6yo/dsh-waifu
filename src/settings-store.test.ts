@@ -21,11 +21,6 @@ const BASE: PetSettings = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
-  expression: 'none',
-  exprAngry: 0,
-  exprAngry2: 0,
-  exprCry: 0,
-  exprEye: 0,
 }
 
 let home: string
@@ -77,25 +72,24 @@ describe('normalizeSettings', () => {
   })
 })
 
-describe('表情设置归一化', () => {
-  it('未知表情回退 none，强度夹到 0–100', () => {
+describe('表情字段迁移（v4）', () => {
+  it('旧版基础表情 / 强度字段被忽略，不再出现在结果里', () => {
     const value = normalizeSettings({
       version: 3,
-      expression: 'bogus',
+      expression: 'angry',
       exprAngry: 140,
       exprAngry2: -5,
       exprCry: 33.6,
       exprEye: 'x',
     }, BASE)
-    expect(value.expression).toBe('none')
-    expect(value.exprAngry).toBe(100)
-    expect(value.exprAngry2).toBe(0)
-    expect(value.exprCry).toBe(34)
-    expect(value.exprEye).toBe(0)
+    expect(value).toEqual({ ...BASE })
   })
 
-  it('合法表情 id 原样保留', () => {
-    expect(normalizeSettings({ version: 3, expression: 'angry' }, BASE).expression).toBe('angry')
+  it('v3 文件的 home 百分比与气泡偏移不再被当成旧版语义', () => {
+    const value = normalizeSettings({ version: 3, homeRight: 42, homeBottom: 30, bubbleOffsetY: 10 }, BASE)
+    expect(value.homeRight).toBe(42)
+    expect(value.homeBottom).toBe(30)
+    expect(value.bubbleOffsetY).toBe(10)
   })
 })
 

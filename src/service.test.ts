@@ -24,11 +24,6 @@ const BASE_SETTINGS: PetSettings = {
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
-  expression: 'none',
-  exprAngry: 0,
-  exprAngry2: 0,
-  exprCry: 0,
-  exprEye: 0,
 }
 
 function makeHarness(overrides: Partial<PetSettings> = {}) {
@@ -80,7 +75,7 @@ describe('PetService 状态机', () => {
     expect(view.config.model).toBe('jian')
     expect(view.config.events.idle.motions).toEqual(['Idle'])
     expect(view.config.events.thinking.motions).toEqual(['Tilt'])
-    expect(view.config.events.done.motions).toEqual([])
+    expect(view.config.events.done.motions).toEqual(['star'])
     // 默认台词池（无固定人设，中性口吻；长状态 3 阶段）
     expect(view.config.events.idle.lines.length).toBe(1)
     expect(view.config.events.thinking.lines.length).toBe(3)
@@ -100,8 +95,8 @@ describe('PetService 状态机', () => {
         expect(box.top).toBeLessThan(box.bottom)
       }
     }
-    // 默认不挂动作组（只出气泡），用户可在设置页挂 Idle
-    expect(parts[0].motions).toEqual([])
+    // 默认只有脸挂了表情（blush），其余部位只出气泡
+    expect(parts[0].motions).toEqual(['blush'])
     expect(parts[1].motions).toEqual([])
   })
 
@@ -122,10 +117,10 @@ describe('PetService 状态机', () => {
     const { service } = makeHarness()
     expect(service.snapshot().config.events.thinking.motions).toEqual(['Tilt'])
     service.saveTouchParts('jian', [], {
-      thinking: { motions: ['TapHead', 'Idle'], lines: [['自己想的台词']] },
+      thinking: { motions: ['TapHead', 'blush'], lines: [['自己想的台词']] },
     })
     const events = service.snapshot().config.events
-    expect(events.thinking.motions).toEqual(['TapHead', 'Idle'])
+    expect(events.thinking.motions).toEqual(['TapHead', 'blush'])
     expect(events.thinking.lines).toEqual([['自己想的台词']])
     // 未覆盖的事件保持默认
     expect(events.idle.motions).toEqual(['Idle'])

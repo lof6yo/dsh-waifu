@@ -28,7 +28,7 @@ export interface BuiltinPreset {
   touchParts?: TouchPart[]
 }
 
-/** 状态动画映射槽位：6 个宠物状态。每个槽位可配置一个或多个动作组；多选时随机选一个播放。 */
+/** 状态动画映射槽位：6 个宠物状态。每个槽位 = 一个动作组（可选）+ 一个表情（可选，见 MotionSelection）。 */
 export type AnimationSlot =
   | 'idle' | 'thinking' | 'error' | 'done' | 'waiting' | 'delivered'
 
@@ -39,18 +39,18 @@ export const ANIMATION_SLOTS: readonly AnimationSlot[] = [
 
 /**
  * 状态 → 候选动作组集合。
- * 值数组表示该槽位可用的动作组；未配置的槽位由 DEFAULT_MOTION_MAP 兜底。
+ * 值数组 = 该槽位的「动作组 / 表情」混选；未配置的槽位由 DEFAULT_MOTION_MAP 兜底。
  */
 export type MotionMap = Partial<Record<AnimationSlot, string[]>>
 
-/** 默认动画映射：与旧版内置候选链一致（有序 fallback；配置映射后为随机选择）。 */
+/** 默认动画映射：动作组 + 表情混选（表情 id 与动作组同列存放，见 MotionSelection）。 */
 export const DEFAULT_MOTION_MAP: MotionMap = {
   idle: ['Idle'],
-  thinking: ['Tilt', 'Idle'],
-  error: ['ShakeHead', 'Idle'],
-  done: ['Idle'],
-  waiting: ['Sway', 'Idle'],
-  delivered: ['Idle'],
+  thinking: ['Tilt'],
+  error: ['ShakeHead', 'angry'],
+  done: ['star'],
+  waiting: ['Sway'],
+  delivered: ['heart'],
 }
 
 /**
@@ -88,33 +88,63 @@ export const EXPRESSION_SWITCH_PARAMS: readonly string[] = [
   'ParamSwitch6', 'ParamSwitch7', 'ParamSwitch8', 'ParamSwitch9', 'ParamSwitch21',
 ]
 
-/**
- * 连续表情参数（设置页滑杆调强度，实时预览）：
- * 取值 0–1，与布尔开关叠加使用（例如「生气」+「生气抖动 0.4」）。
- */
-export interface ExpressionLevelDef {
-  /** 设置键（settings.jsonc 里的字段名）。 */
-  key: 'exprAngry' | 'exprAngry2' | 'exprCry' | 'exprEye'
-  name: string
-  /** 模型参数 id。 */
-  param: string
-  /** 说明文案（设置页提示）。 */
-  hint: string
-}
-
-/** 全部连续表情参数。 */
-export const EXPRESSION_LEVELS: readonly ExpressionLevelDef[] = [
-  { key: 'exprAngry', name: '生气抖动', param: 'AnimeAngry', hint: '配合「生气」表情：身体/头部发抖的强度' },
-  { key: 'exprAngry2', name: '生气冒火', param: 'AnimeAngry2', hint: '配合「生气」表情：冒火特效的强度' },
-  { key: 'exprCry', name: '眼泪流动', param: 'Anime_Cry', hint: '配合「泪花 / 眼泪」表情：流泪动画强度' },
-  { key: 'exprEye', name: '转圈眼', param: 'Anime_Eye', hint: '眼睛转圈（晕乎乎）的强度' },
-]
+/** 可选表情 id（不含 `none`）。 */
+export const EXPRESSION_IDS: readonly string[] = EXPRESSIONS
+  .filter((expression) => expression.id !== 'none')
+  .map((expression) => expression.id)
 
 /** 表情 id 是否合法（未知 id 回退 `none`）。 */
 export function normalizeExpressionId(value: unknown): string {
   if (typeof value !== 'string') return 'none'
   const id = value.trim()
   return EXPRESSIONS.some((expression) => expression.id === id) ? id : 'none'
+}
+
+/** 该名字是否是表情 id（「动作组」混选列表里靠它区分动作与表情）。 */
+export function isExpressionId(value: string): boolean {
+  return EXPRESSION_IDS.includes(value.trim())
+}
+
+/**
+ * 「动作组 / 表情」混选：事件绑定与触摸部位共用一套列表（ADR-023）。
+ * 语义 = 最多 1 个动作组 + 最多 1 个表情，同时触发；两项都可留空。
+ */
+export interface MotionSelection {
+  /** 动作组名（空 = 不播动作）。 */
+  motion: string
+  /** 表情 id（`none` = 不改表情）。 */
+  expression: string
+}
+
+/** 拆解混选数组；重复项取最后一个，未知表情名按动作组处理。 */
+export function splitMotionSelection(list: readonly unknown[]): MotionSelection {
+  let motion = ''
+  let expression = 'none'
+  for (const raw of list) {
+    if (typeof raw !== 'string') continue
+    const id = raw.trim()
+    if (!id) continue
+    if (isExpressionId(id)) expression = id
+    else if (!motion) motion = id
+  }
+  return { motion, expression }
+}
+
+/** 由动作组 + 表情拼出混选数组（顺序固定：动作组在前，空项省略）。 */
+export function joinMotionSelection(motion: string, expression: string): string[] {
+  const out: string[] = []
+  const name = typeof motion === 'string' ? motion.trim() : ''
+  if (name) out.push(name)
+  const expr = normalizeExpressionId(expression)
+  if (expr !== 'none') out.push(expr)
+  return out
+}
+
+/** 归一化混选数组（各自最多 1 项、顺序固定；非数组返回空）。 */
+export function normalizeMotionSelection(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const { motion, expression } = splitMotionSelection(raw)
+  return joinMotionSelection(motion, expression)
 }
 
 /** 宠物事件键（与状态动画槽位同构：空闲/思考/出错/完成/交付/等审批）。 */
@@ -124,16 +154,14 @@ export type PetEventKey = AnimationSlot
 export const PET_EVENTS: readonly PetEventKey[] = ANIMATION_SLOTS
 
 /**
- * 事件绑定：该事件播放的动作组候选 + 台词池。
- * - motions：随机选一个动作组播放（空 = 不播动作）
+ * 事件绑定：该事件触发的「动作组 / 表情」+ 台词池。
+ * - motions：混选数组（见 MotionSelection）——最多 1 个动作组 + 1 个表情，同时触发
  * - lines：台词池数组；普通事件只有 1 组，长状态（思考/等审批）按阶段 3 组
  *   （阶段推进时长见 EVENT_STAGE_DELAYS，index 越界时用最后一组）
  */
 export interface EventBinding {
   motions: string[]
   lines: string[][]
-  /** 进入该事件时切换到的表情 id（见 EXPRESSIONS）；缺省/`none` = 不改变表情。 */
-  expression?: string
 }
 
 /** 六个事件的绑定表。 */
@@ -150,7 +178,7 @@ export const MAX_LINES_PER_POOL = 20
 
 /**
  * 默认事件绑定：中性口吻的默认台词（不再有固定人设；后续可由 LLM 人设提示词接管）。
- * 动作组默认与 DEFAULT_MOTION_MAP 对齐；内置「简」在 presets.jsonc 用 animationMap 覆盖动作组。
+ * motions 末位的表情 id（angry/star/heart）与动作组同时触发。
  */
 export const DEFAULT_EVENT_BINDINGS: EventBindings = {
   idle: {
@@ -158,7 +186,7 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
     lines: [['（安静地待着）', '……在的。', '有什么要做的吗？']],
   },
   thinking: {
-    motions: ['Tilt', 'Idle'],
+    motions: ['Tilt'],
     lines: [
       ['思考中…', '让我想想。'],
       ['还在想，稍等…', '这个问题有点绕。'],
@@ -166,22 +194,19 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
     ],
   },
   error: {
-    motions: ['ShakeHead', 'Idle'],
+    motions: ['ShakeHead', 'angry'],
     lines: [['出错了…我再试一次。', '唔，好像不太顺利。']],
-    expression: 'angry',
   },
   done: {
-    motions: ['Idle'],
+    motions: ['star'],
     lines: [['搞定！', '完成了。', '做完啦。']],
-    expression: 'star',
   },
   delivered: {
-    motions: ['Idle'],
+    motions: ['heart'],
     lines: [['文件放这儿了。', '交付完成，请查收。']],
-    expression: 'heart',
   },
   waiting: {
-    motions: ['Sway', 'Idle'],
+    motions: ['Sway'],
     lines: [
       ['等你确认。', '需要你决定一下。'],
       ['还在等你哦。', '不着急，我等着。'],
@@ -190,13 +215,18 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
   },
 }
 
-/** 归一化单个事件绑定：motions 去空去重；lines 清洗为「阶段 → 台词数组」，至少 1 组。 */
+/**
+ * 归一化单个事件绑定：motions 收敛为「动作组 + 表情」混选（旧版 `expression` 字段并入）；
+ * lines 清洗为「阶段 → 台词数组」，至少 1 组。
+ */
 function normalizeEventBinding(raw: unknown): EventBinding | null {
   if (typeof raw !== 'object' || raw === null) return null
   const record = raw as { motions?: unknown; lines?: unknown; expression?: unknown }
-  const motions = Array.isArray(record.motions)
-    ? [...new Set(record.motions.filter((m): m is string => typeof m === 'string' && m.trim().length > 0).map((m) => m.trim()))]
-    : []
+  const legacyExpression = normalizeExpressionId(record.expression)
+  const motions = normalizeMotionSelection([
+    ...(Array.isArray(record.motions) ? record.motions : []),
+    ...(legacyExpression === 'none' ? [] : [legacyExpression]),
+  ])
   const rawLines = Array.isArray(record.lines) ? record.lines : []
   const lines: string[][] = []
   for (const pool of rawLines) {
@@ -211,8 +241,7 @@ function normalizeEventBinding(raw: unknown): EventBinding | null {
     if (lines.length >= 3) break
   }
   if (lines.length === 0) lines.push([])
-  const expression = normalizeExpressionId(record.expression)
-  return expression === 'none' ? { motions, lines } : { motions, lines, expression }
+  return { motions, lines }
 }
 
 /** 归一化用户事件绑定（只保留合法事件键；缺失事件不出现，由调用方回退默认/内置）。 */
@@ -255,7 +284,7 @@ export interface TouchBox {
  * - id：稳定标识（保存时生成，用于部位动画映射与排序）
  * - name：展示名（也是选台词池的提示词，如「头」「手」）
  * - boxes：一到多个矩形，命中任一即算该部位（多个矩形可拼出不规则部位）
- * - motions：触摸该部位时播放的动作组列表（随机选一个；空 = 不播动作，只出气泡）
+ * - motions：混选数组（见 MotionSelection）——最多 1 个动作组 + 1 个表情，点中即同时触发
  * - lines：该部位的自定义台词（一行一条，随机选一条）；留空 = 只播动作、不显示气泡
  *
  * 图层：部位列表（`TouchPart[]`）的顺序就是图层顺序，**第 0 项为最上层**；
@@ -268,8 +297,6 @@ export interface TouchPart {
   motions: string[]
   /** 可选：该部位的自定义台词（随机选一条）；空/缺省 = 只播动作、不显示气泡。 */
   lines?: string[]
-  /** 可选：点该部位时切到的表情 id（短时预览后回到事件/基础表情）；缺省/`none` = 不改表情。 */
-  expression?: string
 }
 
 /** 无默认触摸部位时的空表（用户未创建部位 → 点击不触发互动，spec §4）。 */
@@ -339,10 +366,11 @@ export function normalizeTouchParts(raw: unknown): TouchPart[] {
       if (box) boxes.push(box)
       if (boxes.length >= MAX_BOXES_PER_PART) break
     }
-    const rawMotions = Array.isArray(record.motions)
-      ? record.motions.filter((m): m is string => typeof m === 'string' && m.trim().length > 0).map((m) => m.trim())
-      : []
-    const motions = [...new Set(rawMotions)]
+    const legacyExpression = normalizeExpressionId(record.expression)
+    const motions = normalizeMotionSelection([
+      ...(Array.isArray(record.motions) ? record.motions : []),
+      ...(legacyExpression === 'none' ? [] : [legacyExpression]),
+    ])
     const rawLines = Array.isArray(record.lines)
       ? record.lines
         .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
@@ -353,8 +381,6 @@ export function normalizeTouchParts(raw: unknown): TouchPart[] {
     seen.add(id)
     const part: TouchPart = { id, name, boxes, motions }
     if (lines.length > 0) part.lines = lines
-    const expression = normalizeExpressionId(record.expression)
-    if (expression !== 'none') part.expression = expression
     out.push(part)
   }
   return out
