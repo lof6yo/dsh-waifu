@@ -133,6 +133,22 @@ describe('generateReply 推理模型兜底', () => {
   })
 })
 
+describe('generateReply 结束原因', () => {
+  it('把 finish.failure 带进错误码', async () => {
+    const llm: WaifuLlm = {
+      stream() {
+        return (async function* () {
+          yield { type: 'finish', reason: { kind: 'error', failure: { code: 'UNKNOWN_MODEL', message: 'no model x' } } }
+        })()
+      },
+    }
+    const attempt = await generateReply(llm, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })
+    expect(attempt.text).toBeNull()
+    expect(attempt.error).toContain('UNKNOWN_MODEL')
+    expect(attempt.error).toContain('no model x')
+  })
+})
+
 describe('savePersona', () => {
   it('写入人设文件并返回内容与路径', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))

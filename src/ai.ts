@@ -133,6 +133,16 @@ export interface ReplyAttempt {
   error?: string
 }
 
+/** 把 `finish.reason`（`{ kind, failure }` 或字符串）压成一句可读原因。 */
+function describeFinish(reason: unknown): string | undefined {
+  if (typeof reason === 'string') return reason
+  if (typeof reason !== 'object' || reason === null) return undefined
+  const record = reason as { kind?: unknown; failure?: { code?: unknown; message?: unknown } }
+  const parts = [record.kind, record.failure?.code, record.failure?.message]
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+  return parts.length === 0 ? undefined : parts.join(': ')
+}
+
 export async function generateReply(
   llm: WaifuLlm,
   options: {
@@ -166,7 +176,7 @@ export async function generateReply(
       let finish: string | undefined
       for await (const chunk of stream) {
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
-        else if (chunk.type === 'finish') finish = (chunk as { reason?: string }).reason
+        else if (chunk.type === 'finish') finish = describeFinish((chunk as { reason?: unknown }).reason)
       }
       const line = sanitizeLine(text)
       if (line) return { text: line }
