@@ -35,3 +35,4 @@
 | [027](027-bubble-max-lifetime.md) | 所有对白加最长显示时长（默认 30s）兜底，断流/丢出态不再永久常驻 | Accepted |
 | [028](028-ai-reply-failure-reason.md) | AI 回复失败原因回传 | Accepted |
 | [029](029-hot-path-batching-and-defaults.md) | 每帧浮层合批、配置读取缓存与默认值单一来源 | Accepted |
+| [030](030-ai-history-injection.md) | AI 演绎注入最近对话历史（条数可配，默认 10） | Accepted |

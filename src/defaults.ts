@@ -7,6 +7,8 @@
  * @module dsh-waifu/defaults
  */
 
+import { clampInt } from './clamp.ts'
+
 /** 显示/位置持久化默认值（`$DSH_HOME/waifu.json`，px 相对视口右下角）。 */
 export const DEFAULT_DISPLAY = { right: 24, bottom: 20, size: 240 } as const
 
@@ -29,6 +31,16 @@ export const DEFAULT_MODEL_ID = 'jian'
 /** AI 回复默认路由（DSH 已配置的 provider / 模型，ADR-025）。 */
 export const DEFAULT_AI_PROVIDER = 'deepseek-official'
 export const DEFAULT_AI_MODEL = 'deepseek-flash'
+/** 注入到 prompt 的最近对话条数（0 = 不注入；ADR-030）。 */
+export const DEFAULT_AI_HISTORY = 10
+
+/** 注入历史条数的边界（条 = 一条消息；0 = 不注入）。 */
+export const AI_HISTORY_LIMITS = { min: 0, max: 50 } as const
+
+/** 归一化注入条数：0–50 的整数，非法值回退默认（Host 归一化与设置页输入共用）。 */
+export function normalizeHistoryCount(value: unknown, fallback: number): number {
+  return clampInt(value, fallback, AI_HISTORY_LIMITS.min, AI_HISTORY_LIMITS.max)
+}
 
 /**
  * 标量设置默认值（除 `model`：模型 id 由内置 preset 目录动态决定）。
@@ -55,4 +67,5 @@ export const DEFAULT_SETTINGS = {
   aiTouchOnly: false,
   aiProvider: DEFAULT_AI_PROVIDER,
   aiModel: DEFAULT_AI_MODEL,
+  aiHistoryCount: DEFAULT_AI_HISTORY,
 } as const

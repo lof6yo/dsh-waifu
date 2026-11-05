@@ -38,7 +38,13 @@ import {
   normalizeEventBindings,
 } from '../models.ts'
 import { DEFAULT_LONG_AI } from '../models.ts'
-import { DEFAULT_MODEL_ID, DEFAULT_SETTINGS } from '../defaults.ts'
+import {
+  AI_HISTORY_LIMITS,
+  DEFAULT_AI_HISTORY,
+  DEFAULT_MODEL_ID,
+  DEFAULT_SETTINGS,
+  normalizeHistoryCount,
+} from '../defaults.ts'
 import { clientLog } from './client-log.ts'
 import { emitCaptureHome, emitRecenter } from './pet-commands.ts'
 import { emitTouchEdit } from './touch-edit.ts'
@@ -84,6 +90,8 @@ export interface PetSettingsValue {
   aiProvider: string
   /** AI 回复使用的模型 id。 */
   aiModel: string
+  /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10，ADR-030）。 */
+  aiHistoryCount: number
   /** 长状态「思考」AI 演绎节奏：入态延迟（秒）/ 间隔（秒）/ 每次入态上限（ADR-026）。 */
   thinkingAiDelay: number
   thinkingAiInterval: number
@@ -2611,6 +2619,24 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             disabled: aiChecking,
             onClick: () => checkAi(),
           }, aiChecking ? '测试中…' : '测试'),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '注入历史（条，0 = 不注入）'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'number',
+            min: AI_HISTORY_LIMITS.min,
+            max: AI_HISTORY_LIMITS.max,
+            step: 1,
+            value: value.aiHistoryCount,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeHistoryCount(e.target.value, DEFAULT_AI_HISTORY)
+              enqueueWrite(() => [{ op: 'set', path: ['aiHistoryCount'], value: next }])
+            },
+          }),
         ),
       ),
       !!aiCheckStatus && createElement('div', { style: formRowStyle },

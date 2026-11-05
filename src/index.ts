@@ -20,6 +20,7 @@ import type {} from '@deepseek-ai/dsh-llm'
 import { PetService } from './service.ts'
 import { DEFAULT_LONG_AI } from './models.ts'
 import {
+  DEFAULT_AI_HISTORY,
   DEFAULT_AI_MODEL,
   DEFAULT_AI_PROVIDER,
   DEFAULT_BUBBLE_BG_COLOR,
@@ -42,7 +43,16 @@ import {
   type InteractRoutesApi,
   type SettingsRoutesApi,
 } from './routes.ts'
-import { generateReply, loadPersona, personaPath, savePersona } from './ai.ts'
+import {
+  AI_HISTORY_MAX_ENTRIES,
+  appendHistory,
+  buildSceneMessage,
+  generateReply,
+  loadPersona,
+  personaPath,
+  savePersona,
+  type AiHistoryEntry,
+} from './ai.ts'
 import {
   defaultModelId,
   listBuiltinPresets,
@@ -119,6 +129,8 @@ export const Config: Schema<Config> = Schema.object({
   aiTouchOnly: Schema.boolean().default(DEFAULT_SETTINGS.aiTouchOnly),
   aiProvider: Schema.string().default(DEFAULT_AI_PROVIDER),
   aiModel: Schema.string().default(DEFAULT_AI_MODEL),
+  /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
+  aiHistoryCount: Schema.number().min(0).max(50).default(DEFAULT_AI_HISTORY),
   // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
   thinkingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.thinking.delay),
   thinkingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.thinking.interval),
@@ -160,6 +172,7 @@ export function apply(ctx: Context, config: Config): void {
     aiTouchOnly: config.aiTouchOnly,
     aiProvider: config.aiProvider,
     aiModel: config.aiModel,
+    aiHistoryCount: config.aiHistoryCount,
     thinkingAiDelay: config.thinkingAiDelay,
     thinkingAiInterval: config.thinkingAiInterval,
     thinkingAiMax: config.thinkingAiMax,
@@ -185,6 +198,8 @@ export function apply(ctx: Context, config: Config): void {
   // AI 回复（ADR-025）：复用 DSH 已配置的 provider/model 与账号，人设读 $DSH_HOME/waifu/persona.md。
   // 冷却：同类触发（tap/state）1.2s 内只回一次，避免连点刷屏与刷 token。
   let lastAiAt = 0
+  // 最近对话（ADR-030）：只存内存，进程重启即清空；条数由设置页 `aiHistoryCount` 决定注入多少
+  let aiHistory: AiHistoryEntry[] = []
   const aiApi: InteractRoutesApi = {
     reply: async (input) => {
       const settings = settingsStore.get()
@@ -197,8 +212,15 @@ export function apply(ctx: Context, config: Config): void {
         model: settings.aiModel,
         persona: loadPersona(dirname(settingsStore.path)),
         context: input,
+        history: aiHistory,
+        historyCount: settings.aiHistoryCount,
       })
-      if (attempt.text) return { ok: true, text: attempt.text }
+      if (attempt.text) {
+        // 只记录成功的往来：失败的请求不该污染上下文
+        aiHistory = appendHistory(aiHistory, { role: 'user', text: buildSceneMessage(input) })
+        aiHistory = appendHistory(aiHistory, { role: 'assistant', text: attempt.text }, AI_HISTORY_MAX_ENTRIES)
+        return { ok: true, text: attempt.text }
+      }
       // 失败原因回传（ADR-028）：设置页/排查时能直接看到是「没配 provider」还是「模型空回复」
       return { ok: false, error: `no-reply: ${attempt.error ?? 'unknown'}` }
     },

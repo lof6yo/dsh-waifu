@@ -3,16 +3,21 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  AI_HISTORY_LIMITS,
+  AI_HISTORY_MAX_ENTRIES,
   DEFAULT_PERSONA,
   MAX_PERSONA_CHARS,
   MAX_REPLY_CHARS,
   PERSONA_FILENAME,
+  appendHistory,
   buildSceneMessage,
   generateReply,
+  historyMessages,
   loadPersona,
   personaPath,
   sanitizeLine,
   savePersona,
+  type AiHistoryEntry,
   type WaifuLlm,
   type WaifuLlmRequest,
 } from './ai.ts'
@@ -166,5 +171,56 @@ describe('savePersona', () => {
     expect(savePersona(dir, long).text.length).toBe(MAX_PERSONA_CHARS)
     expect(loadPersona(dir).length).toBe(MAX_PERSONA_CHARS)
     rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('最近对话注入（ADR-030）', () => {
+  const history: AiHistoryEntry[] = [
+    { role: 'user', text: '第 1 句' },
+    { role: 'assistant', text: '第 2 句' },
+    { role: 'user', text: '第 3 句' },
+    { role: 'assistant', text: '第 4 句' },
+  ]
+
+  it('条数为 0 时不注入', () => {
+    expect(historyMessages(history, 0)).toHaveLength(0)
+    expect(historyMessages([], 10)).toHaveLength(0)
+  })
+
+  it('按条数取最近若干条，且丢掉开头没有提问的 assistant', () => {
+    expect(historyMessages(history, 2)).toHaveLength(2)
+    expect(historyMessages(history, 2)[0].role).toBe('user')
+    // 取 1 条时末尾是 assistant → 整段丢弃（避免以 assistant 开头的上下文）
+    expect(historyMessages(history, 1)).toHaveLength(0)
+    expect(historyMessages(history, 99)).toHaveLength(4)
+  })
+
+  it('注入内容排在当前情景之前', async () => {
+    const llm = fakeLlm(['好'])
+    await generateReply(llm, {
+      provider: 'p',
+      model: 'm',
+      persona: '人设',
+      context: { kind: 'tap', part: '脸' },
+      history,
+      historyCount: 2,
+    })
+    const messages = llm.calls[0].messages
+    expect(messages).toHaveLength(3)
+    expect(messages[0].role).toBe('user')
+    expect(messages[1].role).toBe('assistant')
+    expect(messages[2].role).toBe('user')
+    expect(JSON.stringify(messages[0])).toContain('第 3 句')
+    expect(JSON.stringify(messages[2])).toContain('主人刚戳了你的「脸」')
+  })
+
+  it('历史只保留上限条数，且默认上限等于 limits.max', () => {
+    expect(AI_HISTORY_MAX_ENTRIES).toBe(AI_HISTORY_LIMITS.max)
+    let list: AiHistoryEntry[] = []
+    for (let i = 0; i < AI_HISTORY_LIMITS.max + 20; i += 1) {
+      list = appendHistory(list, { role: i % 2 === 0 ? 'user' : 'assistant', text: `t${i}` })
+    }
+    expect(list).toHaveLength(AI_HISTORY_LIMITS.max)
+    expect(list[list.length - 1].text).toBe(`t${AI_HISTORY_LIMITS.max + 19}`)
   })
 })

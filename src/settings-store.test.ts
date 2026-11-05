@@ -27,6 +27,7 @@ const BASE: PetSettings = {
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
+  aiHistoryCount: 10,
   thinkingAiDelay: 3,
   thinkingAiInterval: 20,
   thinkingAiMax: 3,
@@ -246,5 +247,16 @@ describe('SettingsStore 读取缓存（B1）', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('注入历史条数（ADR-030）', () => {
+  it('默认 10；越界夹到 0–50；非法值回退 base', () => {
+    expect(normalizeSettings({}, BASE).aiHistoryCount).toBe(BASE.aiHistoryCount)
+    expect(normalizeSettings({ aiHistoryCount: 25 }, BASE).aiHistoryCount).toBe(25)
+    expect(normalizeSettings({ aiHistoryCount: 999 }, BASE).aiHistoryCount).toBe(50)
+    expect(normalizeSettings({ aiHistoryCount: -3 }, BASE).aiHistoryCount).toBe(0)
+    expect(normalizeSettings({ aiHistoryCount: 'abc' }, BASE).aiHistoryCount).toBe(BASE.aiHistoryCount)
+    expect(BASE.aiHistoryCount).toBe(10)
   })
 })

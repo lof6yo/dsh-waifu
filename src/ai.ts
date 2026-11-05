@@ -10,6 +10,9 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { AI_HISTORY_LIMITS, normalizeHistoryCount } from './defaults.ts'
+
+export { AI_HISTORY_LIMITS, normalizeHistoryCount }
 
 /** 一句台词的长度上限（UTF-16 单元；气泡宽度有限，spec §4）。 */
 export const MAX_REPLY_CHARS = 60
@@ -61,6 +64,42 @@ export interface ReplyContext {
   state?: string
   /** 该部位/事件原本会说的一句话（作为语气参考，不要求复述）。 */
   hint?: string
+}
+
+/** 注入给模型的最近对话条数上限（防止超长历史把 token 预算吃满）。 */
+export const AI_HISTORY_MAX_ENTRIES: number = AI_HISTORY_LIMITS.max
+
+/** 一条对话历史（`user` = 我们发过去的情景描述，`assistant` = 桌宠当时的台词）。 */
+export interface AiHistoryEntry {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+/**
+ * 把历史切成 `messages` 段：取最近 `count` 条，并丢掉开头没有配对提问的 assistant 条目
+ * （模型不喜欢以 assistant 开头的上下文）。
+ */
+export function historyMessages(
+  history: readonly AiHistoryEntry[],
+  count: number,
+): { role: string; content: { type: 'text'; text: string }[] }[] {
+  const limit = normalizeHistoryCount(count, 0)
+  if (limit <= 0 || history.length === 0) return []
+  const tail = history.slice(-limit)
+  while (tail.length > 0 && tail[0].role === 'assistant') tail.shift()
+  return tail
+    .filter((entry) => entry.text.trim().length > 0)
+    .map((entry) => ({ role: entry.role, content: [{ type: 'text' as const, text: entry.text }] }))
+}
+
+/** 追加一条历史并按上限裁剪（原地返回新数组，调用方负责替换引用）。 */
+export function appendHistory(
+  history: readonly AiHistoryEntry[],
+  entry: AiHistoryEntry,
+  max = AI_HISTORY_MAX_ENTRIES,
+): AiHistoryEntry[] {
+  const next = [...history, entry]
+  return next.length > max ? next.slice(next.length - max) : next
 }
 
 /** 人设文件的人设长度上限（字符）：够写一大段设定，也挡住误粘贴的超大文本。 */
@@ -151,6 +190,9 @@ export async function generateReply(
     persona: string
     context: ReplyContext
     timeoutMs?: number
+    /** 最近对话历史（按 `historyCount` 取末尾若干条注入；ADR-030）。 */
+    history?: readonly AiHistoryEntry[]
+    historyCount?: number
   },
 ): Promise<ReplyAttempt> {
   const timeoutMs = options.timeoutMs ?? 15_000
@@ -165,7 +207,10 @@ export async function generateReply(
 
 输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
 不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`,
-        messages: [{ role: 'user', content: [{ type: 'text', text: buildSceneMessage(options.context) }] }],
+        messages: [
+          ...historyMessages(options.history ?? [], options.historyCount ?? 0),
+          { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context) }] },
+        ],
         temperature: 1,
         maxTokens: 120,
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),

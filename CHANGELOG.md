@@ -10,6 +10,10 @@
 - **`applyBubbleStyle` 加样式签名短路**：SSE 每条消息都会调它，值没变不写 style。
 - **Host 配置读取带缓存**：`settings.jsonc` / `touch-parts.jsonc` 以 `mtimeMs:size` 判缓存，`snapshot()` 从每次 3 次读盘 + JSONC 解析降到 0–1 次。
 
+### Added
+
+- **AI 演绎注入最近对话历史**（ADR-030）：Host 侧维护一份内存环形缓冲（情景描述 + 当时真正上屏的台词），请求时把最近 N 条拼在当前情景之前一起发给模型，连续触摸/状态流转的台词能接住上文、不再每次都像第一次见；设置页「AI 回复」新增「注入历史（条，0 = 不注入）」，默认 10、上限 50，0 = 完全恢复旧行为；只记录成功的往来，自检请求不污染历史
+
 ### Changed
 
 - **默认值收敛到单一来源**（`src/defaults.ts`）：Config schema、设置页兜底、客户端渲染兜底、`waifu.json` 默认位置全部引用同一份常量，`defaults.test.ts` 校验一致；数值边界统一走 `src/clamp.ts`，插件私有路径统一走 `src/home.ts`。

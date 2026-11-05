@@ -64,6 +64,8 @@ export interface PetStateView {
     /** AI 回复用的 provider 路由与模型 id（设置页下拉选中的值，快照透传给宠物半边）。 */
     aiProvider: string
     aiModel: string
+    /** 注入到 prompt 的最近对话条数（0 = 不注入，ADR-030）。 */
+    aiHistoryCount: number
     /** 长状态 AI 演绎节奏（秒/秒/次，ADR-026）。 */
     thinkingAiDelay: number
     thinkingAiInterval: number
@@ -232,6 +234,7 @@ export class PetService {
         aiTouchOnly: settings.aiTouchOnly,
         aiProvider: settings.aiProvider,
         aiModel: settings.aiModel,
+        aiHistoryCount: settings.aiHistoryCount,
         thinkingAiDelay: settings.thinkingAiDelay,
         thinkingAiInterval: settings.thinkingAiInterval,
         thinkingAiMax: settings.thinkingAiMax,

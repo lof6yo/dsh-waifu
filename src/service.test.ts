@@ -29,6 +29,7 @@ const BASE_SETTINGS: PetSettings = {
   aiTouchOnly: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
+  aiHistoryCount: 10,
   thinkingAiDelay: 3,
   thinkingAiInterval: 20,
   thinkingAiMax: 3,
