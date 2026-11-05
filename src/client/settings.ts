@@ -367,14 +367,21 @@ const GAP = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, section: 28 } as const
 
 /** Section：标题 15/600 primary + 说明 12 secondary + 右侧可选操作，组间距 28。 */
 const sectionStyle: CSSProperties = { marginTop: GAP.section }
+/** 分组头：标题行（标题 + 右侧操作）在上，说明独占整行宽度在下方。 */
 const sectionHeaderStyle: CSSProperties = {
   display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: GAP.sm,
+  flexDirection: 'column',
+  alignItems: 'stretch',
+  gap: 0,
   marginBottom: GAP.sm,
 }
-const sectionHeaderMainStyle: CSSProperties = { flex: 1, minWidth: 0 }
+const sectionHeaderTitleRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: GAP.sm,
+  minWidth: 0,
+}
 const sectionHeadingStyle: CSSProperties = {
   margin: 0,
   fontSize: 15,
@@ -401,11 +408,11 @@ const cardHeadingStyle: CSSProperties = {
 function SectionHeader(props: { title: string; description?: ReactNode; action?: ReactNode }): ReactElement {
   const { title, description, action } = props
   return createElement('div', { style: sectionHeaderStyle },
-    createElement('div', { style: sectionHeaderMainStyle },
+    createElement('div', { style: sectionHeaderTitleRowStyle },
       createElement('h3', { style: sectionHeadingStyle }, title),
-      description !== undefined ? createElement('div', { style: sectionDescStyle }, description) : null,
+      action !== undefined ? createElement('div', { style: sectionHeaderActionStyle }, action) : null,
     ),
-    action !== undefined ? createElement('div', { style: sectionHeaderActionStyle }, action) : null,
+    description !== undefined ? createElement('div', { style: sectionDescStyle }, description) : null,
   )
 }
 
