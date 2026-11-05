@@ -86,6 +86,8 @@ export interface PetSettingsValue {
   aiEnabled: boolean
   /** 仅触摸：状态变化只走预置台词，AI 只在触摸时发言。 */
   aiTouchOnly: boolean
+  /** 全 AI 接管（ADR-031）：不显示预置对白；长状态延迟失效、入态即请求模型。 */
+  aiTakeover: boolean
   /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider）。 */
   aiProvider: string
   /** AI 回复使用的模型 id。 */
@@ -2515,12 +2517,30 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             value.aiTouchOnly ? '状态变化只用预置台词（状态切换太快，AI 来不及说完）' : '状态变化也会请 AI 说一句'),
         ),
       ),
+      // 全 AI 接管（ADR-031）：固定对白一律不出，气泡全靠模型；长状态的「延迟」随之失效
+      createElement('div', { style: formRowStyle },
+        createElement('label', { style: formLabelStyle }, '全 AI 接管'),
+        createElement('div', { style: formControlStyle },
+          createElement(ThemeSwitch, {
+            checked: !!value.aiTakeover,
+            disabled: !writable,
+            onChange: (next) => {
+              enqueueWrite(() => [{ op: 'set', path: ['aiTakeover'], value: next }])
+            },
+          }),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 } },
+            value.aiTakeover
+              ? '不显示固定对白，气泡只等模型（人设 + 场景 + 历史）；长状态入态即请求，延迟失效'
+              : '固定对白先出、AI 台词到了再替换'),
+        ),
+      ),
       // 长状态 AI 演绎节奏（ADR-026）：思考/等确认各自一套「延迟 / 间隔 / 次数」
       ...(['thinking', 'waiting'] as const).map((state) => {
         const keys = state === 'thinking'
           ? { delay: 'thinkingAiDelay', interval: 'thinkingAiInterval', max: 'thinkingAiMax' }
           : { delay: 'waitingAiDelay', interval: 'waitingAiInterval', max: 'waitingAiMax' }
         const title = state === 'thinking' ? '思考' : '等确认'
+        const takeoverDelayDisabled = !!value.aiTakeover
         const commit = (key: keyof PetSettingsValue, raw: string, min: number, max: number): void => {
           const parsed = Number(raw)
           if (!Number.isFinite(parsed)) return
@@ -2542,8 +2562,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             max,
             step: 1,
             defaultValue: value[key] as number,
-            style: { ...inputStyle, width: 64, padding: '4px 6px' },
-            disabled: !writable,
+            style: { ...inputStyle, width: 64, padding: '4px 6px', opacity: takeoverDelayDisabled ? 0.5 : 1 },
+            // 全 AI 接管下「延迟」不再生效（入态立刻请求），置灰避免误以为还能调
+            disabled: !writable || (takeoverDelayDisabled && key === keys.delay),
             onBlur: (e: FocusEvent<HTMLInputElement>) => commit(key, e.target.value, min, max),
           }),
           createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, unit),

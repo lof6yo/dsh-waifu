@@ -25,6 +25,7 @@ const BASE: PetSettings = {
   bubbleMaxSeconds: 30,
   aiEnabled: false,
   aiTouchOnly: false,
+  aiTakeover: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,
@@ -112,6 +113,15 @@ describe('SettingsStore', () => {
     expect(store.path).toBe(join(home, 'waifu', SETTINGS_FILENAME))
     expect(store.get()).toEqual(BASE)
     expect(readFileSync(store.path, 'utf8')).toContain('桌宠设置文件')
+  })
+
+  it('aiTakeover 默认关、可写、非法值回落 false', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().aiTakeover).toBe(false)
+    store.applyOps([{ op: 'set', path: ['aiTakeover'], value: true }])
+    expect(store.get().aiTakeover).toBe(true)
+    store.applyOps([{ op: 'set', path: ['aiTakeover'], value: 'yes' }])
+    expect(store.get().aiTakeover).toBe(false)
   })
 
   it('aiTouchOnly 默认关、可写、非法值回落 false', () => {

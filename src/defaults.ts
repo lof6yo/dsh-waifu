@@ -65,6 +65,8 @@ export const DEFAULT_SETTINGS = {
   bubbleTextColor: DEFAULT_BUBBLE_TEXT_COLOR,
   aiEnabled: true,
   aiTouchOnly: false,
+  /** 全 AI 接管：不显示任何预置对白，气泡全靠模型；长状态延迟失效、入态即请求（ADR-031）。 */
+  aiTakeover: false,
   aiProvider: DEFAULT_AI_PROVIDER,
   aiModel: DEFAULT_AI_MODEL,
   aiHistoryCount: DEFAULT_AI_HISTORY,

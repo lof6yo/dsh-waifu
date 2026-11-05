@@ -61,6 +61,7 @@ export interface PetStateView {
     /** AI 回复开关（ADR-025）。 */
     aiEnabled: boolean
     aiTouchOnly: boolean
+    aiTakeover: boolean
     /** AI 回复用的 provider 路由与模型 id（设置页下拉选中的值，快照透传给宠物半边）。 */
     aiProvider: string
     aiModel: string
@@ -232,6 +233,7 @@ export class PetService {
         bubbleTextColor: settings.bubbleTextColor,
         aiEnabled: settings.aiEnabled,
         aiTouchOnly: settings.aiTouchOnly,
+        aiTakeover: settings.aiTakeover,
         aiProvider: settings.aiProvider,
         aiModel: settings.aiModel,
         aiHistoryCount: settings.aiHistoryCount,

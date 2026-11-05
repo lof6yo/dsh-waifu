@@ -128,6 +128,7 @@ export const Config: Schema<Config> = Schema.object({
   bubbleTextColor: Schema.string().default(DEFAULT_BUBBLE_TEXT_COLOR),
   aiEnabled: Schema.boolean().default(DEFAULT_SETTINGS.aiEnabled),
   aiTouchOnly: Schema.boolean().default(DEFAULT_SETTINGS.aiTouchOnly),
+  aiTakeover: Schema.boolean().default(DEFAULT_SETTINGS.aiTakeover),
   aiProvider: Schema.string().default(DEFAULT_AI_PROVIDER),
   aiModel: Schema.string().default(DEFAULT_AI_MODEL),
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
@@ -171,6 +172,7 @@ export function apply(ctx: Context, config: Config): void {
     bubbleTextColor: config.bubbleTextColor,
     aiEnabled: config.aiEnabled,
     aiTouchOnly: config.aiTouchOnly,
+    aiTakeover: config.aiTakeover,
     aiProvider: config.aiProvider,
     aiModel: config.aiModel,
     aiHistoryCount: config.aiHistoryCount,

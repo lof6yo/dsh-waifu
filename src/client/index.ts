@@ -451,6 +451,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let aiEnabled = false
   /** 仅触摸（SSE config.aiTouchOnly）：开启后状态气泡只用预置台词，AI 只在触摸时发言。 */
   let aiTouchOnly = false
+  /**
+   * 全 AI 接管（SSE config.aiTakeover；ADR-031）：不显示任何预置对白，气泡内容全部来自模型；
+   * 长状态的「延迟」失效——入态立刻请求一句，之后仍按间隔/上限反复演绎。
+   */
+  let aiTakeover = false
   /** 长状态 AI 演绎节奏（SSE config.*AiDelay/Interval/Max，秒/秒/次；ADR-026）。 */
   let thinkingAiDelay = 3
   let thinkingAiInterval = 20
@@ -736,7 +741,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function enterLongState(state: LongState, hint: string | undefined): void {
     clearLongState()
     longState = state
-    bubbleStickyText = hint ?? null
+    // 全 AI 接管：预置对白整段不出（连常驻底稿也留空），气泡只等模型那句
+    const takeover = aiTakeover && aiEnabled
+    bubbleStickyText = takeover ? null : hint ?? null
     if (bubbleStickyText === null) hideBubble()
     else showStickyText()
     if (!aiEnabled || aiTouchOnly) return
@@ -746,12 +753,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const tick = (): void => {
       if (longState !== state) return
       attempts += 1
-      void requestAiReply({ kind: 'state', state, hint }, { sticky: true })
+      void requestAiReply({ kind: 'state', state, hint: takeover ? undefined : hint }, { sticky: true })
       if (attempts < cadence.max) {
         longAiTimers.push(window.setTimeout(tick, cadence.interval * 1000))
       }
     }
-    longAiTimers.push(window.setTimeout(tick, cadence.delay * 1000))
+    // 接管模式下「延迟」不生效：入态立刻问模型（设置页对应输入框会置灰）
+    longAiTimers.push(window.setTimeout(tick, takeover ? 0 : cadence.delay * 1000))
   }
 
   /** canvas 的视口 rect 缓存：pointermove 每次都要用，不能每次读布局。 */
@@ -870,9 +878,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         enterLongState(state, line)
       } else {
         clearLongState()
-        if (line !== undefined) showBubble(line)
+        // 全 AI 接管：预置对白不显示，气泡留给模型（失败也不回落到固定台词）
+        const takeover = aiTakeover && aiEnabled
+        if (takeover) hideBubble()
+        else if (line !== undefined) showBubble(line)
         else hideBubble()
-        if (state !== 'idle') void requestAiReply({ kind: 'state', state, hint: line })
+        if (state !== 'idle') {
+          void requestAiReply({ kind: 'state', state, hint: takeover ? undefined : line })
+        }
       }
       playState(state)
     }
@@ -1876,6 +1889,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       : DEFAULT_BUBBLE_TEXT_COLOR
     aiEnabled = cfg.aiEnabled === true
     aiTouchOnly = cfg.aiTouchOnly === true
+    aiTakeover = cfg.aiTakeover === true
     applyLongAiConfig(cfg)
     applyBubbleMaxConfig(cfg)
     applyBubbleStyle()
@@ -1994,7 +2008,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 台词：该部位自定义台词（part.lines）非空时随机选一条，并避开该部位上一条
       // （按 part.id 记录，部位间互不干扰）；未配置台词 → 不显示气泡，只播部位动作（spec §4）。
       let spoken: string | undefined
-      if (part.lines && part.lines.length > 0) {
+      // 全 AI 接管：部位预置台词不显示也不作为 hint，完全交给模型（persona + 场景 + 历史）
+      const takeover = aiTakeover && aiEnabled
+      if (!takeover && part.lines && part.lines.length > 0) {
         const line = pickLine(part.lines, lastPartLine.get(part.id))
         if (line !== undefined) {
           lastPartLine.set(part.id, line)
@@ -2003,7 +2019,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         }
       }
       // AI 回复（ADR-025）：预置台词先出、AI 台词到了再替换（失败即保持预置台词）
-      void requestAiReply({ kind: 'tap', part: part.name, hint: spoken })
+      void requestAiReply({ kind: 'tap', part: part.name, hint: takeover ? undefined : spoken })
       // 动作组 / 表情：部位混选里 1 个动作组 + 若干表情；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
       const selection = splitMotionSelection(part.motions)
       if (selection.expressions.length > 0) {
@@ -2058,6 +2074,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           : DEFAULT_BUBBLE_TEXT_COLOR
         aiEnabled = view.config.aiEnabled === true
         aiTouchOnly = view.config.aiTouchOnly === true
+        aiTakeover = view.config.aiTakeover === true
         applyLongAiConfig(view.config)
         applyBubbleMaxConfig(view.config)
       }

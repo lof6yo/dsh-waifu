@@ -36,3 +36,4 @@
 | [028](028-ai-reply-failure-reason.md) | AI 回复失败原因回传 | Accepted |
 | [029](029-hot-path-batching-and-defaults.md) | 每帧浮层合批、配置读取缓存与默认值单一来源 | Accepted |
 | [030](030-ai-history-injection.md) | AI 演绎注入最近对话历史（条数可配，默认 10） | Accepted |
+| [031](031-ai-takeover.md) | 全 AI 接管：不显示固定对白，长状态延迟失效、入态即请求模型 | Accepted |

@@ -63,6 +63,7 @@ const BASE_SETTINGS: PetSettings = {
   bubbleMaxSeconds: 30,
   aiEnabled: false,
   aiTouchOnly: false,
+  aiTakeover: false,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,
