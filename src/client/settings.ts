@@ -2389,7 +2389,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['bubbleTextColor'], value: next }])
             },
           }),
-          createElement('span', { style: { ...formLabelInlineStyle, flex: '0 0 auto' } }, `${bubbleBgColor} / ${bubbleTextColor}`),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
@@ -2427,12 +2426,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             createElement('option', { value: 'mutual' }, '互相打断'),
             createElement('option', { value: 'event-first' }, '事件优先'),
           ),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginLeft: 8 } },
-            value.interactionMode === 'event-first'
-              ? '触摸不打断长状态演绎（只播自己的动作 / 表情与台词）'
-              : value.interactionMode === 'mutual'
-                ? '触摸立刻接管，状态一变也立刻收回'
-                : '触摸立刻接管，长状态演绎等触摸结束后再继续'),
         ),
       ),
     ),
