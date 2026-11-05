@@ -66,7 +66,8 @@ import {
   resolveMotionMap,
 } from './models-host.ts'
 import { SettingsStore, type PetSettings } from './settings-store.ts'
-import { OpenRouterTtsEngine, type TtsAudio, type TtsVoiceOptions } from './tts.ts'
+import { OPENROUTER_SPEECH_URL } from './tts.ts'
+import { OpenRouterTtsEngine, type TtsAudio, type TtsPayload, type TtsVoiceOptions } from './tts.ts'
 import { runSpeakPipeline } from './speak.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
@@ -230,6 +231,9 @@ export function apply(ctx: Context, config: Config): void {
   let aiHistory: AiHistoryEntry[] = []
   // 最近一次真正发给模型的载荷（排查注入是否生效；ADR-030 追加 /ai-debug）
   let lastAiPayload: AiPayload | null = null
+  let lastTtsPayload: TtsPayload | null = null
+  let lastSpeakPayload: TtsPayload | null = null
+  let payloadSink: 'tts' | 'speak' = 'tts'
   const aiApi: InteractRoutesApi = {
     reply: async (input) => {
       const settings = settingsStore.get()
@@ -279,6 +283,8 @@ export function apply(ctx: Context, config: Config): void {
       history: aiHistory,
       historyCount: settingsStore.get().aiHistoryCount,
       lastPayload: lastAiPayload,
+      lastTtsPayload,
+      lastSpeakPayload,
     }),
     options: async () => {
       const providers = ctx.llm.listProviders().map((p) => ({ id: p.id, name: p.name }))
@@ -329,7 +335,17 @@ export function apply(ctx: Context, config: Config): void {
       return undefined
     }
   }
-  const ttsEngine = new OpenRouterTtsEngine(resolveOpenRouterKey, dirname(settingsStore.path))
+  const ttsEngine = new OpenRouterTtsEngine(
+    resolveOpenRouterKey,
+    dirname(settingsStore.path),
+    fetch,
+    OPENROUTER_SPEECH_URL,
+    (payload) => {
+      // /speak 流与 /tts 试听分开记，方便对照同一次调用的两条请求
+      if (payloadSink === 'speak') lastSpeakPayload = payload
+      else lastTtsPayload = payload
+    },
+  )
   const voiceOptions = (): TtsVoiceOptions => {
     const settings = settingsStore.get()
     return {
@@ -341,6 +357,7 @@ export function apply(ctx: Context, config: Config): void {
   const speakApi: SpeakRoutesApi = {
     // 排查用单段合成：设置页「试听」与 curl 都走这里
     synthesize: async (text) => {
+      payloadSink = 'tts'
       const audio = await ttsEngine.synthesize(text, voiceOptions())
       return { mime: audio.mime, audio: audio.audio }
     },
@@ -370,6 +387,7 @@ export function apply(ctx: Context, config: Config): void {
         signal,
       })
       const speakOptions = voiceOptions()
+      payloadSink = 'speak'
       const synthesize = async (text: string): Promise<TtsAudio | null> => {
         if (!speakOn || signal.aborted) return null
         try {

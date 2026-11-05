@@ -6,10 +6,12 @@ import {
   OpenRouterTtsEngine,
   splitClauses,
   ttsCacheKey,
+  type TtsPayload,
   type TtsVoiceOptions,
 } from '../src/tts.ts'
 
-const VOICE: TtsVoiceOptions = { model: 'fish-audio/drama-3', voice: '' }
+const VOICE: TtsVoiceOptions = { model: 'qwen/qwen-audio-3.0-tts-plus', voice: 'longanlingxin' }
+const tmpDirs: string[] = []
 
 describe('splitClauses', () => {
   it('按句读切分并保留标点', () => {
@@ -91,4 +93,30 @@ describe('OpenRouterTtsEngine', () => {
     const engine = new OpenRouterTtsEngine(async () => 'sk-test', home, fetcher)
     await expect(engine.synthesize('你好', VOICE)).rejects.toThrow('tts-http 400: bad voice')
   }))
+})
+
+describe('onPayload 排查钩子', () => {
+  it('发请求前回报 body（含 model/voice/input），命中缓存标 cached', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-waifu-tts-payload-'))
+    const seen: TtsPayload[] = []
+    const fetcher = (async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch
+    const engine = new OpenRouterTtsEngine(async () => 'k', home, fetcher, undefined, (p) => seen.push(p))
+    tmpDirs.push(home)
+    try {
+      await engine.synthesize('哼。', { model: 'qwen/qwen-audio-3.0-tts-plus', voice: 'longanlingxin' })
+      expect(seen).toHaveLength(1)
+      expect(seen[0].cached).toBe(false)
+      expect(seen[0].body).toEqual({
+        model: 'qwen/qwen-audio-3.0-tts-plus',
+        input: '哼。',
+        response_format: 'mp3',
+        voice: 'longanlingxin',
+      })
+      expect(seen[0].endpoint).toContain('/api/v1/audio/speech')
+      await engine.synthesize('哼。', { model: 'qwen/qwen-audio-3.0-tts-plus', voice: 'longanlingxin' })
+      expect(seen[1].cached).toBe(true)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
 })

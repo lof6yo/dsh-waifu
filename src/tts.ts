@@ -92,6 +92,15 @@ export interface TtsVoiceOptions {
   voice?: string
 }
 
+/** 一次实际发出的合成请求（排查用：设置页/curl 能直接看到发给供应商的 body）。 */
+export interface TtsPayload {
+  endpoint: string
+  /** 发出去的 JSON body（audio 不在这里，只记请求）。 */
+  body: { model: string; input: string; response_format?: string; voice?: string }
+  /** 是否命中本地缓存（命中时不会真的发请求）。 */
+  cached: boolean
+}
+
 /** 合成结果。 */
 export interface TtsAudio {
   /** MIME（目前总是 audio/mpeg）。 */
@@ -160,6 +169,8 @@ export class OpenRouterTtsEngine implements TtsEngine {
     private readonly cacheHome: string,
     private readonly fetcher: typeof fetch = fetch,
     private readonly endpoint: string = OPENROUTER_SPEECH_URL,
+    /** 排查钩子：每次合成前把要发的 body 报出去（缓存的也报，标 cached）。 */
+    private readonly onPayload?: (payload: TtsPayload) => void,
   ) {}
 
   async synthesize(text: string, options: TtsVoiceOptions, signal?: AbortSignal): Promise<TtsAudio> {
@@ -168,7 +179,14 @@ export class OpenRouterTtsEngine implements TtsEngine {
     const key = ttsCacheKey(trimmed, options)
     const dir = ttsCacheDir(this.cacheHome)
     const hit = await readCache(dir, key)
-    if (hit) return { mime: 'audio/mpeg', audio: hit, cached: true }
+    if (hit) {
+      this.onPayload?.({
+        endpoint: this.endpoint,
+        body: { model: options.model, input: trimmed, response_format: 'mp3', ...(options.voice ? { voice: options.voice } : {}) },
+        cached: true,
+      })
+      return { mime: 'audio/mpeg', audio: hit, cached: true }
+    }
 
     const apiKey = await this.resolveKey()
     if (!apiKey) throw new Error('tts-key-missing')
@@ -184,6 +202,7 @@ export class OpenRouterTtsEngine implements TtsEngine {
         response_format: 'mp3',
       }
       if (options.voice) body.voice = options.voice
+      this.onPayload?.({ endpoint: this.endpoint, body: body as TtsPayload['body'], cached: false })
       const response = await this.fetcher(this.endpoint, {
         method: 'POST',
         headers: {

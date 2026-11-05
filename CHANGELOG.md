@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `/api/dsh-waifu/ai-debug` 增加 `lastTtsPayload` / `lastSpeakPayload`：分别记录最近一次「试听合成」与「对话流式合成」实际发给供应商的 body（model / input / voice / response_format / 是否命中缓存），方便对照同一次调用的 LLM 载荷排查
+
 ### Changed
 
 - 语音模型目录只保留通义千问 TTS 的两个模型：`qwen/qwen-audio-3.0-tts-plus`（默认，音色 `longanlingxin` 龙安灵心）与 `qwen/qwen-audio-3.0-tts-flash`（女声更多：龙安元妃 / 龙安风悦 / 龙安灵希 / 龙安小昕 / 龙安欢 / 龙泡泡 / loongmary / loongeva）。音色只收女性，取自[千问 TTS 音色列表](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；`fish-audio/drama-3`、`hexgrad/kokoro-82m`、`microsoft/mai-voice-2.1-flash` 从目录移除。设置文件版本升到 7，旧文件里的目录外模型自动回落到新默认
