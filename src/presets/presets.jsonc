@@ -39,67 +39,64 @@
           "id": "face",
           "name": "脸",
           "boxes": [{ "left": 0.38, "top": 0.11, "right": 0.6, "bottom": 0.2 }],
-          "motions": ["blush"],
-          "lines": ["别捏脸啦～", "脸要被你捏变形了…", "呀…别戳脸！"]
+          "motions": ["Tilt", "blush"],
+          "lines": ["干嘛捏脸啦~"]
         },
         {
           "id": "head",
           "name": "头发",
           "boxes": [{ "left": 0.34, "top": 0.06, "right": 0.66, "bottom": 0.2 }],
-          "motions": [],
-          "lines": ["摸头…好舒服…", "头发被弄乱啦～", "再、再摸一下也不是不行…"]
+          "motions": ["Nod", "blush"],
+          "lines": ["摸头…好舒服…"]
         },
         {
           "id": "chest",
           "name": "胸",
           "boxes": [{ "left": 0.26, "top": 0.22, "right": 0.64, "bottom": 0.32 }],
-          "motions": [],
-          "lines": ["呀！那里不能戳啦…", "衣服要乱了…", "喂，往哪里看呢。"]
+          "motions": ["ShakeHead", "blush", "heart"],
+          "lines": ["喂，那里不能摸啦…"]
         },
         {
           "id": "hip",
           "name": "臀",
           "boxes": [{ "left": 0.27, "top": 0.39, "right": 0.68, "bottom": 0.48 }],
-          "motions": [],
-          "lines": ["笨、笨蛋！", "那里绝对不行！", "再这样我要生气了哦。"]
+          "motions": ["Sway", "blush", "heart"],
+          "lines": ["笨、笨蛋！"]
         },
         {
           "id": "waist",
           "name": "腰",
           "boxes": [{ "left": 0.31, "top": 0.32, "right": 0.6, "bottom": 0.39 }],
-          "motions": [],
-          "lines": ["腰、腰很怕痒的…别戳啦！", "哈哈…别闹了，站不稳了。", "再摸我就躲到屏幕外面去。"]
+          "motions": ["Sway", "heart", "blush"],
+          "lines": ["再摸我就躲到屏幕外面去…"]
         },
         {
           "id": "thigh",
           "name": "大腿",
           "boxes": [{ "left": 0.28, "top": 0.48, "right": 0.68, "bottom": 0.65 }],
-          "motions": [],
-          "lines": ["大腿不是给你捏的！", "再摸…就踢你了哦。", "唔…那里也不行啦。"]
+          "motions": ["Sway", "blush", "heart"],
+          "lines": ["再摸…就踢你了哦。"]
         },
         {
           "id": "hand",
           "name": "手",
-          "boxes": [
-            { "left": 0.1, "top": 0.2, "right": 0.28, "bottom": 0.26 },
-            { "left": 0.65, "top": 0.45, "right": 0.78, "bottom": 0.53 }
-          ],
-          "motions": [],
-          "lines": ["要牵手？……那就一下。", "手有点凉，可别嫌弃。", "别乱捏我的手指啦。"]
+          "boxes": [{ "left": 0.1, "top": 0.2, "right": 0.28, "bottom": 0.26 }, { "left": 0.65, "top": 0.45, "right": 0.78, "bottom": 0.53 }],
+          "motions": ["Nod", "blush", "star"],
+          "lines": ["要牵手？……那就一下。"]
         },
         {
           "id": "calf",
           "name": "小腿",
           "boxes": [{ "left": 0.32, "top": 0.65, "right": 0.65, "bottom": 0.84 }],
-          "motions": [],
-          "lines": ["小腿可是有肌肉的，别小看。", "痒……别挠那里！", "再摸就站不住了啦。"]
+          "motions": ["Sway", "blush", "heart"],
+          "lines": ["再摸就站不住了啦…"]
         },
         {
           "id": "foot",
           "name": "脚",
           "boxes": [{ "left": 0.36, "top": 0.84, "right": 0.59, "bottom": 0.96 }],
-          "motions": [],
-          "lines": ["脚、脚不许碰！", "真的怕痒……快住手。", "喂，那是最不该碰的地方吧。"]
+          "motions": ["ShakeHead", "whites"],
+          "lines": ["真的怕痒…快住手…"]
         }
       ]
     }

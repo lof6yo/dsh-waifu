@@ -106,9 +106,9 @@ describe('PetService 状态机', () => {
         expect(box.top).toBeLessThan(box.bottom)
       }
     }
-    // 默认只有脸挂了表情（blush），其余部位只出气泡
-    expect(parts[0].motions).toEqual(['blush'])
-    expect(parts[1].motions).toEqual([])
+    // 默认每个部位都挂了「动作组 + 表情」（用户本地调好的那套）
+    expect(parts[0].motions).toEqual(['Tilt', 'blush'])
+    expect(parts[1].motions).toEqual(['Nod', 'blush'])
   })
 
   it('用户保存触摸部位后覆盖内置默认', () => {
@@ -257,15 +257,15 @@ describe('PetService 显示配置', () => {
   it('setDisplay 只更新给定字段并递增 version', () => {
     const { service } = makeHarness()
     const v0 = service.snapshot().version
-    const d = service.setDisplay({ size: 200 })
-    expect(d).toEqual({ right: 24, bottom: 20, size: 200 })
+    const d = service.setDisplay({ size: 240 })
+    expect(d).toEqual({ right: 24, bottom: 20, size: 240 })
     expect(service.snapshot().version).toBe(v0 + 1)
   })
 
   it('resetDisplay 回到内置默认显示（归位由客户端按中心点计算）', () => {
     const { service } = makeHarness({ homeRight: 40, homeBottom: 30 })
     service.setDisplay({ size: 300, right: -120, bottom: 800 })
-    expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 200 })
+    expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 240 })
   })
 
   it('snapshot 解析模型 URL：内置同源路径；失效 id 回退内置', () => {
@@ -284,7 +284,7 @@ describe('PetService 变更订阅', () => {
     const unsubscribe = service.onChange(listener)
     emit('agent/status', { status: 'running' })
     expect(listener).toHaveBeenCalledTimes(1)
-    service.setDisplay({ size: 200 })
+    service.setDisplay({ size: 240 })
     expect(listener).toHaveBeenCalledTimes(2)
     service.notifyConfigChanged()
     expect(listener).toHaveBeenCalledTimes(3)

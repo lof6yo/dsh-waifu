@@ -54,7 +54,15 @@ describe('listBuiltinPresets', () => {
     expect(jian.animationMap?.delivered).toEqual(['heart'])
     expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
     expect(jian.touchParts?.map((p) => p.motions)).toEqual([
-      ['blush'], [], [], [], [], [], [], [], [],
+      ['Tilt', 'blush'],
+      ['Nod', 'blush'],
+      ['ShakeHead', 'blush', 'heart'],
+      ['Sway', 'blush', 'heart'],
+      ['Sway', 'heart', 'blush'],
+      ['Sway', 'blush', 'heart'],
+      ['Nod', 'blush', 'star'],
+      ['Sway', 'blush', 'heart'],
+      ['ShakeHead', 'whites'],
     ])
     expect(resolveDefaultTouchParts('jian').length).toBe(9)
     expect(resolveDefaultTouchParts('nope')).toEqual([])
@@ -174,8 +182,8 @@ describe('EventBindings（事件绑定）', () => {
     expect(isLongState('thinking')).toBe(true)
     expect(isLongState('waiting')).toBe(true)
     expect(isLongState('done')).toBe(false)
-    expect(DEFAULT_LONG_AI.thinking).toEqual({ delay: 3, interval: 20, max: 3 })
-    expect(DEFAULT_LONG_AI.waiting).toEqual({ delay: 4, interval: 30, max: 3 })
+    expect(DEFAULT_LONG_AI.thinking).toEqual({ delay: 5, interval: 10, max: 3 })
+    expect(DEFAULT_LONG_AI.waiting).toEqual({ delay: 5, interval: 30, max: 3 })
   })
 
   it('normalizeEventBindings 只保留合法事件/清洗台词/只留入态一组', () => {
@@ -234,9 +242,9 @@ describe('表情（expressions）', () => {
   })
 
   it('默认事件绑定：动作组与表情混在同一条目里', () => {
-    expect(DEFAULT_EVENT_BINDINGS.error.motions).toEqual(['ShakeHead', 'angry'])
-    expect(DEFAULT_EVENT_BINDINGS.done.motions).toEqual(['star'])
-    expect(DEFAULT_EVENT_BINDINGS.delivered.motions).toEqual(['heart'])
+    expect(DEFAULT_EVENT_BINDINGS.error.motions).toEqual(['ShakeHead', 'whites', 'dark'])
+    expect(DEFAULT_EVENT_BINDINGS.done.motions).toEqual(['Nod', 'star'])
+    expect(DEFAULT_EVENT_BINDINGS.delivered.motions).toEqual(['Tilt', 'star'])
   })
 
   it('isExpressionId 只认注册表里的表情', () => {

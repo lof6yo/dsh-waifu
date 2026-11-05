@@ -78,13 +78,13 @@ const DEFAULT_CANVAS_PAD_Y = 50
 
 /** 气泡默认偏移（相对模型包围盒顶部中心）与默认配色（Host 默认 0/-10、#ffffff/92%/#222222）。 */
 const DEFAULT_BUBBLE_OFFSET_X = 0
-const DEFAULT_BUBBLE_OFFSET_Y = 10
+const DEFAULT_BUBBLE_OFFSET_Y = -15
 const DEFAULT_BUBBLE_BG_COLOR = '#ffffff'
 const DEFAULT_BUBBLE_BG_OPACITY = 92
 const DEFAULT_BUBBLE_TEXT_COLOR = '#222222'
 
 /** 默认位置（显示区中心点距右/距下，视口宽/高百分比；Host 默认 16/24，spec §2）。 */
-const DEFAULT_HOME_RIGHT = 16
+const DEFAULT_HOME_RIGHT = 15
 const DEFAULT_HOME_BOTTOM = 24
 
 /** #rgb/#rrggbb + 0–100 不透明度 → CSS rgba()（非法颜色回退白色，spec §3）。 */
@@ -436,7 +436,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let lastState: PetState | null = null
   let demoState: PetState | null = null
   let view: PetStateView | null = null
-  let pos: DisplayLike = { right: 24, bottom: 20, size: 200 }
+  let pos: DisplayLike = { right: 24, bottom: 20, size: 240 }
   // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
   let canvasPadXPct = DEFAULT_CANVAS_PAD_X
   let canvasPadYPct = DEFAULT_CANVAS_PAD_Y

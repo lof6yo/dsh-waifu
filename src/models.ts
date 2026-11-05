@@ -239,8 +239,8 @@ export function isLongState(state: PetEventKey): state is LongState {
 
 /** 长状态 AI 演绎的默认节奏（delay/interval 单位秒，max 为每次入态最多演绎次数）。 */
 export const DEFAULT_LONG_AI: Record<LongState, { delay: number; interval: number; max: number }> = {
-  thinking: { delay: 3, interval: 20, max: 3 },
-  waiting: { delay: 4, interval: 30, max: 3 },
+  thinking: { delay: 5, interval: 10, max: 3 },
+  waiting: { delay: 5, interval: 30, max: 3 },
 }
 
 /** 长状态 AI 演绎节奏的取值范围（设置页滑杆/校验共用）。 */
@@ -264,23 +264,23 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
   },
   thinking: {
     motions: ['Tilt'],
-    lines: [['思考中…', '让我想想。']],
+    lines: [['思考中…']],
   },
   error: {
-    motions: ['ShakeHead', 'angry'],
-    lines: [['出错了…我再试一次。', '唔，好像不太顺利。']],
+    motions: ['ShakeHead', 'whites', 'dark'],
+    lines: [['出错了…']],
   },
   done: {
-    motions: ['star'],
-    lines: [['搞定！', '完成了。', '做完啦。']],
+    motions: ['Nod', 'star'],
+    lines: [['搞定！']],
   },
   delivered: {
-    motions: ['heart'],
-    lines: [['文件放这儿了。', '交付完成，请查收。']],
+    motions: ['Tilt', 'star'],
+    lines: [['交付！']],
   },
   waiting: {
     motions: ['Sway'],
-    lines: [['等你确认。', '需要你决定一下。']],
+    lines: [['喂，你定一下啦！']],
   },
 }
 
