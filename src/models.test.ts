@@ -42,7 +42,7 @@ describe('listBuiltinPresets', () => {
     expect(jian.animationMap?.delivered).toEqual(['Done'])
     expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '臀', '腰', '大腿', '手', '小腿', '脚'])
     expect(jian.touchParts?.map((p) => p.motions)).toEqual([
-      ['TapFace'], ['TapHead'], ['TapBody'], ['TapBody'], ['TapBody'],
+      ['TapFace'], ['TapHead'], ['TapChest'], ['TapHip'], ['TapWaist'],
       ['TapLeg'], ['TapHand'], ['TapLeg'], ['TapLeg'],
     ])
     expect(resolveDefaultTouchParts('jian').length).toBe(9)

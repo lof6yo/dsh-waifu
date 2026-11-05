@@ -16,10 +16,14 @@ ADR-017 把动作集收敛到只有 `Idle`，理由是用模型作者原始资�
 
 ## 决策
 
-用 `scripts/gen-jian-motions.mjs` 重建 **15 个动作组**，分三类：
+用 `scripts/gen-jian-motions.mjs` 重建 **17 个动作组**，分三类：
 
 1. **状态动作**（供事件绑定）：`Idle`（循环）、`Thinking`（循环：眼珠上飘 + 挑眉）、`Error`（瞪眼/倒竖眉/张嘴 + 头后仰一颤）、`Done`（眼笑 + 点头两下 + 小跳）、`Waiting`（循环：左右张望 + 眼珠扫）
-2. **触摸反馈**（供触摸部位）：`TapHead`（眯眼笑 + 头往手心歪）、`TapFace`（嘟嘴 + 皱眉 + 躲开）、`TapHand`（低头看手 + 眼笑）、`TapBody`（炸毛：倒竖眉 + 张嘴 + 后仰 + 身体一缩）、`TapLeg`（怕痒：闭眼缩身 + 脑袋左右抖）
+2. **触摸反馈**（供触摸部位）：`TapHead`（眯眼笑 + 头往手心歪）、`TapFace`（嘟嘴 + 皱眉 + 躲开）、`TapHand`（低头看手 + 眼笑）、`TapLeg`（怕痒：闭眼缩身 + 脑袋左右抖），以及按身体部位细分的三组：
+   - `TapChest`（摸胸）：上身被撞得**大幅摇晃**——躯干 −8°~+7° 左右甩、头反向、眉压低、张嘴
+   - `TapWaist`（摸腰）：**扭动**——躯干正反交替快扭三下（±7°）、上身反向找平衡、笑着躲
+   - `TapHip`（摸臀）：**胯部左右摆**——下盘晃 ±6°、上身反向、回头瞪一眼、单边眉毛压得更低
+   注：`ParamBodyAngle*0`、`ParamChestAngle*`、`ParamHipAngle*` 都是物理输出参数，动作值只部分生效，因此三组动作靠「幅度 + 节奏 + 头部/表情配合」区分，而不是单一部位参数。
 3. **人设小动作**（绝区零「简·杜」魅魔系设定）：`Charm`（慢侧头 + 压眼皮 + 单边挑眉 + 嘴角一勾）、`Smug`（循环小幅摇晃炫耀）、`Shy`（低头 + 眼珠下躲 + 腮帮子微鼓）、`Taunt`（抬下巴 + 半眯眼 + 挑眉歪嘴）、`Stretch`（闭眼张嘴伸懒腰）
 
 约束与做法：
@@ -33,7 +37,7 @@ ADR-017 把动作集收敛到只有 `Idle`，理由是用模型作者原始资�
 
 - `presets.jsonc` 的 `animationMap`：`idle→Idle`、`thinking→Thinking`、`error→Error`、`done→Done`、`waiting→Waiting`、`delivered→Done`；
 - `DEFAULT_MOTION_MAP` / `DEFAULT_EVENT_BINDINGS` 同步改成真实存在的组名（原 `Failed`/`Sad`/`Jumping`/`Working` 是历史遗留的空候选）；
-- 默认触摸部位：脸→`TapFace`、头发→`TapHead`、手→`TapHand`、胸/臀/腰→`TapBody`、大腿/小腿/脚→`TapLeg`。
+- 默认触摸部位：脸→`TapFace`、头发→`TapHead`、手→`TapHand`、胸→`TapChest`、腰→`TapWaist`、臀→`TapHip`、大腿/小腿/脚→`TapLeg`。
 
 ## 影响
 

@@ -50,7 +50,9 @@ const EXPECTED_GROUPS = [
   'TapHead',
   'TapFace',
   'TapHand',
-  'TapBody',
+  'TapChest',
+  'TapWaist',
+  'TapHip',
   'TapLeg',
   'Charm',
   'Smug',
@@ -474,26 +476,78 @@ const MOTION_DEFS = [
     },
   },
   {
-    // 被占便宜（胸/臀/腰/大腿）：炸毛——眉毛压到底、张嘴吼、整个人往后缩。
-    group: 'TapBody',
-    file: 'tap-body.motion3.json',
-    duration: 1.8,
+    // 摸胸：上身被撞得大幅摇晃——躯干左右甩、头往后仰、眉毛压下去、张嘴。
+    // 注意：ParamBodyAngle* / Chest / Hip 系列都是物理输出参数，动作值只有部分生效，
+    // 所以摇晃幅度靠「躯干 ±8° + 头部反向 ±6° + 长节奏」叠出来，不是单靠一个参数。
+    group: 'TapChest',
+    file: 'tap-chest.motion3.json',
+    duration: 2.5,
     loop: false,
     build: () => {
-      const d = 1.8
+      const d = 2.5
       const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
       return [
-        c('ParamBrowLY', [[0, 0], [0.3, -0.9], [1.3, -0.8], [1.8, 0]]),
-        c('ParamBrowRY', [[0, 0], [0.3, -0.9], [1.3, -0.8], [1.8, 0]]),
-        c('ParamEyeLOpen', [[0, 1], [0.3, 0.6], [1.3, 0.7], [1.8, 1]]),
-        c('ParamEyeROpen', [[0, 1], [0.3, 0.6], [1.3, 0.7], [1.8, 1]]),
-        c('ParamMouthOpenY', [[0, 0], [0.35, 0.7], [1.0, 0.55], [1.6, 0.1], [1.8, 0]]),
-        c('ParamMouthForm', [[0, 0], [0.35, -0.9], [1.3, -0.75], [1.8, 0]]),
-        c('ParamAngleY', [[0, 0], [0.35, 12], [1.1, 9], [1.8, 0]]),
-        c('ParamAngleZ', [[0, 0], [0.45, 10], [1.2, 7], [1.8, 0]]),
-        c('ParamAngleX', [[0, 0], [0.4, -6], [1.2, -4], [1.8, 0]]),
-        c('ParamBodyAngleY0', [[0, 0], [0.4, -6], [1.2, -4], [1.8, 0]]),
-        c('ParamBodyAngleZ0', [[0, 0], [0.4, 4], [0.9, -2], [1.4, 0], [1.8, 0]]),
+        c('ParamBodyAngleZ0', [[0, 0], [0.45, -8], [0.95, 7], [1.45, -6], [1.95, 4], [2.5, 0]]),
+        c('ParamBodyAngleX0', [[0, 0], [0.5, -5], [1.1, 4], [1.7, -3], [2.5, 0]]),
+        c('ParamBodyAngleY0', [[0, 0], [0.4, -4], [1.2, 2], [2.5, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.4, 6], [0.95, -5], [1.5, 4], [2.5, 0]]),
+        c('ParamAngleY', [[0, 0], [0.35, 8], [1.1, 5], [2.5, 0]]),
+        c('ParamAngleX', [[0, 0], [0.4, -4], [1.2, 3], [2.5, 0]]),
+        c('ParamBrowLY', [[0, 0], [0.3, -0.7], [1.6, -0.6], [2.5, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.3, -0.7], [1.6, -0.6], [2.5, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.3, 0.55], [1.6, 0.65], [2.5, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.3, 0.55], [1.6, 0.65], [2.5, 1]]),
+        c('ParamEyeBallY', [[0, 0], [0.4, -0.3], [1.6, -0.25], [2.5, 0]]),
+        c('ParamMouthOpenY', [[0, 0], [0.35, 0.55], [1.0, 0.4], [1.9, 0.1], [2.5, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.35, -0.8], [1.6, -0.65], [2.5, 0]]),
+      ]
+    },
+  },
+  {
+    // 摸腰：被痒到，腰一扭一扭地躲——躯干正反交替快速扭转、屁股跟着摆、头左右闪。
+    group: 'TapWaist',
+    file: 'tap-waist.motion3.json',
+    duration: 1.9,
+    loop: false,
+    build: () => {
+      const d = 1.9
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamBodyAngleZ0', [[0, 0], [0.25, -7], [0.5, 6], [0.75, -5], [1.0, 4], [1.4, -2], [1.9, 0]]),
+        c('ParamBodyAngleX0', [[0, 0], [0.25, 5], [0.5, -4], [0.75, 3], [1.0, -2], [1.9, 0]]),
+        c('ParamBodyAngleY0', [[0, 0], [0.3, 3], [0.8, -1.5], [1.4, 1], [1.9, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.3, -4], [0.6, 3], [0.9, -2], [1.3, 1], [1.9, 0]]),
+        c('ParamAngleX', [[0, 0], [0.3, 4], [0.7, -3], [1.1, 2], [1.9, 0]]),
+        c('ParamEyeLSmile', [[0, 0], [0.3, 0.5], [1.2, 0.45], [1.9, 0]]),
+        c('ParamEyeRSmile', [[0, 0], [0.3, 0.5], [1.2, 0.45], [1.9, 0]]),
+        c('ParamCheekPuff', [[0, 0], [0.3, 0.5], [1.1, 0.45], [1.9, 0]]),
+        c('ParamMouthOpenY', [[0, 0], [0.3, 0.2], [1.0, 0.1], [1.9, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.3, -0.4], [1.1, -0.35], [1.9, 0]]),
+      ]
+    },
+  },
+  {
+    // 摸臀：胯部被撞得左右摆——下盘晃、上身反向找平衡、回头瞪一眼。
+    group: 'TapHip',
+    file: 'tap-hip.motion3.json',
+    duration: 2.2,
+    loop: false,
+    build: () => {
+      const d = 2.2
+      const c = (id, pairs) => buildCurve(id, kf(pairs), { loop: false, duration: d })
+      return [
+        c('ParamBodyAngleX0', [[0, 0], [0.45, -6], [0.95, 5], [1.5, -4], [2.0, 2], [2.2, 0]]),
+        c('ParamBodyAngleZ0', [[0, 0], [0.5, 5], [1.1, -4], [1.7, 3], [2.2, 0]]),
+        c('ParamBodyAngleY0', [[0, 0], [0.5, -2], [1.2, 1.5], [2.2, 0]]),
+        c('ParamAngleX', [[0, 0], [0.5, 5], [1.1, -4], [1.7, 3], [2.2, 0]]),
+        c('ParamAngleZ', [[0, 0], [0.5, -6], [1.1, 5], [1.7, -3], [2.2, 0]]),
+        c('ParamEyeBallX', [[0, 0], [0.5, -0.6], [1.2, 0.5], [1.7, -0.3], [2.2, 0]]),
+        c('ParamBrowLY', [[0, 0], [0.4, -0.5], [1.6, -0.45], [2.2, 0]]),
+        c('ParamBrowRY', [[0, 0], [0.4, -0.9], [1.6, -0.8], [2.2, 0]]),
+        c('ParamEyeLOpen', [[0, 1], [0.4, 0.7], [1.6, 0.75], [2.2, 1]]),
+        c('ParamEyeROpen', [[0, 1], [0.4, 0.7], [1.6, 0.75], [2.2, 1]]),
+        c('ParamMouthOpenY', [[0, 0], [0.4, 0.35], [1.0, 0.25], [1.8, 0.05], [2.2, 0]]),
+        c('ParamMouthForm', [[0, 0], [0.4, -0.7], [1.6, -0.6], [2.2, 0]]),
       ]
     },
   },

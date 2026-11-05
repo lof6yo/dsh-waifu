@@ -16,7 +16,7 @@
 
 ## 特性
 
-- **内置模型「简」**：随插件包分发（moc3 / 纹理 / 物理 / cdi3），无需下载模型；自带 **15 个动作组**——状态（`Idle`/`Thinking`/`Error`/`Done`/`Waiting`）、触摸反馈（`TapHead`/`TapFace`/`TapHand`/`TapBody`/`TapLeg`）、人设小动作（`Charm` 撩人 / `Smug` 得意 / `Shy` 害羞 / `Taunt` 挑衅 / `Stretch` 伸懒腰），由 `scripts/gen-jian-motions.mjs` 幂等生成（ADR-018）；本版**不提供**模型选择 / 导入。
+- **内置模型「简」**：随插件包分发（moc3 / 纹理 / 物理 / cdi3），无需下载模型；自带 **17 个动作组**——状态（`Idle`/`Thinking`/`Error`/`Done`/`Waiting`）、触摸反馈（`TapHead` 摸头 / `TapFace` 捏脸 / `TapHand` 摸手 / `TapChest` 上身摇晃 / `TapWaist` 扭腰 / `TapHip` 胯部摇摆 / `TapLeg` 怕痒）、人设小动作（`Charm` 撩人 / `Smug` 得意 / `Shy` 害羞 / `Taunt` 挑衅 / `Stretch` 伸懒腰），由 `scripts/gen-jian-motions.mjs` 幂等生成（ADR-018）；本版**不提供**模型选择 / 导入。
 - **事件绑定（动画 + 台词）**：6 个事件各自可配置动作组候选与台词池；思考中 / 等审批支持三阶段台词（入态 / 15s / 40s、入态 / 30s / 90s），按时间演进；每张卡可「恢复默认」。
 - **用户自定义触摸部位（touchbox）**：不再依赖模型 HitArea。部位 = 名称 + 一个或多个归一化矩形 box（相对角色包围盒 0–100% 输入，**以左下角为原点**，上 = 调大往上长）+ 图层 + 该部位自己的台词池与触摸动作组（多选下拉）。重叠时按**图层顺序**（上层部位优先），支持 ↑/↓ 排序。
 - **预览编辑**：设置页「触摸部位」→「预览 box」在角色上实时显示全部 box；边调数值边看效果，预览态点击角色可直接试触发台词 / 动作。

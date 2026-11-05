@@ -3,9 +3,9 @@
 ## [Unreleased]
 
 ### Added
-- **动作组扩充到 15 个**（ADR-018，`scripts/gen-jian-motions.mjs` 幂等生成）：
+- **动作组扩充到 17 个**（ADR-018，`scripts/gen-jian-motions.mjs` 幂等生成）：
   - 状态动作：`Thinking` / `Error` / `Done` / `Waiting`（`Idle` 保留）
-  - 触摸反馈：`TapHead` 摸头 / `TapFace` 捏脸 / `TapHand` 摸手 / `TapBody` 炸毛 / `TapLeg` 怕痒
+  - 触摸反馈：`TapHead` 摸头 / `TapFace` 捏脸 / `TapHand` 摸手 / `TapChest` 上身摇晃 / `TapWaist` 扭腰 / `TapHip` 胯部摇摆 / `TapLeg` 怕痒
   - 人设小动作：`Charm` 撩人、`Smug` 得意、`Shy` 害羞、`Taunt` 挑衅、`Stretch` 伸懒腰
 - 默认映射随之接通：六个事件各自有动作、九个触摸部位各自有反馈动作（可在设置页改）
 - 新增 ADR-018：动作集扩充（部分取代 ADR-017）

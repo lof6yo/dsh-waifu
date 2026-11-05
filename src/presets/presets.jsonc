@@ -50,21 +50,21 @@
           "id": "chest",
           "name": "胸",
           "boxes": [{ "left": 0.26, "top": 0.22, "right": 0.64, "bottom": 0.32 }],
-          "motions": ["TapBody"],
+          "motions": ["TapChest"],
           "lines": ["呀！那里不能戳啦…", "衣服要乱了…", "喂，往哪里看呢。"]
         },
         {
           "id": "hip",
           "name": "臀",
           "boxes": [{ "left": 0.27, "top": 0.39, "right": 0.68, "bottom": 0.48 }],
-          "motions": ["TapBody"],
+          "motions": ["TapHip"],
           "lines": ["笨、笨蛋！", "那里绝对不行！", "再这样我要生气了哦。"]
         },
         {
           "id": "waist",
           "name": "腰",
           "boxes": [{ "left": 0.31, "top": 0.32, "right": 0.6, "bottom": 0.39 }],
-          "motions": ["TapBody"],
+          "motions": ["TapWaist"],
           "lines": ["腰、腰很怕痒的…别戳啦！", "哈哈…别闹了，站不稳了。", "再摸我就躲到屏幕外面去。"]
         },
         {

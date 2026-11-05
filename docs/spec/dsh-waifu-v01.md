@@ -5,7 +5,7 @@
 
 ## 1. 概述
 
-DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话 agent 状态（思考/空闲/出错/完成/交付/等审批），支持**用户自定义触摸部位**（touchbox）互动、任务完成庆祝；台词与动画按**事件**绑定配置（空闲/思考/出错/完成/交付/等审批各配动作组与台词池，去掉了固定人设；后续版本再加入 LLM 人设提示词说话）。内置模型**只有「简」一个**，随插件包分发（自带 15 个动作组：状态 / 触摸反馈 / 人设小动作，见 ADR-018），开箱即可用。本版设置页不提供模型选择/导入。默认开启、默认右下角、小尺寸、可隐藏。
+DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话 agent 状态（思考/空闲/出错/完成/交付/等审批），支持**用户自定义触摸部位**（touchbox）互动、任务完成庆祝；台词与动画按**事件**绑定配置（空闲/思考/出错/完成/交付/等审批各配动作组与台词池，去掉了固定人设；后续版本再加入 LLM 人设提示词说话）。内置模型**只有「简」一个**，随插件包分发（自带 17 个动作组：状态 / 触摸反馈 / 人设小动作，见 ADR-018），开箱即可用。本版设置页不提供模型选择/导入。默认开启、默认右下角、小尺寸、可隐藏。
 
 ## 2. 启用与设置
 
@@ -92,12 +92,12 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 
 - **本版只内置「简」**（`presets.jsonc` 唯一一条，`modelUrl: /waifu-assets/models/jian/简.model3.json`）；不提供模型选择/导入 UI（自定义模型能力暂不对用户暴露，后续版本再考虑）：
   - 模型资源**随包分发**在 `assets/models/jian/`（moc3、纹理、physics3、cdi3、model3.json、motions）
-  - 动作组共 15 个（由 `scripts/gen-jian-motions.mjs` 幂等生成，见 ADR-018）：
+  - 动作组共 17 个（由 `scripts/gen-jian-motions.mjs` 幂等生成，见 ADR-018）：
     - 状态：`Idle`（循环）、`Thinking`（循环）、`Error`、`Done`、`Waiting`（循环）
-    - 触摸反馈：`TapHead`、`TapFace`、`TapHand`、`TapBody`、`TapLeg`
+    - 触摸反馈：`TapHead`、`TapFace`、`TapHand`、`TapChest`（上身摇晃）、`TapWaist`（扭腰）、`TapHip`（胯部摇摆）、`TapLeg`
     - 人设小动作：`Charm`（撩人）、`Smug`（循环得意）、`Shy`、`Taunt`（挑衅）、`Stretch`（伸懒腰）
   - 动作只用 cdi3 白名单参数（角度 / 眼笑 / 眉毛 / 嘴形 / 嘟嘴 / 眼球），不驱动 `ParamSwitch*` 表情开关；`model3.json` 另声明 `EyeBlink`（ParamEyeLOpen/ROpen）与 `LipSync`（ParamMouthOpenY）参数组
-  - 默认事件动画映射：`idle→Idle`、`thinking→Thinking`、`error→Error`、`done→Done`、`waiting→Waiting`、`delivered→Done`；默认触摸部位按位置挂 `TapHead/TapFace/TapHand/TapBody/TapLeg`。用户可在设置页逐项改
+  - 默认事件动画映射：`idle→Idle`、`thinking→Thinking`、`error→Error`、`done→Done`、`waiting→Waiting`、`delivered→Done`；默认触摸部位按位置挂 `TapHead/TapFace/TapHand/TapChest/TapWaist/TapHip/TapLeg`。用户可在设置页逐项改
   - 许可标注：作者「用户自备模型」、许可类型「用户自备模型（随包内置；公开分发前请确认模型授权）」
 - 素材经 Host 同源 `/waifu-assets/*` prefix 路由提供（带目录穿越防护；moc3/json/png 等 MIME 正确）
 - 动作组选项来自当前模型 `.model3.json` 的 `Motions`（设置页事件绑定与触摸部位共用同款多选下拉），解析失败时可保存但无动作可选
