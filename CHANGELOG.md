@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 语音模型目录只保留通义千问 TTS 的两个模型：`qwen/qwen-audio-3.0-tts-plus`（默认，音色 `longanlingxin` 龙安灵心）与 `qwen/qwen-audio-3.0-tts-flash`（女声更多：龙安元妃 / 龙安风悦 / 龙安灵希 / 龙安小昕 / 龙安欢 / 龙泡泡 / loongmary / loongeva）。音色只收女性，取自[千问 TTS 音色列表](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；`fish-audio/drama-3`、`hexgrad/kokoro-82m`、`microsoft/mai-voice-2.1-flash` 从目录移除。设置文件版本升到 7，旧文件里的目录外模型自动回落到新默认
+
 ### Removed
 
 - 去掉「音色样本」（无状态音色克隆，`ttsReference` + `voices/reference.mp3` + `GET|POST /tts-sample*`）与「演绎指令」（`ttsInstructions`）：设置页少两行、少三个接口，请求体也不再带参考音频。`fish-audio/drama-3` 仍是默认模型（每句人声随机）；要固定人声请换 `TTS_MODELS` 里带音色列表的模型。

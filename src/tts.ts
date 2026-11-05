@@ -86,7 +86,7 @@ export function splitClauses(text: string): string[] {
 
 /** 一次合成请求的语音参数（都来自设置页，留口子给未来的编辑器）。 */
 export interface TtsVoiceOptions {
-  /** 模型 slug，例如 `fish-audio/drama-3`。 */
+  /** 模型 slug，例如 `qwen/qwen-audio-3.0-tts-plus`。 */
   model: string
   /** 音色标识；空字符串表示用模型默认音色。 */
   voice?: string

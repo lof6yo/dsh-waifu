@@ -18,6 +18,7 @@ import {
   AI_HISTORY_LIMITS,
   normalizeInteractionMode,
   normalizeLipsyncGain,
+  ttsModelOption,
   ttsModelRandomVoice,
   type InteractionMode,
 } from './defaults.ts'
@@ -128,8 +129,9 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
  * - 4 起去掉基础表情与连续表情强度（`expression` / `expr*`），表情改为挂在事件/触摸部位上（ADR-023）
  * - 5 起默认语音模型换成音色可固定的 MAI-Voice 2.1 Flash（Drama 3 每句都换人声，ADR-033 修订）
  * - 6 起默认回到 Fish Audio Drama 3（MAI-Voice 只存活一个版本）
+ * - 7 起语音目录只剩通义千问 TTS，目录外的旧模型（Drama 3 / MAI / Kokoro）统一回落到新默认
  */
-const SETTINGS_SCHEMA_VERSION = 6
+const SETTINGS_SCHEMA_VERSION = 7
 
 /** home 改成视口百分比的版本（3）；更早的文件 home 语义不同，直接回退 base。 */
 const HOME_PERCENT_VERSION = 3
@@ -137,11 +139,14 @@ const HOME_PERCENT_VERSION = 3
 /** 语音默认模型的调整：5 = 换 MAI-Voice，6 = 换回 Drama 3（ADR-033 修订二）。 */
 const TTS_VOICE_FIX_VERSION = 5
 const TTS_MODEL_RESET_VERSION = 6
+/** 语音目录重写（只剩通义千问 TTS）的版本：目录外模型在这里回落到默认。 */
+const TTS_CATALOG_VERSION = 7
 
 /**
  * 语音默认值的迁移（ADR-033 修订）：
  * - v5：旧的「随机音色模型 + 没选音色」组合统一换成默认模型；
- * - v6：MAI-Voice 只存活了一个版本，旧文件里的它统一换回默认（Drama 3）。
+ * - v6：MAI-Voice 只存活了一个版本，旧文件里的它统一换回默认；
+ * - v7：语音目录重写后，目录外的模型统一回落到默认。
  */
 function migrateTtsVoice(
   version: number,
@@ -153,6 +158,10 @@ function migrateTtsVoice(
   // 音色允许空串（空 = 模型默认音色），所以不走 pickString
   const voice = typeof rawVoice === 'string' ? rawVoice.trim().slice(0, 64) : base.ttsVoice
   if (version < TTS_MODEL_RESET_VERSION && model === 'microsoft/mai-voice-2.1-flash') {
+    return { model: base.ttsModel, voice: base.ttsVoice }
+  }
+  // 目录外的模型（Drama 3 / Kokoro 等）已经没有可选音色，直接换成新默认，免得请求必然 400
+  if (version < TTS_CATALOG_VERSION && !ttsModelOption(model)) {
     return { model: base.ttsModel, voice: base.ttsVoice }
   }
   if (version < TTS_VOICE_FIX_VERSION && voice.length === 0 && ttsModelRandomVoice(model)) {

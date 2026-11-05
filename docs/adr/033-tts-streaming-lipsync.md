@@ -21,7 +21,7 @@
 
 `src/tts.ts` 定义 `TtsEngine.synthesize(text, voice, signal)`，默认实现 `OpenRouterTtsEngine` 打
 `POST https://openrouter.ai/api/v1/audio/speech`（OpenAI 兼容，返回原始 `audio/mpeg` 字节）。
-模型与音色全部来自设置项，默认 `fish-audio/drama-3`。
+模型与音色全部来自设置项（见下面的修订三）。
 
 换供应商（ElevenLabs / MiniMax 的 PCM 真流式）只加一个实现，路由、客户端不动。key 每次合成时
 通过 `ctx.credentials.resolve('OPENROUTER_API_KEY')` 取，不缓存、不落盘、不进插件配置。
@@ -100,7 +100,22 @@
 - 本地缓存（`$DSH_HOME/waifu/tts-cache`）。
 
 随之删除：`ttsReference` / `ttsInstructions` 两个设置项、`voices/` 目录、`GET|POST /tts-sample*` 三个接口、
-`TtsVoiceOptions.reference` 与 `TtsVoiceOptions.instructions`。`fish-audio/drama-3` 仍是默认模型
-（它本身没有固定音色，每句人声会变）；想固定音色请换用 `TTS_MODELS` 里带音色列表的模型（qwen / kokoro）。
+`TtsVoiceOptions.reference` 与 `TtsVoiceOptions.instructions`。
 
 `SETTINGS_SCHEMA_VERSION` 保持 6：旧文件里的这两个键会被忽略（未知键不报错），下次保存即消失。
+
+## 修订三：语音目录只留通义千问 TTS，音色只收女声（2026-11-05）
+
+Drama 3 没有固定音色（每句换人声），Kokoro / MAI-Voice 的观感也不行。现在目录只留两个模型：
+
+| 模型 | 用途 | 女声 |
+| --- | --- | --- |
+| `qwen/qwen-audio-3.0-tts-plus` | 默认，旗舰音色，支持指令控制 | `longanlingxin` 龙安灵心（25 岁·知心温暖） |
+| `qwen/qwen-audio-3.0-tts-flash` | 便宜、女声最多 | `longanyuanfei` 龙安元妃（30 岁·高傲妃子）、`longanfengyue` 龙安风悦（30 岁·自然亲切）、`longanlingxi` 龙安灵希（25 岁·可爱甜美）、`longanxiaoxin` 龙安小昕（22 岁·亲切活泼）、`longanhuan_v3.6` 龙安欢、`longpaopao_v3.6` 龙泡泡（儿童）、`loongmary`、`loongeva_v3.6` |
+
+音色 id 就是千问文档里的「voice 参数」，**按模型区分**：把 plus 的音色发给 flash（或反过来）会被供应商
+拒 `400`，实测 `qwen/qwen-audio-3.0-tts-plus` + `longanlingxi` → `tts-http 400`。音色来源：
+<https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts>，只取「性别：女」的条目。
+
+`SETTINGS_SCHEMA_VERSION` 6 → 7：旧文件里目录外的模型（Drama 3 / MAI / Kokoro）统一回落到新默认，
+避免升级后每次合成都 400。

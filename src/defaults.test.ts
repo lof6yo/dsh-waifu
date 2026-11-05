@@ -39,34 +39,33 @@ describe('默认值一致性', () => {
 })
 
 describe('语音模型目录（ADR-033 修订）', () => {
-  it('默认模型在目录里；随机音色模型不配默认音色，固定音色模型取首个音色', () => {
+  it('默认模型在目录里，且默认音色属于它', () => {
     const model = TTS_MODELS.find((item) => item.id === DEFAULT_TTS_MODEL)
     expect(model, '默认模型必须在目录里').toBeTruthy()
-    if (model?.randomVoice) {
-      // Drama 3 这类模型没有固定音色：默认音色留空，由用户从下拉里选
-      expect(DEFAULT_TTS_VOICE).toBe('')
-      expect(model.voices).toEqual([])
-      expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe('')
-    } else {
-      expect(model?.voices.some((voice) => voice.id === DEFAULT_TTS_VOICE)).toBe(true)
-      expect(ttsModelRandomVoice(DEFAULT_TTS_MODEL)).toBe(false)
-    }
-    // 目录里两种模型都要有：随机音色的表演模型 + 音色固定的兜底模型
-    const fixed = TTS_MODELS.filter((item) => item.randomVoice !== true)
-    expect(fixed.length).toBeGreaterThan(0)
-    expect(ttsDefaultVoice(fixed[0].id)).toBe(fixed[0].voices[0].id)
+    expect(model!.voices.some((voice) => voice.id === DEFAULT_TTS_VOICE)).toBe(true)
+    expect(ttsModelRandomVoice(DEFAULT_TTS_MODEL)).toBe(false)
+    expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe(model!.voices[0].id)
   })
 
-  it('随机音色模型不提供音色列表；固定音色模型的音色 id 不重复', () => {
+  it('目录只保留通义千问 TTS Plus / Flash，且每个模型都有音色', () => {
+    expect(TTS_MODELS.map((item) => item.id)).toEqual([
+      'qwen/qwen-audio-3.0-tts-plus',
+      'qwen/qwen-audio-3.0-tts-flash',
+    ])
+    for (const model of TTS_MODELS) {
+      expect(model.voices.length, `${model.id} 至少一个音色`).toBeGreaterThan(0)
+      expect(model.randomVoice, `${model.id} 不应标随机音色`).toBeFalsy()
+    }
+  })
+
+  it('音色 id 在目录内不重复', () => {
     for (const model of TTS_MODELS) {
       const ids = model.voices.map((voice) => voice.id)
       expect(new Set(ids).size, `${model.id} 音色去重`).toBe(ids.length)
-      if (model.randomVoice) expect(ids, `${model.id} 随机音色不应列音色`).toHaveLength(0)
-      else expect(ids.length, `${model.id} 至少一个音色`).toBeGreaterThan(0)
     }
   })
 
-  it('ttsDefaultVoice 取首个音色；随机音色模型返回空串', () => {
+  it('ttsDefaultVoice 取首个音色；目录外模型返回空串', () => {
     expect(ttsDefaultVoice(DEFAULT_TTS_MODEL)).toBe(DEFAULT_TTS_VOICE)
     expect(ttsDefaultVoice('fish-audio/drama-3')).toBe('')
     expect(ttsDefaultVoice('unknown/model')).toBe('')

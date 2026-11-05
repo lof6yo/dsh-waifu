@@ -76,8 +76,8 @@ const BASE_SETTINGS: PetSettings = {
   waitingAiMax: 3,
   ttsEnabled: true,
   ttsEngine: 'openrouter',
-  ttsModel: 'fish-audio/drama-3',
-  ttsVoice: '',
+  ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
+  ttsVoice: 'longanlingxin',
   lipsyncEnabled: true,
   lipsyncGain: 100,
 }

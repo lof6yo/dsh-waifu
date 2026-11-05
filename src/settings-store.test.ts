@@ -38,8 +38,8 @@ const BASE: PetSettings = {
   waitingAiMax: 3,
   ttsEnabled: true,
   ttsEngine: 'openrouter',
-  ttsModel: 'fish-audio/drama-3',
-  ttsVoice: '',
+  ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
+  ttsVoice: 'longanlingxin',
   lipsyncEnabled: true,
   lipsyncGain: 100,
 }
@@ -293,14 +293,18 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
   it('默认值与可写字段', () => {
     const base = normalizeSettings({}, BASE)
     expect(base.ttsEnabled).toBe(true)
-    expect(base.ttsModel).toBe('fish-audio/drama-3')
-    expect(base.ttsVoice).toBe('')
+    expect(base.ttsModel).toBe('qwen/qwen-audio-3.0-tts-plus')
+    expect(base.ttsVoice).toBe('longanlingxin')
     expect(base.lipsyncEnabled).toBe(true)
     expect(base.lipsyncGain).toBe(100)
-    const custom = normalizeSettings({ ttsModel: 'x/y', ttsVoice: 'voice-1', lipsyncGain: 240 }, BASE)
+    // 目录外模型在旧文件（version < 7）里会被迁移回默认，新文件里原样保留
+    const custom = normalizeSettings({ version: 7, ttsModel: 'x/y', ttsVoice: 'voice-1', lipsyncGain: 240 }, BASE)
     expect(custom.ttsModel).toBe('x/y')
     expect(custom.ttsVoice).toBe('voice-1')
     expect(custom.lipsyncGain).toBe(240)
+    const legacy = normalizeSettings({ version: 6, ttsModel: 'fish-audio/drama-3', ttsVoice: '' }, BASE)
+    expect(legacy.ttsModel).toBe(BASE.ttsModel)
+    expect(legacy.ttsVoice).toBe(BASE.ttsVoice)
   })
 
   it('口型强度越界夹取，非法值回落 base', () => {
@@ -322,12 +326,12 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
     expect(legacy.ttsVoice).toBe(BASE.ttsVoice)
   })
 
-  it('已选过音色或别的固定音色模型时原样保留', () => {
-    const pinned = normalizeSettings({ version: 4, ttsModel: 'fish-audio/drama-3', ttsVoice: 'alloy' }, BASE)
-    expect(pinned.ttsModel).toBe('fish-audio/drama-3')
-    expect(pinned.ttsVoice).toBe('alloy')
-    const own = normalizeSettings({ version: 4, ttsModel: 'hexgrad/kokoro-82m', ttsVoice: '' }, BASE)
-    expect(own.ttsModel).toBe('hexgrad/kokoro-82m')
-    expect(own.ttsVoice).toBe('')
+  it('目录内的模型与音色原样保留；v7 之前目录外的模型回落到默认', () => {
+    const pinned = normalizeSettings({ version: 7, ttsModel: 'qwen/qwen-audio-3.0-tts-flash', ttsVoice: 'longanlingxi' }, BASE)
+    expect(pinned.ttsModel).toBe('qwen/qwen-audio-3.0-tts-flash')
+    expect(pinned.ttsVoice).toBe('longanlingxi')
+    const removed = normalizeSettings({ version: 6, ttsModel: 'hexgrad/kokoro-82m', ttsVoice: '' }, BASE)
+    expect(removed.ttsModel).toBe(BASE.ttsModel)
+    expect(removed.ttsVoice).toBe(BASE.ttsVoice)
   })
 })
