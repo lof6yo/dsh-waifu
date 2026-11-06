@@ -2371,6 +2371,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const ids = desiredExpressions()
     expressionTargets = expressionParams(ids)
     expressionSettled = false
+    expressionWriteLogged = false
     // 诊断：表情每次切换都留痕，排查「表情不生效」时看 ~/.dsh/waifu/client.log
     clientLog('info', 'expr targets', `${ids.join('+') || 'none'} ${JSON.stringify(expressionTargets)}`)
   }
@@ -2379,12 +2380,19 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 写入表情参数：布尔开关按「当前表情」目标值 0/1，带淡入淡出。
    * 在 InternalModel.update 之前调用——动作/物理不会写这些参数，先写即生效。
    */
+  let expressionWriteLogged = false
   function applyExpressionParams(
     coreModel: { setParameterValueById?(id: string, value: number, weight?: number): void } | undefined,
     dt: number,
   ): void {
     const set = coreModel?.setParameterValueById
-    if (typeof set !== 'function') return
+    if (typeof set !== 'function') {
+      if (!expressionWriteLogged && Object.keys(expressionTargets).length > 0) {
+        expressionWriteLogged = true
+        clientLog('warn', 'expr: coreModel.setParameterValueById is missing', String(typeof set))
+      }
+      return
+    }
     // 触摸临时表情到期：回到事件表情（顺带在帧内检查，不额外挂计时器）
     if (tempExpressions.length > 0 && Date.now() >= tempExpressionUntil) {
       tempExpressions = []
@@ -2409,6 +2417,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       }
       settled = false
       const next = current + (target - current) * fade
+      if (!expressionWriteLogged) {
+        expressionWriteLogged = true
+        clientLog('info', 'expr write', `${param} ${current.toFixed(2)}→${target} (now ${next.toFixed(2)})`)
+      }
       expressionMix.set(param, next)
       try {
         set.call(coreModel, param, next, 1)
