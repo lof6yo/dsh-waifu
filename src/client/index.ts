@@ -1229,9 +1229,30 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     model.focus(localX, localY)
   }
 
+  /** 临时表情（AI 标签 / 设置页预览）是否还在保持窗口内。 */
+  function expressionHoldActive(): boolean {
+    return tempExpressions.length > 0 && Date.now() < tempExpressionUntil
+  }
+
+  /**
+   * 演出一段临时表情：写目标值 + 这段时间内暂停鼠标跟随。
+   * 演出（动作/表情）期间让头眼固定在正前方，避免跟随不断叠加到关键帧上；
+   * 表情窗口结束、动作 motionFinish 时再恢复跟随（`releaseFocusSuppression`）。
+   */
+  function holdTemporaryExpression(ids: readonly string[]): void {
+    tempExpressions = [...ids]
+    tempExpressionUntil = Date.now() + TAG_EXPRESSION_HOLD_MS
+    repaintDebugExpressions?.()
+    focusSuppressed = true
+    try { model?.internalModel?.focusController?.focus(0, 0, true) } catch { /* 模型未就绪 */ }
+    refreshExpressionTargets()
+  }
+
   /** 解除非 idle 动作期间的 focus 抑制；若有最近指针位置则立即恢复跟随。 */
   function releaseFocusSuppression(): void {
     if (!focusSuppressed) return
+    // 动作与表情可能同时进行：任一方还在演就先别恢复跟随
+    if (interactionActive || expressionHoldActive()) return
     focusSuppressed = false
     if (model && lastPointerClient && !dragging && enabled && !hidden) {
       applyFocus(lastPointerClient.x, lastPointerClient.y)
@@ -2374,6 +2395,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (tempExpressions.length > 0 && Date.now() >= tempExpressionUntil) {
       tempExpressions = []
       refreshExpressionTargets()
+      // 表情演完：若没有动作在播，恢复鼠标跟随
+      releaseFocusSuppression()
     }
     if (expressionSettled) return
     const fade = Math.min(1, Math.max(0.02, dt * 1000 / EXPRESSION_FADE_MS))
@@ -2738,11 +2761,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       ? expressions.filter((item): item is string => typeof item === 'string' && isExpressionId(item))
       : []
     if (list.length > 0) {
-      tempExpressions = [...list]
-      tempExpressionUntil = Date.now() + TAG_EXPRESSION_HOLD_MS
-      repaintDebugExpressions?.()
       clientLog('info', 'ai expressions', list.join('+'))
-      refreshExpressionTargets()
+      holdTemporaryExpression(list)
     }
     const motionList = Array.isArray(motions)
       ? motions.filter((item): item is string => typeof item === 'string' && isMotionId(item))
@@ -2761,10 +2781,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (target.kind === 'expression') {
       if (!isExpressionId(target.id)) return
       debugExpression = null
-      tempExpressions = [target.id]
-      tempExpressionUntil = Date.now() + TAG_EXPRESSION_HOLD_MS
-      repaintDebugExpressions?.()
-      refreshExpressionTargets()
+      holdTemporaryExpression([target.id])
       clientLog('info', 'preview expression', target.id)
       return
     }

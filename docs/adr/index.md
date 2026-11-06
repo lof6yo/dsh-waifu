@@ -46,3 +46,4 @@
 | 038 | [部位自定义交互：名字由用户起，触发条件单击 / 双击 / 停留](./038-part-interactions.md) | 已采纳 |
 | 039 | [历史注入改短句、DSH 事件文案可配置](./039-compact-history-and-event-texts.md) | 已采纳 |
 | 040 | [动作/表情的「给模型的释义」可在设置页编辑](./040-editable-motion-expression-prompts.md) | 已采纳 |
+| 041 | [演出手势（动作 / 表情）期间暂停鼠标跟随](./041-pause-focus-during-performance.md) | 已采纳 |
