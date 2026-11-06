@@ -39,6 +39,7 @@ const BASE_SETTINGS: PetSettings = {
   idleTimeoutSec: 300,
   activityWindowSec: 3,
   eventTriggers: defaultEventTriggers(),
+  eventTexts: {},
   ttsEnabled: true,
   ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',

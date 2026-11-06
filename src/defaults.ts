@@ -80,6 +80,43 @@ export function defaultEventTriggers(): Record<string, boolean> {
   return out
 }
 
+/** 事件键 → 内置场景文案（ADR-039：用户可在设置页覆写，空 = 用这里的）。 */
+export const DEFAULT_EVENT_TEXTS: Readonly<Record<string, string>> = {
+  thinking: '主人让你想事情，你正在思考',
+  error: '出错了，气氛有点僵',
+  done: '事情办完了',
+  waiting: '主人正在等你确认什么',
+  delivered: '主人刚交付了成果',
+  'tool-read': '主人让你看东西，你正翻着资料',
+  'tool-write': '主人让你写/改东西，你刚动完笔',
+  'tool-run': '主人让你跑命令，你刚按下回车',
+  'tool-agent': '主人派你去办事，你正准备出发',
+  'tool-other': '主人让你用了件别的工具，你顺手做了',
+  'approval-granted': '主人刚刚批准了你的请求',
+  'approval-denied': '主人刚刚拒绝了你的请求',
+  'session-open': '主人刚开了一个新会话，才见到你',
+  'session-close': '这轮会话结束了，主人要走了',
+  'subagent-start': '你的分身刚被派出去干活',
+  'subagent-end': '你的分身干完活回来了',
+}
+
+/** 事件文案的字符上限（设置页输入框与归一化共用）。 */
+export const EVENT_TEXT_MAX = 60
+
+/** 归一化事件文案：只留已知事件键、压空白、截断；空串 = 用内置文案。 */
+export function normalizeEventTexts(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  const record = raw as Record<string, unknown>
+  for (const key of TRIGGER_EVENTS) {
+    const value = record[key]
+    if (typeof value !== 'string') continue
+    const text = value.replace(/\s+/g, ' ').trim().slice(0, EVENT_TEXT_MAX)
+    if (text.length > 0) out[key] = text
+  }
+  return out
+}
+
 /** 归一化场景开关：未知键忽略；缺失的键补 true（新场景默认开）。 */
 export function normalizeEventTriggers(raw: unknown): Record<string, boolean> {
   const out = defaultEventTriggers()
@@ -269,6 +306,8 @@ export const DEFAULT_SETTINGS = {
   activityWindowSec: DEFAULT_ACTIVITY_WINDOW_SEC,
   /** 按事件类型的触发开关（v8 起持久化；normalizeSettings 会补全键）。 */
   eventTriggers: defaultEventTriggers(),
+  /** 事件文案覆写（空 = 用内置文案；键为事件键）。 */
+  eventTexts: {} as Record<string, string>,
   /** 待机小动作（偶尔偏头/抬眉/换重心/叹气），关掉后只有 Idle 循环。 */
   idleMotionEnabled: true,
   /** 交互条：模型上下的静音按钮 + 对话输入框。 */

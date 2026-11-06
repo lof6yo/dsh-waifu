@@ -63,7 +63,7 @@ import {
 import {
   AI_HISTORY_MAX_ENTRIES,
   appendHistory,
-  buildSceneMessage,
+  historySceneText,
   normalizeTimeZone,
   generateReply,
   loadPersona,
@@ -125,7 +125,7 @@ export const name = 'dsh-waifu'
 export type MaxFpsOption = 30 | 60 | 0
 
 /** 插件配置（cordis.patch.yml 的 config 是 base 层；用户改动落插件私有设置文件，ADR-013）。 */
-export interface Config extends Omit<PetSettings, 'maxFps' | 'eventTriggers'> {
+export interface Config extends Omit<PetSettings, 'maxFps' | 'eventTriggers' | 'eventTexts'> {
   /** 渲染帧率档（30 / 60 / 0=不限制；Schema 层用字面量联合校验）。 */
   maxFps: MaxFpsOption
 }
@@ -231,6 +231,7 @@ export function apply(ctx: Context, config: Config): void {
     idleTimeoutSec: config.idleTimeoutSec,
     activityWindowSec: config.activityWindowSec,
     eventTriggers: defaultEventTriggers(),
+    eventTexts: {},
     barPosition: config.barPosition,
     barOffset: config.barOffset,
     ttsEnabled: config.ttsEnabled,
@@ -315,6 +316,7 @@ export function apply(ctx: Context, config: Config): void {
       persona: loadPersona(waifuHome),
       memory: memoryContext(memories, settings.aiMemoryCount),
       context,
+      eventTexts: settings.eventTexts,
       history: aiHistory,
       historyCount: settings.aiHistoryCount,
       onPayload,
@@ -334,7 +336,8 @@ export function apply(ctx: Context, config: Config): void {
     const at = Date.now()
     aiHistory = appendHistory(aiHistory, {
       role: 'user',
-      text: buildSceneMessage(context),
+      // 历史只记最短事实（ADR-039）：整段场景句重复注入 N 次太占 token
+      text: historySceneText(context, settings.eventTexts),
       at,
     })
     aiHistory = appendHistory(

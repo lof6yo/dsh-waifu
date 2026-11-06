@@ -36,6 +36,7 @@ const BASE: PetSettings = {
   idleTimeoutSec: 300,
   activityWindowSec: 3,
   eventTriggers: defaultEventTriggers(),
+  eventTexts: {},
   ttsEnabled: true,
   ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
@@ -185,6 +186,19 @@ describe('SettingsStore', () => {
     expect(store.get().barOffset).toBe(-200)
     store.applyOps([{ op: 'set', path: ['barOffset'], value: 'nope' }])
     expect(store.get().barOffset).toBe(0)
+  })
+
+  it('eventTexts 二层路径可写单个事件文案，空串删除覆写（ADR-039）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().eventTexts).toEqual({})
+    store.applyOps([{ op: 'set', path: ['eventTexts', 'tool-run'], value: '  主人正在跑测试  ' }])
+    expect(store.get().eventTexts).toEqual({ 'tool-run': '主人正在跑测试' })
+    // 未知事件键忽略
+    store.applyOps([{ op: 'set', path: ['eventTexts', 'nope'], value: 'x' }])
+    expect(store.get().eventTexts).toEqual({ 'tool-run': '主人正在跑测试' })
+    // 空串 = 删掉覆写
+    store.applyOps([{ op: 'set', path: ['eventTexts', 'tool-run'], value: '   ' }])
+    expect(store.get().eventTexts).toEqual({})
   })
 
   it('eventTriggers 二层路径可单开关写入，非法值回落 true（ADR-037）', () => {

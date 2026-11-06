@@ -24,6 +24,8 @@ import {
   defaultEventTriggers,
   normalizeBarPosition,
   normalizeEventTriggers,
+  normalizeEventTexts,
+  EVENT_TEXT_MAX,
   normalizeFocusRange,
   normalizeLipsyncGain,
   normalizeTriggerMode,
@@ -97,6 +99,8 @@ export interface PetSettings {
   activityWindowSec: number
   /** 按 DSH 事件类型粒度的触发开关（触摸/对话始终可触发，不在此表）。 */
   eventTriggers: EventTriggers
+  /** 事件文案覆写（空 = 内置文案；ADR-039）。 */
+  eventTexts: Record<string, string>
   /** 交互条位置（模型上方 / 下方）。 */
   barPosition: BarPosition
   /** 交互条额外偏移（px，正数远离模型）。 */
@@ -240,6 +244,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
   // v8 起 ADR-037：旧字段（aiTouchOnly/aiTakeover/interactionMode/thinking*/waiting*）在返回对象里
   // 根本没有位置，天然作废；eventTriggers 允许部分写入，缺的键按默认（开）补齐。
   const eventTriggers = normalizeEventTriggers(record.eventTriggers)
+  const eventTexts = normalizeEventTexts(record.eventTexts)
   return {
     enabled: bool('enabled'),
     size: clampSize(record.size) ?? base.size,
@@ -269,6 +274,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     idleTimeoutSec: clampInt(record.idleTimeoutSec, base.idleTimeoutSec, IDLE_TIMEOUT_LIMITS.min, IDLE_TIMEOUT_LIMITS.max),
     activityWindowSec: clampInt(record.activityWindowSec, base.activityWindowSec, ACTIVITY_WINDOW_LIMITS.min, ACTIVITY_WINDOW_LIMITS.max),
     eventTriggers: version >= SETTINGS_SCHEMA_VERSION ? eventTriggers : defaultEventTriggers(),
+    eventTexts,
     barPosition: normalizeBarPosition(record.barPosition, base.barPosition),
     barOffset: clampInt(record.barOffset, base.barOffset, BAR_OFFSET_LIMITS.min, BAR_OFFSET_LIMITS.max),
     ttsEnabled: bool('ttsEnabled'),
@@ -367,6 +373,20 @@ export class SettingsStore {
           next.eventTriggers = triggers
         } else if (op.path.length === 1) {
           next.eventTriggers = op.value
+        }
+        continue
+      }
+      if (key === 'eventTexts') {
+        // 二层路径：单个事件文案（空串 = 删掉覆写，回到内置文案）
+        if (op.path.length === 2 && typeof op.path[1] === 'string') {
+          const eventKey = op.path[1]
+          const texts = { ...(next.eventTexts as Record<string, string>) }
+          const text = typeof op.value === 'string' ? op.value.replace(/\s+/g, ' ').trim().slice(0, EVENT_TEXT_MAX) : ''
+          if (text.length > 0) texts[eventKey] = text
+          else delete texts[eventKey]
+          next.eventTexts = texts
+        } else if (op.path.length === 1) {
+          next.eventTexts = op.value
         }
         continue
       }

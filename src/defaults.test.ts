@@ -28,6 +28,11 @@ describe('默认值一致性', () => {
         )
         continue
       }
+      // eventTexts 同理：覆写表由用户填写，schema 里没有该键
+      if (key === 'eventTexts') {
+        expect(value).toEqual({})
+        continue
+      }
       expect(resolved[key], `schema 默认 ${key}`).toBe(value)
     }
   })

@@ -13,7 +13,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { AI_HISTORY_LIMITS, AI_MEMORY_LIMITS, normalizeHistoryCount, normalizeMemoryCount } from './defaults.ts'
+import { AI_HISTORY_LIMITS, AI_MEMORY_LIMITS, DEFAULT_EVENT_TEXTS, normalizeHistoryCount, normalizeMemoryCount } from './defaults.ts'
 import { AI_MOTIONS, EXPRESSIONS, isExpressionId, isMotionId, stripTimestamps } from './models.ts'
 
 export { AI_HISTORY_LIMITS, AI_MEMORY_LIMITS, normalizeHistoryCount, normalizeMemoryCount }
@@ -305,28 +305,6 @@ export function loadPersona(homeDir: string): string {
   }
 }
 
-/**
- * DSH 事件键 → 场景描述（ADR-037）：状态 + 活动都只是「发生了什么」的一种。
- */
-const EVENT_SCENES: Record<string, string> = {
-  thinking: '主人让你想事情，你正在思考',
-  error: '出错了，气氛有点僵',
-  done: '事情办完了',
-  waiting: '主人正在等你确认什么',
-  delivered: '主人刚交付了成果',
-  'tool-read': '主人让你看东西，你正翻着资料',
-  'tool-write': '主人让你写/改东西，你刚动完笔',
-  'tool-run': '主人让你跑命令，你刚按下回车',
-  'tool-agent': '主人派你去办事，你正准备出发',
-  'tool-other': '主人让你用了件别的工具，你顺手做了',
-  'approval-granted': '主人刚刚批准了你的请求',
-  'approval-denied': '主人刚刚拒绝了你的请求',
-  'session-open': '主人刚开了一个新会话，才见到你',
-  'session-close': '这轮会话结束了，主人要走了',
-  'subagent-start': '你的分身刚被派出去干活',
-  'subagent-end': '你的分身干完活回来了',
-}
-
 /** 触摸类型 → 场景动词。 */
 const TAP_KIND_SCENES: Record<TapKind, string> = {
   light: '轻轻碰了一下',
@@ -334,11 +312,21 @@ const TAP_KIND_SCENES: Record<TapKind, string> = {
   stroke: '温柔地抚摸',
 }
 
+/** 事件文案覆写（事件键 → 用户自定义那句话；缺省用内置文案）。 */
+export type EventTexts = Record<string, string>
+
+/** 事件键 → 场景描述：用户覆写优先，其次内置，最后兜底成「发生了「<键>」这件事」。 */
+export function eventSceneText(event: string, texts?: EventTexts): string {
+  const custom = texts?.[event]?.trim()
+  if (custom) return custom
+  return DEFAULT_EVENT_TEXTS[event] ?? `发生了「${event}」这件事`
+}
+
 /**
  * 拼「现在发生了什么」的用户消息（模型只看这一句就能接话）。
  * `merged` 是触发频率窗口内被合并进来的事件描述（ADR-037）。
  */
-export function buildSceneMessage(context: ReplyContext): string {
+export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts): string {
   const now = formatNow(Date.now(), context.tz)
   let where: string
   if (context.kind === 'chat') {
@@ -354,7 +342,7 @@ export function buildSceneMessage(context: ReplyContext): string {
     where = '有一阵子没人理你，也没发生什么事'
   } else {
     const event = context.event ?? 'idle'
-    where = `眼下${EVENT_SCENES[event] ?? `发生了「${event}」这件事`}`
+    where = `眼下${eventSceneText(event, eventTexts)}`
   }
   // 事件合并：窗口内被攒下来的事件一起描述（模型自己会挑重点反应）
   const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
@@ -363,6 +351,29 @@ export function buildSceneMessage(context: ReplyContext): string {
     ? '按你的人设回应主人这句话。'
     : '按你的人设即兴演一下这一刻的反应。'
   return `（现在是 ${now}。${where}。${mergedText}）${ask}`
+}
+
+/**
+ * 历史里那句「当时发生了什么」（ADR-039）：只留最短的事实，
+ * 换成 `[HH:MM] 主人轻碰「脸」` 这种一行式，避免把整段场景句重复注入 N 次。
+ */
+export function historySceneText(context: ReplyContext, eventTexts?: EventTexts): string {
+  if (context.kind === 'chat') {
+    const said = (context.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
+    return `主人说「${said || '（没说话）'}」`
+  }
+  if (context.kind === 'tap') {
+    const custom = (context.interaction ?? '').trim().slice(0, 20)
+    const part = context.part || '身体'
+    const seconds = context.durationMs !== undefined && context.durationMs >= 1000
+      ? `（${(context.durationMs / 1000).toFixed(1)}s）`
+      : ''
+    return custom ? `主人${custom}「${part}」${seconds}` : `主人碰了「${part}」${seconds}`
+  }
+  if (context.kind === 'idle') return '一阵子没动静'
+  const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
+  const main = eventSceneText(context.event ?? 'idle', eventTexts)
+  return merged.length > 0 ? `${main}（另有 ${merged.length} 件事）` : main
 }
 
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */
@@ -534,6 +545,7 @@ function assembleRequest(options: {
   persona: string
   memory: string
   context: ReplyContext
+  eventTexts?: EventTexts
   history?: readonly AiHistoryEntry[]
   historyCount?: number
   memoryCount?: number
@@ -546,7 +558,7 @@ function assembleRequest(options: {
   }, options.context.tz)
   const messages = [
     ...history,
-    { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context) }] },
+    { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context, options.eventTexts) }] },
   ]
   options.onPayload?.({
     provider: options.provider,
@@ -574,6 +586,8 @@ export async function generateReply(
     persona: string
     memory?: string
     context: ReplyContext
+    /** 事件文案覆写（ADR-039）。 */
+    eventTexts?: EventTexts
     timeoutMs?: number
     history?: readonly AiHistoryEntry[]
     historyCount?: number
@@ -661,6 +675,8 @@ export async function* streamReply(
     persona: string
     memory?: string
     context: ReplyContext
+    /** 事件文案覆写（ADR-039）。 */
+    eventTexts?: EventTexts
     timeoutMs?: number
     history?: readonly AiHistoryEntry[]
     historyCount?: number

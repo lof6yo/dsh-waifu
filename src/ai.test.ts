@@ -16,6 +16,7 @@ import {
   buildSceneMessage,
   generateReply,
   historyMessages,
+  historySceneText,
   loadPersona,
   parseLeadingTags,
   extractMemoryNote,
@@ -108,6 +109,22 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
     expect(buildSceneMessage({ kind: 'tap', part: '脸', tapKind: 'light' })).toContain('轻轻碰了一下你的「脸」')
     expect(buildSceneMessage({ kind: 'tap', part: '胸', tapKind: 'poke', durationMs: 400 })).toContain('戳了戳你的「胸」，按了约 0.4 秒')
     expect(buildSceneMessage({ kind: 'tap', part: '头', tapKind: 'stroke', durationMs: 1500 })).toContain('温柔地抚摸你的「头」')
+  })
+
+  it('事件文案可被设置覆写（ADR-039）', () => {
+    const texts = { 'tool-run': '主人正在跑测试，键盘噼里啪啦' }
+    expect(buildSceneMessage({ kind: 'event', event: 'tool-run', tz: 'Asia/Shanghai' }, texts)).toContain('主人正在跑测试，键盘噼里啪啦')
+    // 没覆写的事件仍用内置文案
+    expect(buildSceneMessage({ kind: 'event', event: 'error', tz: 'Asia/Shanghai' }, texts)).toContain('出错了')
+  })
+
+  it('历史只记最短事实，不重复整段场景句（ADR-039）', () => {
+    const tap = historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸', durationMs: 3200 })
+    expect(tap).toBe('主人抚摸「脸」（3.2s）')
+    expect(historySceneText({ kind: 'chat', text: '你在干嘛' })).toBe('主人说「你在干嘛」')
+    expect(historySceneText({ kind: 'idle' })).toBe('一阵子没动静')
+    expect(historySceneText({ kind: 'event', event: 'thinking' })).toBe('主人让你想事情，你正在思考')
+    expect(historySceneText({ kind: 'event', event: 'tool-run', merged: ['a', 'b'] })).toBe('主人让你跑命令，你刚按下回车（另有 2 件事）')
   })
 
   it('事件情景按事件键给出不同描述（状态 + 活动）', () => {

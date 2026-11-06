@@ -34,12 +34,15 @@ import {
   BAR_OFFSET_LIMITS,
   DEFAULT_AI_HISTORY,
   DEFAULT_AI_MEMORY,
+  DEFAULT_EVENT_TEXTS,
   DEFAULT_MODEL_ID,
   DEFAULT_SETTINGS,
+  EVENT_TEXT_MAX,
   FOCUS_RANGE_LIMITS,
   IDLE_TIMEOUT_LIMITS,
   LIPSYNC_GAIN_LIMITS,
   TTS_MODELS,
+  normalizeEventTexts,
   normalizeEventTriggers,
   normalizeFocusRange,
   normalizeHistoryCount,
@@ -115,6 +118,8 @@ export interface PetSettingsValue {
   activityWindowSec: number
   /** 按 DSH 事件类型的触发开关（触摸/对话始终可触发）。 */
   eventTriggers: Record<string, boolean>
+  /** 事件文案覆写（空 = 内置文案；ADR-039）。 */
+  eventTexts: Record<string, string>
   /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
   ttsEnabled: boolean
   /** 语音模型 slug（OpenRouter speech 模型）。 */
@@ -2287,24 +2292,42 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowStartStyle },
-        createElement(FormLabel, { title: '触发场景', hint: '打开的事件才会让角色反应；触摸与对话始终可触发，不用开关' }),
-        createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: '6px 10px' } },
+        createElement(FormLabel, {
+          title: '触发场景',
+          hint: '打开的事件才会让角色反应；触摸与对话始终可触发。下面的输入框可以改「这件事怎么描述给模型」，留空用内置文案',
+        }),
+        createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '8px 12px' } },
           TRIGGER_ORDER.map((event) => {
             const enabled = normalizeEventTriggers(value.eventTriggers)[event] !== false
-            return createElement('label', {
-              key: `trigger-${event}`,
-              style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap' },
-            },
+            const custom = normalizeEventTexts(value.eventTexts)[event] ?? ''
+            return createElement('div', { key: `trigger-${event}`, style: { display: 'flex', flexDirection: 'column', gap: 3 } },
+              createElement('label', {
+                style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap' },
+              },
+                createElement('input', {
+                  type: 'checkbox',
+                  checked: enabled,
+                  disabled: !writable,
+                  onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                    const next = e.target.checked
+                    enqueueWrite(() => [{ op: 'set', path: ['eventTriggers', event], value: next }])
+                  },
+                }),
+                TRIGGER_EVENT_LABELS[event] ?? event,
+              ),
               createElement('input', {
-                type: 'checkbox',
-                checked: enabled,
+                type: 'text',
+                value: custom,
+                placeholder: DEFAULT_EVENT_TEXTS[event] ?? '',
+                maxLength: EVENT_TEXT_MAX,
                 disabled: !writable,
+                title: `内置文案：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
+                style: { ...numberInputStyle, width: '100%', fontSize: 11 },
                 onChange: (e: ChangeEvent<HTMLInputElement>) => {
-                  const next = e.target.checked
-                  enqueueWrite(() => [{ op: 'set', path: ['eventTriggers', event], value: next }])
+                  const next = e.target.value
+                  enqueueWrite(() => [{ op: 'set', path: ['eventTexts', event], value: next }])
                 },
               }),
-              TRIGGER_EVENT_LABELS[event] ?? event,
             )
           }),
         ),
