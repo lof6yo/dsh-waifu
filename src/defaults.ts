@@ -14,20 +14,20 @@ import { clampInt } from './clamp.ts'
 import { ACTIVITY_EVENTS, AI_MOTION_IDS, ANIMATION_SLOTS, EXPRESSION_IDS, type PetEventKey } from './models.ts'
 
 /** 显示/位置持久化默认值（`$DSH_HOME/waifu.json`，px 相对视口右下角）。 */
-export const DEFAULT_DISPLAY = { right: 24, bottom: 20, size: 300 } as const
+export const DEFAULT_DISPLAY = { right: 10, bottom: 0, size: 280 } as const
 
 /** 冷启动/快照缺字段时的渲染兜底常量。 */
 export const DEFAULT_CANVAS_PAD_X = 125
 export const DEFAULT_CANVAS_PAD_Y = 50
-export const DEFAULT_HOME_RIGHT = 12
-export const DEFAULT_HOME_BOTTOM = 31
+export const DEFAULT_HOME_RIGHT = 10
+export const DEFAULT_HOME_BOTTOM = 0
 export const DEFAULT_BUBBLE_OFFSET_X = 0
-export const DEFAULT_BUBBLE_OFFSET_Y = -15
+export const DEFAULT_BUBBLE_OFFSET_Y = 24
 export const DEFAULT_BUBBLE_BG_COLOR = '#ffffff'
 export const DEFAULT_BUBBLE_BG_OPACITY = 92
 export const DEFAULT_BUBBLE_TEXT_COLOR = '#222222'
 /** 气泡最长连续可见时长（秒；0 = 不限，ADR-027）。 */
-export const DEFAULT_BUBBLE_MAX_SECONDS = 30
+export const DEFAULT_BUBBLE_MAX_SECONDS = 10
 /** 渲染帧率档（30 / 60 / 0=不限制）。 */
 export const DEFAULT_MAX_FPS = 30
 /** 默认模型 id（与内置 preset 目录一致）。 */
@@ -48,7 +48,7 @@ export const DEFAULT_AI_MEMORY = 20
  */
 export const TRIGGER_MODES = ['interrupt', 'queue'] as const
 export type TriggerMode = (typeof TRIGGER_MODES)[number]
-export const DEFAULT_TRIGGER_MODE: TriggerMode = 'interrupt'
+export const DEFAULT_TRIGGER_MODE: TriggerMode = 'queue'
 
 /** 归一化触发频率策略：未知值回退默认。 */
 export function normalizeTriggerMode(value: unknown, fallback: TriggerMode): TriggerMode {
@@ -56,15 +56,15 @@ export function normalizeTriggerMode(value: unknown, fallback: TriggerMode): Tri
 }
 
 /** 事件类触发的最小间隔（秒）：上一次 AI 反应开始后多久内不再因 DSH 事件触发；触摸/对话不受限。 */
-export const DEFAULT_AI_MIN_INTERVAL_SEC = 3
+export const DEFAULT_AI_MIN_INTERVAL_SEC = 1
 export const AI_MIN_INTERVAL_LIMITS = { min: 0, max: 600 } as const
 
 /** 静默超时（秒）：多久没有任何事件/互动就自动触发一轮；0 = 关闭。 */
-export const DEFAULT_IDLE_TIMEOUT_SEC = 300
+export const DEFAULT_IDLE_TIMEOUT_SEC = 600
 export const IDLE_TIMEOUT_LIMITS = { min: 0, max: 3600 } as const
 
 /** 同类事件触发窗口（秒，Host 节流）：窗口内同类活动只触发一次。 */
-export const DEFAULT_ACTIVITY_WINDOW_SEC = 3
+export const DEFAULT_ACTIVITY_WINDOW_SEC = 10
 export const ACTIVITY_WINDOW_LIMITS = { min: 0, max: 300 } as const
 
 /** 场景开关表（Record 形式持久化在 settings.jsonc）。 */
@@ -93,20 +93,32 @@ export const TRIGGER_EVENT_LABELS: Readonly<Record<string, string>> = {
   'subagent-end': '子代理·归来',
 }
 
-/** 默认全部场景可触发（Record 形式持久化在 settings.jsonc）。 */
+/** 默认关闭的场景（工具调用类噪音大、会话结束/子代理与桌面宠物关系远；可在设置页打开）。 */
+const TRIGGER_EVENTS_OFF: readonly string[] = [
+  'tool-read',
+  'tool-write',
+  'tool-run',
+  'tool-agent',
+  'tool-other',
+  'session-close',
+  'subagent-start',
+  'subagent-end',
+]
+
+/** 默认场景开关（Record 形式持久化在 settings.jsonc）：除 TRIGGER_EVENTS_OFF 外全开。 */
 export function defaultEventTriggers(): Record<string, boolean> {
   const out: Record<string, boolean> = {}
-  for (const key of TRIGGER_EVENTS) out[key] = true
+  for (const key of TRIGGER_EVENTS) out[key] = !TRIGGER_EVENTS_OFF.includes(key)
   return out
 }
 
 /** 事件键 → 内置场景文案（ADR-039：用户可在设置页覆写，空 = 用这里的）。 */
 export const DEFAULT_EVENT_TEXTS: Readonly<Record<string, string>> = {
-  thinking: '主人让你想事情，你正在思考',
-  error: '出错了，气氛有点僵',
-  done: '事情办完了',
-  waiting: '主人正在等你确认什么',
-  delivered: '主人刚交付了成果',
+  thinking: '你正在思考',
+  error: '运行出错了',
+  done: '你完成了任务',
+  waiting: '你要等主人确认',
+  delivered: '你交付了成果',
   'tool-read': '主人让你看东西，你正翻着资料',
   'tool-write': '主人让你写/改东西，你刚动完笔',
   'tool-run': '主人让你跑命令，你刚按下回车',
@@ -242,10 +254,10 @@ export const TTS_MODELS: TtsModelOption[] = [
   },
 ]
 
-/** 默认 TTS 模型：通义千问 TTS Plus（旗舰音色）。 */
+/** 默认 TTS 模型：通义千问 TTS Flash（女声最多、便宜）。 */
 export const DEFAULT_TTS_MODEL = 'qwen/qwen-audio-3.0-tts-flash'
-/** 默认音色：Flash 的「龙安小昕」（22 岁·亲切活泼）。 */
-export const DEFAULT_TTS_VOICE = 'longanxiaoxin'
+/** 默认音色：Flash 的「龙安灵希」（25 岁·可爱甜美）。 */
+export const DEFAULT_TTS_VOICE = 'longanlingxi'
 /** 按 id 查模型选项。 */
 export function ttsModelOption(id: string): TtsModelOption | undefined {
   return TTS_MODELS.find((item) => item.id === id)
@@ -264,10 +276,10 @@ export function ttsDefaultVoice(model: string): string {
 /** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */
 export const DEFAULT_LIPSYNC_ENABLED = true
 /** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
-export const DEFAULT_LIPSYNC_GAIN = 140
+export const DEFAULT_LIPSYNC_GAIN = 130
 
 /** 鼠标跟随范围：以模型包围盒为基准向外扩展的百分比（0 = 只在模型框内跟随）。 */
-export const DEFAULT_FOCUS_RANGE = 60
+export const DEFAULT_FOCUS_RANGE = 100
 
 export const FOCUS_RANGE_LIMITS = { min: 0, max: 300 } as const
 
@@ -303,9 +315,9 @@ export function normalizeMemoryCount(value: unknown, fallback: number): number {
 export const BAR_POSITIONS = ['top', 'bottom', 'hidden'] as const
 /** `hidden` = 不显示交互条（只留模型本体）。 */
 export type BarPosition = (typeof BAR_POSITIONS)[number]
-export const DEFAULT_BAR_POSITION: BarPosition = 'bottom'
+export const DEFAULT_BAR_POSITION: BarPosition = 'top'
 /** 交互条沿「吸附边」的额外偏移（px，正数 = 远离模型；默认 0）。 */
-export const DEFAULT_BAR_OFFSET = 0
+export const DEFAULT_BAR_OFFSET = -30
 export const BAR_OFFSET_LIMITS = { min: -200, max: 200 } as const
 
 /** 归一化交互条位置：未知值回退默认。 */
@@ -321,8 +333,8 @@ export const DEFAULT_SETTINGS = {
   enabled: true,
   size: DEFAULT_DISPLAY.size,
   maxFps: DEFAULT_MAX_FPS,
-  developerMode: false,
-  debug: false,
+  developerMode: true,
+  debug: true,
   showTapZones: false,
   canvasPadX: DEFAULT_CANVAS_PAD_X,
   canvasPadY: DEFAULT_CANVAS_PAD_Y,
@@ -358,8 +370,8 @@ export const DEFAULT_SETTINGS = {
   expressionTexts: {} as Record<string, string>,
   /** 动作是否发给模型供选择（缺省 = 全开；false = 不列进提示词、也不接受该标签）。 */
   motionEnabled: {} as Record<string, boolean>,
-  /** 表情是否发给模型供选择（缺省 = 全开）。 */
-  expressionEnabled: {} as Record<string, boolean>,
+  /** 表情是否发给模型供选择（缺省 = 全开；`blood` 羞愤默认不给）。 */
+  expressionEnabled: { blood: false } as Record<string, boolean>,
   /** 待机小动作（偶尔偏头/抬眉/换重心/叹气），关掉后只有 Idle 循环。 */
   idleMotionEnabled: true,
   /** 交互条：模型上下的静音按钮 + 对话输入框。 */

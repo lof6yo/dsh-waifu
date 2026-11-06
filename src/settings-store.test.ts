@@ -222,7 +222,7 @@ describe('SettingsStore', () => {
     expect(store.get().motionTexts).toEqual({})
   })
 
-  it('eventTriggers 二层路径可单开关写入，非法值回落 true（ADR-037）', () => {
+  it('eventTriggers 二层路径可单开关写入，非法值回落默认（ADR-037）', () => {
     const store = new SettingsStore(BASE)
     expect(store.get().eventTriggers).toEqual(defaultEventTriggers())
     store.applyOps([{ op: 'set', path: ['eventTriggers', 'tool-read'], value: false }])
@@ -237,9 +237,10 @@ describe('SettingsStore', () => {
     store.applyOps([{ op: 'set', path: ['eventTriggers'], value: { error: false } }])
     const triggers = store.get().eventTriggers
     expect(triggers['error']).toBe(false)
+    const fallback = defaultEventTriggers()
     for (const key of TRIGGER_EVENTS) {
       if (key === 'error') continue
-      expect(triggers[key], `整体写入后 ${key} 应回默认开`).toBe(true)
+      expect(triggers[key], `整体写入后 ${key} 应回默认`).toBe(fallback[key])
     }
   })
 

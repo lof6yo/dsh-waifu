@@ -91,12 +91,12 @@ export interface ExpressionDef {
 /** 全部内置表情（`none` 表示恢复无表情；目录同时是 AI 可选表情与设置页勾选清单）。 */
 export const EXPRESSIONS: readonly ExpressionDef[] = [
   { id: 'none', name: '无', params: {}, meaning: '' },
-  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin', meaning: '害羞、被戳中软处' },
-  { id: 'angry', name: '生气', params: { ParamSwitch4: 1 }, meaning: '恼火、炸毛' },
+  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin', meaning: '娇羞、害羞、被戳中软处、舒服' },
+  { id: 'angry', name: '生气', params: { ParamSwitch4: 1 }, meaning: '生气、发脾气、炸毛' },
   { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 }, exclusive: 'eye', meaning: '开心、崇拜、两眼放光' },
   { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 }, exclusive: 'eye', meaning: '无语、嫌弃、不屑' },
   { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 }, exclusive: 'eye', meaning: '委屈、含着泪' },
-  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 }, exclusive: 'eye', meaning: '喜欢、心里小鹿乱撞' },
+  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 }, exclusive: 'eye', meaning: '喜欢、心里小鹿乱撞、性奋' },
   { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 }, exclusive: 'eye', meaning: '哭出来、伤心' },
   { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 }, exclusive: 'skin', meaning: '不爽、阴沉下来' },
   { id: 'blood', name: '羞愤', params: { ParamSwitch3: 1 }, exclusive: 'skin', meaning: '又羞又气、脸上挂不住' },
@@ -113,13 +113,13 @@ export interface MotionDef {
 
 export const AI_MOTIONS: readonly MotionDef[] = [
   { id: 'Nod', name: '点头', meaning: '同意、得意、敷衍地应一声' },
-  { id: 'ShakeHead', name: '摇头', meaning: '拒绝、无奈、不敢相信' },
-  { id: 'Tilt', name: '歪头', meaning: '好奇、疑惑、没听懂' },
-  { id: 'Sway', name: '左右晃', meaning: '撒娇、放松、哼着小曲' },
-  { id: 'Glance', name: '瞥一眼', meaning: '偷瞄、在意又嘴硬' },
-  { id: 'Perk', name: '竖起耳朵', meaning: '来了兴致、警觉、竖起耳朵' },
-  { id: 'Shift', name: '换重心', meaning: '准备动手、活动身体' },
-  { id: 'Sigh', name: '叹气', meaning: '无奈、松一口气' },
+  { id: 'ShakeHead', name: '摇头', meaning: '无语、不敢相信、傲娇、拒绝、欲拒还迎' },
+  { id: 'Tilt', name: '歪头', meaning: '好奇、疑惑、没听懂、质疑' },
+  { id: 'Sway', name: '左右晃', meaning: '撒娇、放松、妩媚、吸引' },
+  { id: 'Glance', name: '瞥一眼', meaning: '偷瞄、关注' },
+  { id: 'Perk', name: '竖起耳朵', meaning: '警觉' },
+  { id: 'Shift', name: '换重心', meaning: '活动身体、调皮' },
+  { id: 'Sigh', name: '叹气', meaning: '叹气' },
 ]
 
 /** AI 可选动作组 id 列表。 */

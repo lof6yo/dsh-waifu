@@ -237,7 +237,7 @@ export function apply(ctx: Context, config: Config): void {
     motionTexts: {},
     expressionTexts: {},
     motionEnabled: {},
-    expressionEnabled: {},
+    expressionEnabled: { ...DEFAULT_SETTINGS.expressionEnabled },
     barPosition: config.barPosition,
     barOffset: config.barOffset,
     ttsEnabled: config.ttsEnabled,

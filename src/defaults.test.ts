@@ -29,8 +29,13 @@ describe('默认值一致性', () => {
         continue
       }
       // eventTexts / motionTexts / expressionTexts 同理：覆写表由用户填写，schema 里没有该键
-      if (key === 'eventTexts' || key === 'motionTexts' || key === 'expressionTexts' || key === 'motionEnabled' || key === 'expressionEnabled') {
+      if (key === 'eventTexts' || key === 'motionTexts' || key === 'expressionTexts' || key === 'motionEnabled') {
         expect(value).toEqual({})
+        continue
+      }
+      // expressionEnabled 有内置默认（羞愤默认不发给模型），同样不进 schema，单独校验
+      if (key === 'expressionEnabled') {
+        expect(value).toEqual({ blood: false })
         continue
       }
       expect(resolved[key], `schema 默认 ${key}`).toBe(value)

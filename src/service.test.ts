@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { PetService } from './service.ts'
 import type { PetSettings } from './settings-store.ts'
-import { defaultEventTriggers } from './defaults.ts'
+import { DEFAULT_DISPLAY, defaultEventTriggers } from './defaults.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
 const BASE_SETTINGS: PetSettings = {
@@ -246,14 +246,14 @@ describe('PetService 显示配置', () => {
     const { service } = makeHarness()
     const v0 = service.snapshot().version
     const d = service.setDisplay({ size: 240 })
-    expect(d).toEqual({ right: 24, bottom: 20, size: 240 })
+    expect(d).toEqual({ ...DEFAULT_DISPLAY, size: 240 })
     expect(service.snapshot().version).toBe(v0 + 1)
   })
 
   it('resetDisplay 回到内置默认显示（归位由客户端按中心点计算）', () => {
     const { service } = makeHarness({ homeRight: 40, homeBottom: 30 })
     service.setDisplay({ size: 300, right: -120, bottom: 800 })
-    expect(service.resetDisplay()).toEqual({ right: 24, bottom: 20, size: 300 })
+    expect(service.resetDisplay()).toEqual({ ...DEFAULT_DISPLAY })
   })
 
   it('snapshot 解析模型 URL：内置同源路径；失效 id 回退内置', () => {

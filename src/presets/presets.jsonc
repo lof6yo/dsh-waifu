@@ -27,12 +27,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "捏",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "亲",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000
@@ -53,12 +59,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "梳",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "抓住",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000
@@ -79,12 +91,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "揉捏",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "舔",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000
@@ -105,13 +123,19 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "舔",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
-              "name": "抚摸",
+              "name": "按摩",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
+              "name": "爱抚",
               "trigger": "hold",
               "holdMs": 3000
             }
@@ -131,12 +155,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "拍打",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "舔",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000
@@ -157,12 +187,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "手搭上",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "搂住",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000
@@ -183,12 +219,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "揉捏",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "舔",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000
@@ -215,14 +257,14 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "牵住",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
-              "name": "抚摸",
-              "trigger": "hold",
+              "name": "舔",
+              "trigger": "double",
               "holdMs": 3000
             }
           ]
@@ -241,12 +283,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "揉捏",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "舔",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000
@@ -267,12 +315,18 @@
           "interactions": [
             {
               "id": "i1",
-              "name": "轻碰",
+              "name": "揉捏",
               "trigger": "tap",
               "holdMs": 3000
             },
             {
               "id": "i2",
+              "name": "舔",
+              "trigger": "double",
+              "holdMs": 3000
+            },
+            {
+              "id": "i3",
               "name": "抚摸",
               "trigger": "hold",
               "holdMs": 3000

@@ -30,6 +30,7 @@ import {
   type WaifuLlm,
   type WaifuLlmRequest,
 } from './ai.ts'
+import { DEFAULT_EVENT_TEXTS } from './defaults.ts'
 
 /** 假 LLM：按预设文本推送若干 text-delta（可配置抛错）。 */
 function fakeLlm(chunks: string[], options: { throwAt?: number } = {}): WaifuLlm & { calls: WaifuLlmRequest[] } {
@@ -123,7 +124,7 @@ describe('systemPrompt（动作/表情释义可覆写 + 可关闭，ADR-040）',
     })
     expect(prompt).toContain('- Nod：酷酷地点头')
     expect(prompt).toContain('- blush：羞到冒烟')
-    expect(prompt).toContain('- ShakeHead：拒绝、无奈、不敢相信')
+    expect(prompt).toContain('- ShakeHead：无语、不敢相信、傲娇、拒绝、欲拒还迎')
   })
 })
 
@@ -160,7 +161,7 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
     expect(historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸' })).toBe('主人「抚摸」了「脸」')
     expect(historySceneText({ kind: 'chat', text: '你在干嘛' })).toBe('主人说「你在干嘛」')
     expect(historySceneText({ kind: 'idle' })).toBe('一阵子没动静')
-    expect(historySceneText({ kind: 'event', event: 'thinking' })).toBe('主人让你想事情，你正在思考')
+    expect(historySceneText({ kind: 'event', event: 'thinking' })).toBe(DEFAULT_EVENT_TEXTS.thinking)
     expect(historySceneText({ kind: 'event', event: 'tool-run', merged: ['a', 'b'] })).toBe('主人让你跑命令，你刚按下回车（另有 2 件事）')
   })
 
