@@ -1745,14 +1745,14 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '跟随范围', hint: '鼠标进到模型外扩这个百分比的矩形内才跟随；0 = 只在模型框内' }),
+        createElement(FormLabel, { title: '视线跟随鼠标范围（模型尺寸%）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
             min: FOCUS_RANGE_LIMITS.min,
             max: FOCUS_RANGE_LIMITS.max,
             step: 5,
-            style: { width: 90 },
+            style: numberInputStyle,
             value: value.focusRange,
             disabled: !writable,
             onChange: (e: ChangeEvent<HTMLInputElement>) => {
@@ -1760,11 +1760,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['focusRange'], value: next }])
             },
           }),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, `% 模型尺寸`),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '待机小动作', hint: '每隔十几秒随机偏头 / 抬眉 / 换重心 / 叹气；关掉只剩 Idle 循环' }),
+        createElement(FormLabel, { title: '待机小动作' }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
             checked: value.idleMotionEnabled !== false,
@@ -2103,10 +2102,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     }),
     !!value.aiEnabled && createElement('div', null,
       createElement('div', { style: formRowStyle },
-        createElement(FormLabel, {
-          title: 'Provider',
-          hint: '用 DSH 已配置的 LLM provider；账号与 Key 沿用「设置 → 模型」里的那份',
-        }),
+        createElement(FormLabel, { title: 'Provider' }),
         createElement('div', { style: formControlStyle },
           providerChoices.length > 0
             ? createElement('select', {
@@ -2137,10 +2133,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowStyle },
-        createElement(FormLabel, {
-          title: '模型',
-          hint: '该 provider 下的模型；点「测试」用一句话自检能不能出字',
-        }),
+        createElement(FormLabel, { title: '模型' }),
         createElement('div', { style: formControlStyle },
           modelOptions.length > 0
             ? createElement('select', {
@@ -2173,7 +2166,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '注入对话历史（轮）', hint: '把最近几轮互动（场景 + 台词 + 动作表情）带进 prompt' }),
+        createElement(FormLabel, { title: '注入对话历史（轮）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2191,7 +2184,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '注入记忆（条）', hint: '把 memory.md 里最近的记忆条目带进 prompt；AI 也会自己往里写' }),
+        createElement(FormLabel, { title: '注入记忆（条）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2209,12 +2202,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowStyle },
-        createElement(FormLabel, {
-          title: '触发方式',
-          hint: value.triggerMode === 'interrupt'
-            ? '新事件立刻掐掉上一轮反应，马上开始新的一轮（反应更跟手，话可能说一半）'
-            : '等上一轮台词说完（气泡出完/语音念完）才开始新一轮（不抢话，攒着的事件合并触发）',
-        }),
+        createElement(FormLabel, { title: '触发方式' }),
         createElement('div', { style: formControlStyle },
           createElement('select', {
             value: value.triggerMode,
