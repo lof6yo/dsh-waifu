@@ -36,6 +36,25 @@ describe('runSpeakPipeline', () => {
     expect(events.some((item) => item.event === 'memory')).toBe(true)
   })
 
+  it('句中残留的表情/动作标签不会念出来（ADR-037 修订）', async () => {
+    const { events, emit } = collector()
+    const spoken: string[] = []
+    const result = await runSpeakPipeline({
+      chunks: fromChunks([
+        { type: 'delta', text: '哼，[脸红] 又想欺负我。[歪头] 才不理你呢。' },
+        { type: 'done', text: '哼，[脸红] 又想欺负我。[歪头] 才不理你呢。' },
+      ]),
+      synthesize: async (text) => { spoken.push(text); return audioOf(text) },
+      emit,
+    })
+    expect(spoken).toEqual(['哼， 又想欺负我。', '才不理你呢。'])
+    expect(spoken.join('')).not.toContain('脸红')
+    expect(spoken.join('')).not.toContain('歪头')
+    const clauses = events.filter((item) => item.event === 'clause').map((item) => (item.data as { text: string }).text)
+    expect(clauses.join('')).not.toMatch(/脸红|歪头/)
+    expect(result.text).not.toMatch(/脸红|歪头/)
+  })
+
   it('按句读切段，并先发 clause 再发 audio', async () => {
     const { events, emit } = collector()
     const result = await runSpeakPipeline({

@@ -459,7 +459,8 @@ export function parseLeadingTags(text: string): LeadingTags {
 }
 
 /** 去掉句中那些「能认出来是表情/动作」的方括号标签（模型偶尔把标签写在句子中间）。 */
-function stripInlineTags(text: string): string {
+/** 剥掉正文里残留的表情/动作标签（只认目录内的，别的方括号原样保留）。 */
+export function stripInlineTags(text: string): string {
   return text.replace(TAG_ANY, (all, inner: string) => (classifyTag(inner) ? '' : all))
     .replace(/\s{2,}/g, ' ')
     .trimStart()

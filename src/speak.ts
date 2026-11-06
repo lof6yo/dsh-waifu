@@ -15,6 +15,7 @@
  */
 
 import { splitClauses, type TtsAudio } from './tts.ts'
+import { stripInlineTags } from './ai.ts'
 import type { ReplyChunk } from './ai.ts'
 
 /** 单次演绎最多合成的字符数（防止模型跑飞把一句话拉成一段独白）。 */
@@ -101,11 +102,14 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     const ready = final ? pieces : pieces.slice(0, -1)
     buffer = final ? '' : pieces[pieces.length - 1] ?? ''
     for (const piece of ready) {
+      // 句中/句首残留的表情动作标签不能念出来（ADR-037）：切成段后统一剥一遍
+      const clean = stripInlineTags(piece)
+      if (!clean) continue
       const index = nextIndex
       nextIndex += 1
-      emit('clause', { index, text: piece })
+      emit('clause', { index, text: clean })
       // 先登记任务再启动，避免 pump 抢跑时任务还没进 Map
-      const task = synthesize(piece).catch(() => null)
+      const task = synthesize(clean).catch(() => null)
       tasks.set(index, task)
       void kick()
     }
@@ -144,8 +148,8 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       flush(true)
       await kick()
       emit('error', { error: chunk.error })
-      emit('done', { text: result || total })
-      return { text: result || total, clauses: nextIndex, audio: audioCount, memory }
+      emit('done', { text: stripInlineTags(result || total) })
+      return { text: stripInlineTags(result || total), clauses: nextIndex, audio: audioCount, memory }
     }
   }
 
@@ -159,6 +163,6 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     }
     await kick()
   }
-  emit('done', { text: result || total })
-  return { text: result || total, clauses: nextIndex, audio: audioCount, memory }
+  emit('done', { text: stripInlineTags(result || total) })
+  return { text: stripInlineTags(result || total), clauses: nextIndex, audio: audioCount, memory }
 }
