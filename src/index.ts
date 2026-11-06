@@ -53,6 +53,7 @@ import {
   AI_HISTORY_MAX_ENTRIES,
   appendHistory,
   buildSceneMessage,
+  normalizeTimeZone,
   generateReply,
   loadPersona,
   streamReply,
@@ -261,7 +262,11 @@ export function apply(ctx: Context, config: Config): void {
     const now = Date.now()
     if (now - lastAiAt < AI_COOLDOWN_MS) return { ok: false, error: 'cooldown' }
     lastAiAt = now
-    const context = settings.aiTakeover ? { ...input, hint: undefined } : input
+    // 时区来自浏览器（宿主可能在 UTC 上跑），非法或缺省时 formatNow 会回落本地时区
+    const tz = normalizeTimeZone(input.tz)
+    const context: ReplyContext = settings.aiTakeover
+      ? { ...input, hint: undefined, tz }
+      : { ...input, tz }
     return { ok: true, settings, context }
   }
 

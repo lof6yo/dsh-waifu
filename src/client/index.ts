@@ -83,6 +83,17 @@ const TAP_DEBOUNCE_MS = 80
  */
 const TAP_SLOP_PX = 12
 /**
+ * 浏览器所在时区（IANA 名）：宿主可能跑在 UTC，只发「HH:MM」的绝对时间会让模型把深夜当清晨。
+ * 时区不会变，算一次缓存住。
+ */
+const CLIENT_TIME_ZONE: string = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+  } catch {
+    return ''
+  }
+})()
+/**
  * 交互条静音按钮的图标：内联 SVG（`currentColor` 描边）。
  * 不用 emoji——各平台字体渲染差异太大、大小也对不齐。
  */
@@ -280,7 +291,7 @@ const api = {
     return () => es.close()
   },
   /** AI 回复（ADR-025）：上报「戳了哪里/变成什么状态」，拿回一句台词（失败返回 ok:false）。 */
-  interact: (body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string }): Promise<{ ok: boolean; text?: string; error?: string }> =>
+  interact: (body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string }): Promise<{ ok: boolean; text?: string; error?: string }> =>
     fetch(`${PET_API}/interact`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -291,7 +302,7 @@ const api = {
    * 用 fetch + ReadableStream 手动解帧（EventSource 不支持 POST 带 body）。
    */
   speak: async (
-    body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
+    body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string },
     onEvent: (event: string, data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void> => {
@@ -2494,7 +2505,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 连点时只采用最新一次请求的结果（`aiRequestSeq`）。
    */
   async function requestAiReply(
-    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
+    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string },
     options?: { sticky?: boolean; ignoreCooldown?: boolean },
   ): Promise<string | null> {
     if (!aiEnabled) return null
@@ -2528,9 +2539,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 口型吃同一段音频的波形。语音关闭或一句都没出来时回落到一次性的 {@link requestAiReply}。
    */
   async function requestSpeak(
-    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
+    rawInput: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
     options?: { sticky?: boolean },
   ): Promise<string | null> {
+    // 每个请求都带上浏览器时区，Host 用它换算「现在几点」
+    const input = CLIENT_TIME_ZONE ? { ...rawInput, tz: CLIENT_TIME_ZONE } : rawInput
     if (!aiEnabled) return null
     if (aiTouchOnly && input.kind === 'state') return null
     if (input.kind === 'state' && interactionMode !== 'event-first' && tapActive()) return null

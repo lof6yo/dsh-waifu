@@ -98,6 +98,8 @@ export interface ReplyContext {
   state?: string
   /** 该部位/事件原本会说的一句话（作为语气参考，不要求复述）。 */
   hint?: string
+  /** 请求方（浏览器）的 IANA 时区，用来把「现在几点」换算到用户所在时区。 */
+  tz?: string
 }
 
 /** 注入给模型的最近对话条数上限（防止超长历史把 token 预算吃满）。 */
@@ -118,23 +120,94 @@ export interface AiHistoryEntry {
 }
 
 const pad2 = (value: number) => String(value).padStart(2, '0')
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+}
+
+/**
+ * 校验 IANA 时区名（浏览器 `Intl.DateTimeFormat().resolvedOptions().timeZone` 送来的）。
+ * 只放行字母数字与 `_ + - /`，并真正让 Intl 解析一次——非法名字会让 `DateTimeFormat` 直接抛。
+ */
+export function normalizeTimeZone(tz: unknown): string | undefined {
+  if (typeof tz !== 'string') return undefined
+  const value = tz.trim()
+  if (value.length === 0 || value.length > 64) return undefined
+  if (!/^[A-Za-z0-9_+/-]+$/.test(value)) return undefined
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(0)
+    return value
+  } catch {
+    return undefined
+  }
+}
+
+/** 某一时刻在指定时区里的年月日时分与星期（时区缺失/非法时回落宿主本地时区）。 */
+function zoneParts(at: number, timeZone?: string): {
+  year: number; month: number; day: number; hour: number; minute: number; weekday: number
+} {
+  const date = new Date(at)
+  if (!timeZone) {
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+      weekday: date.getDay(),
+    }
+  }
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+    }).formatToParts(at)
+    const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? ''
+    const weekday = WEEKDAY_INDEX[pick('weekday')]
+    return {
+      year: Number(pick('year')),
+      month: Number(pick('month')),
+      day: Number(pick('day')),
+      hour: Number(pick('hour')),
+      minute: Number(pick('minute')),
+      weekday: Number.isFinite(weekday) ? weekday : new Date(at).getDay(),
+    }
+  } catch {
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+      weekday: date.getDay(),
+    }
+  }
+}
 
 /**
  * 历史条目的时间戳前缀：同一天只给 `[21:03]`，跨天补上 `[11/04 21:03]`。
  * 只用于提示模型时间感，不进台词、不显示在气泡里。
+ * `timeZone` 传浏览器时区——宿主机跑在 UTC，不传就会把「深夜」当「早上」。
  */
-export function formatStamp(at: number, now = Date.now()): string {
-  const then = new Date(at)
-  const today = new Date(now)
-  const clock = `${pad2(then.getHours())}:${pad2(then.getMinutes())}`
-  return then.toDateString() === today.toDateString() ? clock : `${then.getMonth() + 1}/${then.getDate()} ${clock}`
+export function formatStamp(at: number, now = Date.now(), timeZone?: string): string {
+  const then = zoneParts(at, timeZone)
+  const today = zoneParts(now, timeZone)
+  const clock = `${pad2(then.hour)}:${pad2(then.minute)}`
+  const sameDay = then.year === today.year && then.month === today.month && then.day === today.day
+  return sameDay ? clock : `${then.month}/${then.day} ${clock}`
 }
 
 /** 当前时间的口语描述（「11月5日 周四 21:10」），每次请求都重新取值。 */
-export function formatNow(now = Date.now()): string {
-  const date = new Date(now)
-  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()]
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${weekday} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+export function formatNow(now = Date.now(), timeZone?: string): string {
+  const parts = zoneParts(now, timeZone)
+  return `${parts.month}月${parts.day}日 ${WEEKDAYS[parts.weekday]} ${pad2(parts.hour)}:${pad2(parts.minute)}`
 }
 
 /** 历史消息的 `source`：assistant 必须是模型来源，user 可以是任何来源（这里用 user）。 */
@@ -153,6 +226,7 @@ export function historyMessages(
   history: readonly AiHistoryEntry[],
   count: number,
   fallback: { provider: string; model: string },
+  timeZone?: string,
 ): HistoryMessage[] {
   const limit = normalizeHistoryCount(count, 0)
   if (limit <= 0 || history.length === 0) return []
@@ -165,7 +239,7 @@ export function historyMessages(
       role: entry.role,
       content: [{
         type: 'text' as const,
-        text: entry.at > 0 ? `[${formatStamp(entry.at)}] ${entry.text}` : entry.text,
+        text: entry.at > 0 ? `[${formatStamp(entry.at, Date.now(), timeZone)}] ${entry.text}` : entry.text,
       }],
       source: entry.role === 'assistant'
         ? { kind: 'model' as const, provider: entry.provider || fallback.provider, model: entry.model || fallback.model }
@@ -246,7 +320,7 @@ export function buildSceneMessage(context: ReplyContext, options: { forHistory?:
   const ask = context.kind === 'chat'
     ? '按你的人设回应主人这句话，一句话。'
     : '按你的人设即兴演一下这一刻的反应，一句话。'
-  return `（现在是 ${formatNow()}。${where}。${hint}）${ask}`
+  return `（现在是 ${formatNow(Date.now(), context.tz)}。${where}。${hint}）${ask}`
 }
 
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */
@@ -320,7 +394,7 @@ function assembleRequest(options: {
   const history = historyMessages(options.history ?? [], options.historyCount ?? 0, {
     provider: options.provider,
     model: options.model,
-  })
+  }, options.context.tz)
   const messages = [
     ...history,
     { role: 'user', content: [{ type: 'text' as const, text: buildSceneMessage(options.context) }] },

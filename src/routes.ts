@@ -237,7 +237,7 @@ export interface AiRoutesApi {
 
 /** AI 回复 API（ADR-025）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
 export interface InteractRoutesApi {
-  reply(input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string }): Promise<{
+  reply(input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string }): Promise<{
     ok: boolean
     text?: string
     error?: string
@@ -253,7 +253,7 @@ export interface SpeakRoutesApi {
    * @param signal - 连接断开时中止合成。
    */
   stream(
-    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
+    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string },
     emit: (event: 'text' | 'clause' | 'audio' | 'done' | 'error', data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void>
@@ -353,7 +353,8 @@ export function makePetRoutes(deps: {
       const state = typeof body.state === 'string' ? body.state.slice(0, 20) : undefined
       const hint = typeof body.hint === 'string' ? body.hint.slice(0, 120) : undefined
       const text = typeof body.text === 'string' ? body.text.slice(0, 200) : undefined
-      return ai.reply({ kind, part, state, hint, text })
+      const tz = typeof body.tz === 'string' ? body.tz.slice(0, 64) : undefined
+      return ai.reply({ kind, part, state, hint, text, tz })
     })] : []),
     // 流式演绎（ADR-033）：SSE 下发 text / clause / audio / done / error，
     // 客户端按 clause 显示气泡、按 audio 播放并用同一段音频驱动口型。
@@ -373,6 +374,7 @@ export function makePetRoutes(deps: {
             state: typeof record.state === 'string' ? record.state.slice(0, 20) : undefined,
             hint: typeof record.hint === 'string' ? record.hint.slice(0, 120) : undefined,
             text: typeof record.text === 'string' ? record.text.slice(0, 200) : undefined,
+            tz: typeof record.tz === 'string' ? record.tz.slice(0, 64) : undefined,
           }
           res.writeHead(200, {
             'content-type': 'text/event-stream; charset=utf-8',

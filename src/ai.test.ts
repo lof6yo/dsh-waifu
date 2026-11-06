@@ -8,6 +8,7 @@ import {
   DEFAULT_PERSONA,
   MAX_PERSONA_CHARS,
   formatNow,
+  normalizeTimeZone,
   formatStamp,
   MAX_REPLY_CHARS,
   PERSONA_FILENAME,
@@ -59,6 +60,36 @@ describe('sanitizeLine', () => {
     // 模型偶尔会给回复加时间戳：进气泡前就得滤掉（否则气泡里会冒出「[14:57]」）
     expect(sanitizeLine('[14:57] 哼，才不要呢')).toBe('哼，才不要呢')
     expect(sanitizeLine('2026-11-05T14:57:16Z 「别乱戳」')).toBe('别乱戳')
+  })
+})
+
+describe('时区', () => {
+  const at = Date.parse('2026-11-05T16:47:00Z')
+
+  it('formatNow 按浏览器时区换算（宿主在 UTC、用户在 +08 时不能报成 16:47）', () => {
+    expect(formatNow(at, 'Asia/Shanghai')).toBe('11月6日 周五 00:47')
+    expect(formatNow(at, 'UTC')).toBe('11月5日 周四 16:47')
+  })
+
+  it('formatStamp 的「今天」也在同一时区里判断', () => {
+    const now = at // UTC 是 11/5 16:47，上海已经是 11/6 00:47
+    expect(formatStamp(Date.parse('2026-11-05T15:30:00Z'), now, 'Asia/Shanghai')).toBe('11/5 23:30')
+    expect(formatStamp(Date.parse('2026-11-05T16:20:00Z'), now, 'Asia/Shanghai')).toBe('00:20')
+    expect(formatStamp(Date.parse('2026-11-05T16:20:00Z'), now, 'UTC')).toBe('16:20')
+  })
+
+  it('normalizeTimeZone 只放行合法 IANA 名', () => {
+    expect(normalizeTimeZone('Asia/Shanghai')).toBe('Asia/Shanghai')
+    expect(normalizeTimeZone('UTC')).toBe('UTC')
+    expect(normalizeTimeZone('')).toBeUndefined()
+    expect(normalizeTimeZone('Not/AZone')).toBeUndefined()
+    expect(normalizeTimeZone('../../etc/passwd')).toBeUndefined()
+    expect(normalizeTimeZone(42)).toBeUndefined()
+  })
+
+  it('buildSceneMessage 带上时区换算后的「现在」', () => {
+    // 不注入 at，只断言形状：时区参数不会让文案崩掉
+    expect(buildSceneMessage({ kind: 'tap', part: '胸', tz: 'Asia/Shanghai' })).toContain('现在是')
   })
 })
 
