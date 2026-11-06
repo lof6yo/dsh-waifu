@@ -327,7 +327,7 @@ describe('PetService 变更订阅', () => {
 })
 
 describe('PetService 活动提示（ADR-036）', () => {
-  it('工具调用按名字归类，同类 700ms 内只播一次（不同类互不压制）', () => {
+  it('工具调用按名字归类，同类 3s 内只播一次（不同类互不压制）', () => {
     const { service, emit } = makeHarness()
     expect(service.snapshot().activity).toBeNull()
     emit('tools/pre-execute', { name: 'read' })
@@ -340,7 +340,7 @@ describe('PetService 活动提示（ADR-036）', () => {
     // 不同类：立即播（否则派代理会吞掉紧随其后的 subagent/start）
     emit('tools/pre-execute', { name: 'bash' })
     expect(service.snapshot().activity).toMatchObject({ kind: 'tool-run', seq: seq + 1 })
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(3200)
     emit('tools/pre-execute', { name: 'bash' })
     expect(service.snapshot().activity?.seq).toBe(seq + 2)
   })
@@ -349,10 +349,10 @@ describe('PetService 活动提示（ADR-036）', () => {
     const { service, emit } = makeHarness()
     emit('tools/pre-execute', { name: 'edit' })
     expect(service.snapshot().activity?.kind).toBe('tool-write')
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(3200)
     emit('tools/pre-execute', { name: 'subagent' })
     expect(service.snapshot().activity?.kind).toBe('tool-agent')
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(3200)
     emit('tools/pre-execute', { name: 'image_generate' })
     expect(service.snapshot().activity?.kind).toBe('tool-other')
   })
@@ -379,7 +379,7 @@ describe('PetService 活动提示（ADR-036）', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(service.snapshot().activity?.kind).toBe('approval-denied')
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(3200)
     emitArgs('approval/request', {}, () => Promise.resolve('allowed-once'))
     await Promise.resolve()
     await Promise.resolve()
@@ -393,7 +393,7 @@ describe('PetService 活动提示（ADR-036）', () => {
     expect(service.snapshot().activity).toBeNull()
     emitArgs('session/created', { header: {} })
     expect(service.snapshot().activity?.kind).toBe('session-open')
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(3200)
     emitArgs('session/disposed', { header: {} })
     expect(service.snapshot().activity?.kind).toBe('session-close')
   })
@@ -402,7 +402,7 @@ describe('PetService 活动提示（ADR-036）', () => {
     const { service, emitArgs } = makeHarness()
     emitArgs('subagent/start', { runId: 'r1' })
     expect(service.snapshot().activity?.kind).toBe('subagent-start')
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(3200)
     emitArgs('subagent/end', { runId: 'r1' })
     expect(service.snapshot().activity?.kind).toBe('subagent-end')
   })

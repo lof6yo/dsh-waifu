@@ -127,10 +127,10 @@ export interface PetStateView {
 const DONE_HOLD_MS = 3500
 
 /**
- * 同一类活动的最小间隔（ms）：读文件/跑命令一秒好几次，全播会像抽筋（ADR-036）。
+ * 同类活动的最小间隔（ms）：读文件/跑命令一秒好几次，全播会像抽筋、也像话痨（ADR-036）。
  * 只对「同类」节流 —— 否则派子代理时 `tool-agent` 会把紧随其后的 `subagent-start` 吞掉。
  */
-const ACTIVITY_THROTTLE_MS = 700
+const ACTIVITY_THROTTLE_MS = 3000
 
 /**
  * 不参与活动提示的工具：上下文压缩、记忆、技能、提问这类内部动作太频繁，
