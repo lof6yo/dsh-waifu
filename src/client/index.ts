@@ -245,7 +245,8 @@ interface DebugMotionItem {
   label: string
 }
 
-/** 调试面板手动几何（petLayer 逻辑 CSS px）：用户拖出来的位置与大小（spec §2 / ADR-044）。 */
+/** 调试面板手动几何（**视口/client px**，不是 petLayer 逻辑坐标）：用户拖出来的位置与大小。
+ *  存视口坐标是为了让面板「钉在屏幕上」——拖动角色时面板不跟着跑（spec §2 / ADR-044）。 */
 interface DebugPanelGeometry {
   left: number
   top: number
@@ -2244,23 +2245,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 把手动几何夹进视口：先收敛宽高，再把整块面板拉回边距内（逻辑坐标按 petLayer 视口 rect 换算）。 */
+  /** 把几何夹进视口：先收敛宽高，再把整块面板拉回 DEBUG_PANEL_MARGIN 边距内（纯视口坐标，不碰层坐标）。 */
   function clampDebugPanelGeometry(geometry: DebugPanelGeometry): DebugPanelGeometry {
     const { minW, minH, maxW, maxH } = debugPanelSizeBounds()
-    const width = Math.round(Math.min(Math.max(geometry.width, minW), maxW))
-    const height = Math.round(Math.min(Math.max(geometry.height, minH), maxH))
     const viewportW = window.innerWidth || document.documentElement?.clientWidth || 0
     const viewportH = window.innerHeight || document.documentElement?.clientHeight || 0
-    const rect = layerRect()
-    const originLeft = rect ? rect.left : 0
-    const originTop = rect ? rect.top : 0
-    const minLeft = DEBUG_PANEL_MARGIN - originLeft
-    const minTop = DEBUG_PANEL_MARGIN - originTop
-    const maxLeft = Math.max(minLeft, viewportW - DEBUG_PANEL_MARGIN - width - originLeft)
-    const maxTop = Math.max(minTop, viewportH - DEBUG_PANEL_MARGIN - height - originTop)
+    const width = Math.round(Math.min(Math.max(geometry.width, minW), maxW))
+    const height = Math.round(Math.min(Math.max(geometry.height, minH), maxH))
+    const maxLeft = Math.max(DEBUG_PANEL_MARGIN, viewportW - DEBUG_PANEL_MARGIN - width)
+    const maxTop = Math.max(DEBUG_PANEL_MARGIN, viewportH - DEBUG_PANEL_MARGIN - height)
     return {
-      left: Math.round(Math.min(Math.max(geometry.left, minLeft), maxLeft)),
-      top: Math.round(Math.min(Math.max(geometry.top, minTop), maxTop)),
+      left: Math.round(Math.min(Math.max(geometry.left, DEBUG_PANEL_MARGIN), maxLeft)),
+      top: Math.round(Math.min(Math.max(geometry.top, DEBUG_PANEL_MARGIN), maxTop)),
       width,
       height,
     }
@@ -2289,27 +2285,30 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     } catch { /* 写不进去只影响下次记忆，不影响当前摆放 */ }
   }
 
-  /** 面板当前几何（逻辑 px）：手动模式取记录值，自动模式量一次 offset*（拖动起始时接管用）。 */
+  /** 面板当前几何（视口 px）：手动模式取记录值，自动模式量一次 rect（拖动起始时无缝接管）。 */
   function currentDebugPanelGeometry(): DebugPanelGeometry | null {
     if (debugPanelManual) return { ...debugPanelManual }
     if (!debugEl) return null
-    const width = debugEl.offsetWidth
-    const height = debugEl.offsetHeight
-    if (!(width > 0 && height > 0)) return null
-    return { left: debugEl.offsetLeft, top: debugEl.offsetTop, width, height }
+    let rect: DOMRect
+    try { rect = debugEl.getBoundingClientRect() } catch { return null }
+    if (!(rect.width > 0 && rect.height > 0)) return null
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
   }
 
-  /** 把手动几何落到面板样式（位置+宽高固定），并记录顶部/底部供气泡避让。 */
+  /** 把手动几何落到面板样式：视口坐标换算成 layer 内坐标再写，并记录顶部/底部供气泡避让。 */
   function applyDebugPanelGeometry(geometry: DebugPanelGeometry): void {
     if (!debugEl) return
-    debugEl.style.left = `${geometry.left}px`
-    debugEl.style.top = `${geometry.top}px`
+    const rect = layerRect()
+    const originLeft = rect ? rect.left : 0
+    const originTop = rect ? rect.top : 0
+    debugEl.style.left = `${Math.round(geometry.left - originLeft)}px`
+    debugEl.style.top = `${Math.round(geometry.top - originTop)}px`
     debugEl.style.width = `${geometry.width}px`
     debugEl.style.height = `${geometry.height}px`
     debugEl.style.maxHeight = 'none'
     panelSizeCache = { width: geometry.width, height: geometry.height }
-    debugPanelTopLogical = geometry.top
-    debugPanelBottomLogical = geometry.top + geometry.height
+    debugPanelTopLogical = geometry.top - originTop
+    debugPanelBottomLogical = geometry.top - originTop + geometry.height
   }
 
   /** 恢复自动跟随（标题栏 ↺ / 双击标题栏）：清掉手动几何与本地记录，重新按模型定位。 */
