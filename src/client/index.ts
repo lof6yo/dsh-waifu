@@ -564,6 +564,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let tempExpressionUntil = 0
   /** 调试面板「表情预览」强制显示的表情（null = 不干预）。 */
   let debugExpression: string | null = null
+  let repaintDebugExpressions: (() => void) | null = null
   /** 表达式开关参数当前混合值（每帧向目标逼近 → 淡入淡出）。 */
   const expressionMix = new Map<string, number>()
   /** AI 回复开关（SSE config.aiEnabled；ADR-025）：开启后触摸/状态台词改由 Host 调 LLM 生成。 */
@@ -2298,6 +2299,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const exprRow = document.createElement('div')
       exprRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px'
       const exprButtons: { id: string; btn: HTMLButtonElement }[] = []
+      repaintDebugExpressions = (): void => paintExprButtons()
       const paintExprButtons = (): void => {
         for (const { id, btn } of exprButtons) {
           const active = (debugExpression ?? 'none') === id
@@ -2349,13 +2351,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** 当前应显示的表情 id 列表：调试预览 > 触摸临时表情 > 当前事件绑定（spec §5）。 */
   function desiredExpressions(): string[] {
-    if (debugExpression) {
-      const id = normalizeExpressionId(debugExpression)
-      return id === 'none' ? [] : [id]
-    }
+    // 情绪/触摸带来的临时表情优先级最高：调试面板停在上一次选择里时，
+    // 不能让「预览」把真实表情吃掉（否则 AI 选了表情画面不动）。
     if (tempExpressions.length > 0) {
       if (Date.now() < tempExpressionUntil) return tempExpressions
       tempExpressions = []
+    }
+    if (debugExpression) {
+      const id = normalizeExpressionId(debugExpression)
+      return id === 'none' ? [] : [id]
     }
     if (!lastState) return []
     return splitMotionSelection(eventBindings[lastState]?.motions ?? []).expressions
@@ -2783,8 +2787,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!list || list.length === 0) return
     tempExpressions = [...list]
     tempExpressionUntil = Date.now() + EMOTION_HOLD_MS
+    // 真实表情优先：清掉调试面板残留的预览选择，免得把情绪挡掉
+    debugExpression = null
+    repaintDebugExpressions?.()
     clientLog('info', 'emotion', `${String(emotion)} → ${list.join('+')}`)
     refreshExpressionTargets()
+    clientLog('info', 'emotion applied', `${list.join('+')} → ${JSON.stringify(expressionTargets)}`)
   }
 
   function handleTap(e: PointerEvent): void {
