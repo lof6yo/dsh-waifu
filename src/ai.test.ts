@@ -17,6 +17,7 @@ import {
   generateReply,
   historyMessages,
   loadPersona,
+  parseEmotionTag,
   personaPath,
   sanitizeLine,
   savePersona,
@@ -318,5 +319,25 @@ describe('最近对话注入（ADR-030）', () => {
     }
     expect(list).toHaveLength(AI_HISTORY_MAX_ENTRIES)
     expect(list[list.length - 1].text).toBe(`t${AI_HISTORY_MAX_ENTRIES + 19}`)
+  })
+})
+
+describe('情绪标签', () => {
+  it('拆掉开头的方括号标签并识别情绪', () => {
+    expect(parseEmotionTag('[shy] 别、别看了啦')).toEqual({ emotion: 'shy', rest: '别、别看了啦' })
+    expect(parseEmotionTag('【害羞】别看了')).toEqual({ emotion: 'shy', rest: '别看了' })
+    expect(parseEmotionTag('(angry)喂！')).toEqual({ emotion: 'angry', rest: '喂！' })
+  })
+  it('没有标签或标签不认识时原样返回', () => {
+    expect(parseEmotionTag('别看了啦')).toEqual({ emotion: null, rest: '别看了啦' })
+    expect(parseEmotionTag('[dunno] 喂')).toEqual({ emotion: null, rest: '[dunno] 喂' })
+  })
+  it('生成结果带上情绪', async () => {
+    const llm = fakeLlm(['[smug] 就这点本事？'])
+    const result = await generateReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头' },
+    })
+    expect(result.text).toBe('就这点本事？')
+    expect(result.emotion).toBe('smug')
   })
 })

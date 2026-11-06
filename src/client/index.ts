@@ -169,6 +169,19 @@ const EXPRESSION_FADE_MS = 280
 const TAP_INTERACTION_HOLD_MS = 2600
 const EXPRESSION_TEMP_MS = 2200
 /** 待机小动作：随机间隔与候选动作组（幅度很小，只为消除「定格动画」感）。 */
+/** 模型标注的情绪 → 表情组合（表情 id 见 models.ts 的 EXPRESSIONS）。 */
+const EMOTION_EXPRESSIONS: Record<string, readonly string[]> = {
+  happy: ['star'],
+  angry: ['angry'],
+  sad: ['tear'],
+  shy: ['blush'],
+  surprised: ['whites'],
+  smug: ['heart'],
+  neutral: [],
+}
+/** 情绪表情的保持时长：比触摸短表情长一点，念完一句还在。 */
+const EMOTION_HOLD_MS = 4200
+
 const IDLE_MICRO_MOTIONS = ['Glance', 'Perk', 'Shift', 'Sigh'] as const
 const IDLE_MICRO_MIN_MS = 9000
 const IDLE_MICRO_MAX_MS = 22000
@@ -249,7 +262,10 @@ interface ModelLike {
   getBounds?: () => { x: number; y: number; width: number; height: number }
   internalModel?: {
     /** Cubism4 模型：每帧写入参数（表情开关 / 连续参数）用。 */
-    coreModel?: { setParameterValueById?(id: string, value: number, weight?: number): void }
+    coreModel?: {
+      setParameterValueById?(id: string, value: number, weight?: number): void
+      getParameterValueById?(id: string): number
+    }
     /** InternalModel.update(dt, now)：包装它，在动作与物理生效前写入表情参数。 */
     update?(dt: number, now: number): void
     focusController?: { focus(x: number, y: number, instant?: boolean): void }
@@ -297,7 +313,7 @@ const api = {
     return () => es.close()
   },
   /** AI 回复（ADR-025）：上报「戳了哪里/变成什么状态」，拿回一句台词（失败返回 ok:false）。 */
-  interact: (body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string }): Promise<{ ok: boolean; text?: string; error?: string }> =>
+  interact: (body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string }): Promise<{ ok: boolean; text?: string; emotion?: string | null; error?: string }> =>
     fetch(`${PET_API}/interact`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -546,6 +562,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 长状态的「延迟」失效——入态立刻请求一句，之后仍按间隔/上限反复演绎。
    */
   let aiTakeover = false
+  /** 说话时的身体语言（点头/挑眉）开关，与口型跟随一起生效。 */
+  let bodyLanguageEnabled = true
   /** 待机小动作开关（设置页「待机小动作」）。 */
   let idleMotionEnabled: boolean = DEFAULT_SETTINGS.idleMotionEnabled
   let idleMicroTimer: number | null = null
@@ -1724,7 +1742,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         internal.update = (dt = 1 / 60, now = performance.now()) => {
           applyExpressionParams(internal.coreModel, dt)
           applyLipsync(internal.coreModel, dt)
-          return originalUpdate(dt, now)
+          const result = originalUpdate(dt, now)
+          // 口型/表情写完后追加「说话身体语言」，只影响本帧渲染，不触发物理重算
+          applySpeakingBody(internal.coreModel)
+          return result
         }
       }
       refreshDebugMotionGroups()
@@ -2379,6 +2400,36 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * （model3 里 `Groups.LipSync` 就声明了这个参数，别的参数不碰）。
    * 张得快、收得慢，接近真人说话的包络；没在放音时自然回到闭合。
    */
+  /**
+   * 说话时的身体语言（优化项 ⑥）：口型张开量顺手带一点点点头与挑眉，
+   * 让「说话」看起来有身体参与，而不是纯口型。写值放在 `update()` 之后追加，
+   * 所以物理链不会被二次点燃（只做视觉叠加），音量为 0 时自然归零。
+   */
+  function applySpeakingBody(
+    coreModel: {
+      setParameterValueById?(id: string, value: number, weight?: number): void
+      getParameterValueById?(id: string): number
+    } | undefined,
+  ): void {
+    const set = coreModel?.setParameterValueById
+    const get = coreModel?.getParameterValueById
+    if (typeof set !== 'function' || typeof get !== 'function') return
+    if (!bodyLanguageEnabled) return
+    const level = mouthLevel
+    if (level <= 0.02) return
+    const add = (id: string, delta: number): void => {
+      const base = get.call(coreModel, id)
+      if (!Number.isFinite(base)) return
+      set.call(coreModel, id, base + delta, 1)
+    }
+    // 点头（说话的重音感）+ 挑眉；幅度压在 3° / 0.12 以内，避免抢动作戏
+    add('ParamAngleY', 3.0 * level)
+    add('ParamAngleZ', 0.6 * level)
+    add('ParamBrowLY', 0.12 * level)
+    add('ParamBrowRY', 0.1 * level)
+    add('ParamEyeBallY', -0.06 * level)
+  }
+
   function applyLipsync(
     coreModel: { setParameterValueById?(id: string, value: number, weight?: number): void } | undefined,
     dt: number,
@@ -2484,6 +2535,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       syncBarVisual()
     }
     lipsyncEnabled = cfg.lipsyncEnabled !== false
+    bodyLanguageEnabled = cfg.lipsyncEnabled !== false
     lipsyncGain = Number.isFinite(cfg.lipsyncGain) ? cfg.lipsyncGain! : DEFAULT_SETTINGS.lipsyncGain
     interactionMode = normalizeInteractionMode(cfg.interactionMode, interactionMode)
     applyLongAiConfig(cfg)
@@ -2584,6 +2636,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 状态类回复：期间状态又变了就丢弃（新状态会自己发请求），否则这句会盖在新状态的气泡上
       if (targetState !== undefined && targetState !== lastState) return null
       if (!result.ok || !result.text) return null
+      applyEmotion(result.emotion)
       // 长状态下 AI 那句成为新的常驻底稿，2.5s 后回落时显示的就是它
       if (options?.sticky) bubbleStickyText = result.text
       showAiBubble(result.text)
@@ -2651,6 +2704,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           })
           return
         }
+        if (event === 'emotion') {
+          const payload = data as { emotion?: unknown }
+          applyEmotion(payload.emotion)
+          return
+        }
         if (event === 'done') {
           const payload = data as { text?: unknown }
           finalText = typeof payload.text === 'string' ? payload.text : null
@@ -2680,6 +2738,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       return finalText
     }
     return null
+  }
+
+  /** AI 情绪标签落地：临时切到对应表情（到期回落到事件表情）。 */
+  function applyEmotion(emotion: unknown): void {
+    if (typeof emotion !== 'string' || emotion.length === 0) return
+    const list = EMOTION_EXPRESSIONS[emotion]
+    if (!list || list.length === 0) return
+    tempExpressions = [...list]
+    tempExpressionUntil = Date.now() + EMOTION_HOLD_MS
+    refreshExpressionTargets()
   }
 
   function handleTap(e: PointerEvent): void {
@@ -2787,6 +2855,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, view.config.barOffset)))
           : DEFAULT_BAR_OFFSET
         lipsyncEnabled = view.config.lipsyncEnabled !== false
+        bodyLanguageEnabled = view.config.lipsyncEnabled !== false
         lipsyncGain = Number.isFinite(view.config.lipsyncGain)
           ? view.config.lipsyncGain!
           : DEFAULT_SETTINGS.lipsyncGain

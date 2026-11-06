@@ -240,6 +240,8 @@ export interface InteractRoutesApi {
   reply(input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string }): Promise<{
     ok: boolean
     text?: string
+    /** 模型标注的情绪（happy / angry / sad / shy / surprised / smug / neutral）。 */
+    emotion?: string | null
     error?: string
   }>
 }
@@ -254,7 +256,7 @@ export interface SpeakRoutesApi {
    */
   stream(
     input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string },
-    emit: (event: 'text' | 'clause' | 'audio' | 'done' | 'error', data: unknown) => void,
+    emit: (event: 'text' | 'clause' | 'audio' | 'emotion' | 'done' | 'error', data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void>
   /** 单段合成（排查用）：直接回一段音频字节。 */

@@ -314,7 +314,7 @@ export function apply(ctx: Context, config: Config): void {
       }))
       if (attempt.text) {
         recordAiTurn(turn.context, attempt.text, turn.settings)
-        return { ok: true, text: attempt.text }
+        return { ok: true, text: attempt.text, emotion: attempt.emotion ?? null }
       }
       // 失败原因回传（ADR-028）：设置页/排查时能直接看到是「没配 provider」还是「模型空回复」
       return { ok: false, error: `no-reply: ${attempt.error ?? 'unknown'}` }

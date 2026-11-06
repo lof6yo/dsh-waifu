@@ -342,6 +342,8 @@ export function sanitizeLine(raw: string): string {
 /** 生成结果：`text` 为空时 `error` 给出原因（供路由层回传，便于排查「为什么没台词」）。 */
 export interface ReplyAttempt {
   text: string | null
+  /** 模型标注的情绪（驱动表情/身体语言）；缺省表示没标或标了不认识的。 */
+  emotion?: Emotion | null
   error?: string
 }
 
@@ -372,10 +374,69 @@ function describeFinish(reason: unknown): string | undefined {
  * @param persona - 人设正文（`$DSH_HOME/waifu/persona.md`）。
  * @returns 完整 system 字符串。
  */
+/** 模型可以标注的情绪（驱动表情 / 口型 / 动作；未知标签按 neutral 处理）。 */
+export const EMOTIONS = ['happy', 'angry', 'sad', 'shy', 'surprised', 'smug', 'neutral'] as const
+export type Emotion = (typeof EMOTIONS)[number]
+
+/** 中文标签 → 规范英文（模型偶尔会用中文，别让它把标签当台词念出来）。 */
+const EMOTION_ALIASES: Record<string, Emotion> = {
+  开心: 'happy',
+  高兴: 'happy',
+  生气: 'angry',
+  愤怒: 'angry',
+  难过: 'sad',
+  委屈: 'sad',
+  害羞: 'shy',
+  脸红: 'shy',
+  惊讶: 'surprised',
+  得意: 'smug',
+  嚣张: 'smug',
+  平静: 'neutral',
+  无语: 'neutral',
+}
+
+export function normalizeEmotion(raw: string | undefined | null): Emotion | null {
+  if (!raw) return null
+  const key = raw.trim().toLowerCase()
+  if ((EMOTIONS as readonly string[]).includes(key)) return key as Emotion
+  return EMOTION_ALIASES[raw.trim()] ?? null
+}
+
+/**
+ * 拆掉回复开头的情绪标签：`[shy] 台词` / `【害羞】台词` / `(shy)台词`。
+ * 标签是给前端的控制信号，绝不能显示给用户，也不能念出来。
+ */
+export function parseEmotionTag(text: string): { emotion: Emotion | null; rest: string } {
+  const match = /^\s*[[【(（]\s*([A-Za-z\u4e00-\u9fa5]{1,8})\s*[\]】)）]\s*/.exec(text)
+  if (!match) return { emotion: null, rest: text }
+  const emotion = normalizeEmotion(match[1])
+  if (!emotion) return { emotion: null, rest: text }
+  return { emotion, rest: text.slice(match[0].length) }
+}
+
+/**
+ * 流式版标签剥离：`buffer` 是「还没发给前端的原始文本」。
+ * 返回 `resolved=false` 表示它可能还是标签前缀（例如刚读到 `[sh`），继续攒着别发。
+ */
+function stripLeadingTagStream(buffer: string): { resolved: boolean; emotion: Emotion | null; rest: string } {
+  const match = /^\s*[[【(（]\s*([A-Za-z\u4e00-\u9fa5]{1,8})\s*[\]】)）]\s*/.exec(buffer)
+  if (match) {
+    const emotion = normalizeEmotion(match[1])
+    if (emotion) return { resolved: true, emotion, rest: buffer.slice(match[0].length) }
+    return { resolved: true, emotion: null, rest: buffer }
+  }
+  if (/^\s*[[【(（]\s*[A-Za-z\u4e00-\u9fa5]{0,8}$/.test(buffer)) {
+    return { resolved: false, emotion: null, rest: '' }
+  }
+  return { resolved: true, emotion: null, rest: buffer }
+}
+
 export function systemPrompt(persona: string): string {
   return `${persona}
 
-输出要求：只输出一句中文台词，不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
+输出要求：先写一个方括号情绪标签，再写一句中文台词，例如「[shy] 别、别看了啦」。
+情绪标签只能从这几个里选：${EMOTIONS.join(' / ')}。
+台词不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
 不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`
 }
 
@@ -453,8 +514,9 @@ export async function generateReply(
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
         else if (chunk.type === 'finish') finish = describeFinish((chunk as { reason?: unknown }).reason)
       }
-      const line = sanitizeLine(text)
-      if (line) return { text: line }
+      const tagged = parseEmotionTag(text)
+      const line = sanitizeLine(tagged.rest)
+      if (line) return { text: line, emotion: tagged.emotion }
       return {
         text: null,
         error: text ? 'empty-after-sanitize' : `empty-stream${finish === undefined ? '' : ` (${finish})`}`,
@@ -477,6 +539,7 @@ export async function generateReply(
 
 /** 流式回复的一块：文本增量，或收尾（携带清洗后的整句）。 */
 export type ReplyChunk =
+  | { type: 'emotion'; emotion: Emotion }
   | { type: 'delta'; text: string }
   | { type: 'done'; text: string }
   | { type: 'error'; error: string }
@@ -523,15 +586,33 @@ export async function* streamReply(
       signal: controller.signal,
     })
     let finish: string | undefined
+    // 开头的情绪标签要吃掉：标签没闭合前先攒着，闭合后先把 emotion 事件发出去再吐文本
+    let pending = ''
+    let visible = ''
+    let sent = 0
+    let prefixDone = false
     for await (const chunk of stream) {
       if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
         raw += chunk.text
-        yield { type: 'delta', text: chunk.text }
+        if (prefixDone) {
+          visible += chunk.text
+        } else {
+          pending += chunk.text
+          const tag = stripLeadingTagStream(pending)
+          if (!tag.resolved) continue
+          prefixDone = true
+          if (tag.emotion) yield { type: 'emotion', emotion: tag.emotion }
+          visible = tag.rest
+        }
+        if (visible.length > sent) {
+          yield { type: 'delta', text: visible.slice(sent) }
+          sent = visible.length
+        }
       } else if (chunk.type === 'finish') {
         finish = describeFinish((chunk as { reason?: unknown }).reason)
       }
     }
-    const line = sanitizeLine(raw)
+    const line = sanitizeLine(visible)
     if (line) yield { type: 'done', text: line }
     else yield { type: 'error', error: raw ? 'empty-after-sanitize' : `empty-stream${finish === undefined ? '' : ` (${finish})`}` }
   } catch (error) {

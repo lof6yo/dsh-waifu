@@ -18,7 +18,7 @@ import type { ReplyChunk } from './ai.ts'
 export const SPEAK_MAX_CHARS = 400
 
 /** 事件下发函数（由路由层转成 SSE 帧）。 */
-export type SpeakEmit = (event: 'text' | 'clause' | 'audio' | 'done' | 'error', data: unknown) => void
+export type SpeakEmit = (event: 'text' | 'clause' | 'audio' | 'emotion' | 'done' | 'error', data: unknown) => void
 
 /** 管线依赖：假实现即可测试（见 speak.test.ts）。 */
 export interface SpeakPipelineOptions {
@@ -117,6 +117,11 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
         buffer = `${buffer}${delta}`
         flush(false)
       }
+      continue
+    }
+    if (chunk.type === 'emotion') {
+      // 情绪标签先于台词到达：转给前端驱动表情/身体语言，不进气泡也不进 TTS
+      emit('emotion', { emotion: chunk.emotion })
       continue
     }
     if (chunk.type === 'done') {
