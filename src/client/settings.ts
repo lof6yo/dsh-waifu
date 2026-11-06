@@ -28,6 +28,7 @@ import {
   MAX_LINES_PER_PART,
   MAX_LINES_PER_POOL,
   PET_EVENTS,
+  ACTIVITY_EVENTS,
   EXPRESSIONS,
   expressionLabel,
   isExpressionId,
@@ -173,7 +174,10 @@ const DEFAULT_VALUE: PetSettingsValue = {
 }
 
 /** 事件卡片展示顺序（空闲/思考中/出错/完成/交付/等审批）。 */
-const EVENT_ORDER: readonly PetEventKey[] = ['idle', 'thinking', 'error', 'done', 'delivered', 'waiting']
+const EVENT_ORDER: readonly PetEventKey[] = [
+  'idle', 'thinking', 'error', 'done', 'delivered', 'waiting',
+  ...ACTIVITY_EVENTS,
+]
 
 /** 事件中文名（事件绑定卡片标题）。 */
 const EVENT_LABELS: Record<PetEventKey, string> = {
@@ -183,6 +187,18 @@ const EVENT_LABELS: Record<PetEventKey, string> = {
   done: '完成',
   delivered: '交付',
   waiting: '等审批',
+  // 活动事件（ADR-036）：状态机之外的一次性动作/台词
+  'tool-read': '看文件时',
+  'tool-write': '写文件时',
+  'tool-run': '跑命令时',
+  'tool-agent': '派子代理时',
+  'tool-other': '用其它工具时',
+  'approval-granted': '审批通过',
+  'approval-denied': '审批被拒',
+  'session-open': '新会话',
+  'session-close': '会话结束',
+  'subagent-start': '子代理开始',
+  'subagent-end': '子代理结束',
 }
 
 /** 事件台词池只有「入态」一组（ADR-026：多阶段固定台词已取消，长状态交给 AI 演绎）。 */

@@ -43,3 +43,15 @@
 改法：`subagent/start` 里记下子代理的 `info.id`（只增不删，id 唯一），
 `agent/status` / `agent/error` / `agent/turn-stopping` 先看 `payload.agent.id` 是否在这个集合里，
 是就忽略。活动提示不受影响（`subagent-start/end` 仍然播）。
+
+## 修订二（2026-11-06）：活动事件也走事件绑定 + AI
+
+最初活动只播动作。用户要求「这几个新加的事件应该和之前的事件一样触发 llm」，
+于是把活动键并入 `PetEventKey`（`ACTIVITY_EVENTS` 11 个），与状态事件共用：
+
+- `EventBindings` 覆盖 17 个键；`DEFAULT_EVENT_BINDINGS` 给每个活动配了默认台词池与动作；
+- 客户端 `applyActivity()` 改成：按绑定的动作/表情播放 → 出预置台词 → `requestSpeak({ kind:'state', state: 活动键 })`；
+- `buildSceneMessage()` 增加 `ACTIVITY_SCENES`（读文件 / 写文件 / 跑命令 / 派代理 / 审批通过 / 审批被拒 / 新会话 / 会话结束 / 子代理进出），AI 文案据此演绎；
+- 设置页「事件绑定」按 `EVENT_ORDER` 列出 17 张卡（状态 6 + 活动 11），可改动作/表情/台词，与状态事件完全一致。
+
+代价：事件绑定区变长；收益：活动不再只有哑动作，能说话、能按人设演。

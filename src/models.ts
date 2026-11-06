@@ -41,7 +41,7 @@ export const ANIMATION_SLOTS: readonly AnimationSlot[] = [
  * 状态 → 候选动作组集合。
  * 值数组 = 该槽位的「动作组 / 表情」混选；未配置的槽位由 DEFAULT_MOTION_MAP 兜底。
  */
-export type MotionMap = Partial<Record<AnimationSlot, string[]>>
+export type MotionMap = Partial<Record<PetEventKey, string[]>>
 
 /** 默认动画映射：动作组 + 表情混选（表情 id 与动作组同列存放，见 MotionSelection）。 */
 export const DEFAULT_MOTION_MAP: MotionMap = {
@@ -207,10 +207,40 @@ export function expressionParams(ids: readonly string[]): Record<string, number>
 }
 
 /** 宠物事件键（与状态动画槽位同构：空闲/思考/出错/完成/交付/等审批）。 */
-export type PetEventKey = AnimationSlot
+/**
+ * 活动事件键（ADR-036）：一次性动作/台词，不进状态机。
+ * 与状态事件共用同一套「事件绑定」结构（动作组 + 表情 + 台词池 + AI 演绎）。
+ */
+export type ActivityKey =
+  | 'tool-read'
+  | 'tool-write'
+  | 'tool-run'
+  | 'tool-agent'
+  | 'tool-other'
+  | 'approval-granted'
+  | 'approval-denied'
+  | 'session-open'
+  | 'session-close'
+  | 'subagent-start'
+  | 'subagent-end'
 
-/** 全部宠物事件（设置页「事件绑定」顺序）。 */
-export const PET_EVENTS: readonly PetEventKey[] = ANIMATION_SLOTS
+/** 全部活动事件（设置页「事件绑定 · 活动」顺序）。 */
+export const ACTIVITY_EVENTS: readonly ActivityKey[] = [
+  'tool-read', 'tool-write', 'tool-run', 'tool-agent', 'tool-other',
+  'approval-granted', 'approval-denied',
+  'session-open', 'session-close',
+  'subagent-start', 'subagent-end',
+]
+
+/** 是否是活动事件（状态机不认它，但事件绑定认）。 */
+export function isActivityKey(value: unknown): value is ActivityKey {
+  return typeof value === 'string' && (ACTIVITY_EVENTS as readonly string[]).includes(value)
+}
+
+export type PetEventKey = AnimationSlot | ActivityKey
+
+/** 全部宠物事件（设置页「事件绑定」顺序：状态事件在前，活动事件在后）。 */
+export const PET_EVENTS: readonly PetEventKey[] = [...ANIMATION_SLOTS, ...ACTIVITY_EVENTS]
 
 /**
  * 事件绑定：该事件触发的「动作组 / 表情」+ 台词池。
@@ -281,6 +311,51 @@ export const DEFAULT_EVENT_BINDINGS: EventBindings = {
   waiting: {
     motions: ['Sway'],
     lines: [['喂，你定一下啦！']],
+  },
+  // 活动事件（ADR-036）：动作组小、台词短，和状态事件走同一套 AI 演绎
+  'tool-read': {
+    motions: ['Glance'],
+    lines: [['又让我看东西…', '翻翻看。', '在读了在读了。']],
+  },
+  'tool-write': {
+    motions: ['Perk'],
+    lines: [['记下来了。', '改好了，要不要看看？', '写完了。']],
+  },
+  'tool-run': {
+    motions: ['Shift'],
+    lines: [['跑起来了。', '在跑了在跑了。', '命令我按了哦。']],
+  },
+  'tool-agent': {
+    motions: ['Nod'],
+    lines: [['交给我吧。', '我去办。', '等我回来。']],
+  },
+  'tool-other': {
+    motions: ['Tilt'],
+    lines: [['嗯？这个也要我管…', '行吧。', '顺手做了。']],
+  },
+  'approval-granted': {
+    motions: ['Nod'],
+    lines: [['这还差不多。', '准了。', '嗯，你放心。']],
+  },
+  'approval-denied': {
+    motions: ['ShakeHead'],
+    lines: [['不给就算了…', '行吧，收回。', '真小气。']],
+  },
+  'session-open': {
+    motions: ['Perk'],
+    lines: [['来了？', '又要干什么。', '我在的。']],
+  },
+  'session-close': {
+    motions: ['Sigh'],
+    lines: [['走了啊…', '结束了？', '终于。']],
+  },
+  'subagent-start': {
+    motions: ['Glance'],
+    lines: [['分身出来了。', '那我去跑腿。', '让我看看那边。']],
+  },
+  'subagent-end': {
+    motions: ['Nod'],
+    lines: [['回来了。', '报告：办完。', '交差。']],
   },
 }
 

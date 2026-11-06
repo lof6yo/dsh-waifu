@@ -375,3 +375,14 @@ describe('情绪标签', () => {
     expect(result.emotion).toBe('smug')
   })
 })
+
+describe('buildSceneMessage · 活动事件（ADR-036）', () => {
+  it('工具/审批/会话/子代理都有各自的场景描述', () => {
+    const read = buildSceneMessage({ kind: 'state', state: 'tool-read' })
+    expect(read).toContain('看东西')
+    expect(buildSceneMessage({ kind: 'state', state: 'approval-denied' })).toContain('拒绝了你的请求')
+    expect(buildSceneMessage({ kind: 'state', state: 'subagent-end' })).toContain('分身')
+    // 状态事件仍走原描述
+    expect(buildSceneMessage({ kind: 'state', state: 'thinking' })).toContain('等你想事情')
+  })
+})

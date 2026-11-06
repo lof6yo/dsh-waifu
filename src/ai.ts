@@ -300,14 +300,35 @@ export function loadPersona(homeDir: string): string {
  * `forHistory: true` 时去掉「你下意识想说的是『…』」这半句（ADR-030 修订）：
  * 历史只该记录真实发生的事——参考台词并没有上屏，留着会让模型把预置台词当成自己说过的话。
  */
+/**
+ * 活动事件（ADR-036）的场景描述：工具 / 审批 / 会话 / 子代理。
+ * 它们和状态事件共用同一条 AI 演绎链路，只是场景文案不同。
+ */
+const ACTIVITY_SCENES: Record<string, string> = {
+  'tool-read': '主人让你看东西，你正翻着资料',
+  'tool-write': '主人让你写/改东西，你刚动完笔',
+  'tool-run': '主人让你跑命令，你刚按下回车',
+  'tool-agent': '主人派你去办事，你正准备出发',
+  'tool-other': '主人让你用了件别的工具，你顺手做了',
+  'approval-granted': '主人刚刚批准了你的请求',
+  'approval-denied': '主人刚刚拒绝了你的请求',
+  'session-open': '主人刚开了一个新会话，才见到你',
+  'session-close': '这轮会话结束了，主人要走了',
+  'subagent-start': '你的分身刚被派出去干活',
+  'subagent-end': '你的分身干完活回来了',
+}
+
 export function buildSceneMessage(context: ReplyContext, options: { forHistory?: boolean } = {}): string {
   const state = context.state ?? 'idle'
+  const activityScene = ACTIVITY_SCENES[state]
   const said = (context.text ?? '').replace(/\s+/g, ' ').trim()
   const where = context.kind === 'chat'
     ? `主人刚对你说「${said || '（没说话）'}」`
     : context.kind === 'tap'
       ? `主人刚戳了你的「${context.part || '身体'}」`
-      : `当前状态是「${state}」（${
+      : activityScene
+        ? `眼下${activityScene}`
+        : `当前状态是「${state}」（${
         state === 'thinking' ? '主人在等你想事情'
           : state === 'error' ? '出错了，气氛有点僵'
             : state === 'done' ? '事情办完了'

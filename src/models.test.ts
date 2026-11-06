@@ -7,6 +7,7 @@ import {
   defaultModelId,
 } from './models-host.ts'
 import {
+  ACTIVITY_EVENTS,
   DEFAULT_EVENT_BINDINGS,
   DEFAULT_LONG_AI,
   DEFAULT_MOTION_MAP,
@@ -174,10 +175,22 @@ describe('hitTestTouchParts（按图层，parts[0] 最上层）', () => {
 })
 
 describe('EventBindings（事件绑定）', () => {
-  it('默认事件绑定覆盖 6 个事件，长状态只有入态一组台词', () => {
+  it('默认事件绑定覆盖状态与活动事件，长状态只有入态一组台词', () => {
     expect(Object.keys(DEFAULT_EVENT_BINDINGS).sort()).toEqual(
-      ['delivered', 'done', 'error', 'idle', 'thinking', 'waiting'],
+      [
+        'delivered', 'done', 'error', 'idle', 'thinking', 'waiting',
+        // 活动事件（ADR-036）
+        'approval-denied', 'approval-granted',
+        'session-close', 'session-open',
+        'subagent-end', 'subagent-start',
+        'tool-agent', 'tool-other', 'tool-read', 'tool-run', 'tool-write',
+      ].sort(),
     )
+    // 活动事件都有台词，且不进长状态
+    for (const key of ACTIVITY_EVENTS) {
+      expect(DEFAULT_EVENT_BINDINGS[key].lines[0]?.length).toBeGreaterThan(0)
+      expect(isLongState(key)).toBe(false)
+    }
     expect(DEFAULT_EVENT_BINDINGS.thinking.lines.length).toBe(1)
     expect(DEFAULT_EVENT_BINDINGS.waiting.lines.length).toBe(1)
     expect(DEFAULT_EVENT_BINDINGS.idle.lines.length).toBe(1)

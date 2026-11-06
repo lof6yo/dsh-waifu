@@ -42,6 +42,7 @@ import {
   hitTestTouchParts,
   pointToBoundsRatio,
   type EventBindings,
+  type PetEventKey,
   type TouchBox,
   type TouchPart,
 } from '../models.ts'
@@ -984,14 +985,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /** 取事件某阶段的台词池：index 越界用最后一组；无台词 → 空数组（不回退固定人设）。 */
-  function eventLinesFor(state: PetState, index: number): string[] {
+  function eventLinesFor(state: PetEventKey, index: number): string[] {
     const pools = eventBindings[state]?.lines ?? []
     if (pools.length === 0) return []
     return pools[Math.min(index, pools.length - 1)] ?? []
   }
 
   /** 随机取事件某阶段的一句台词（避开该阶段上一条，spec §3）；无台词返回 undefined。 */
-  function pickEventLine(state: PetState, index: number): string | undefined {
+  function pickEventLine(state: PetEventKey, index: number): string | undefined {
     const pool = eventLinesFor(state, index)
     if (pool.length === 0) return undefined
     const key = `${state}\u0000${index}`
@@ -1467,10 +1468,25 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!activity || typeof activity.seq !== 'number') return
     if (activity.seq <= lastActivitySeq) return
     lastActivitySeq = activity.seq
+    const kind = activity.kind as PetEventKey
+    // 活动事件和状态事件共用事件绑定（动作 / 表情 / 台词池 / AI 演绎，ADR-036）
+    const binding = eventBindings[kind]
+    const selection = splitMotionSelection(binding?.motions ?? [])
     if (!model || dragging || previewActive || hidden) return
-    const motion = ACTIVITY_MOTIONS[activity.kind]
-    if (!motion) return
-    void startMotionWithPriority([motion], MotionPriority.NORMAL, { suppressFocus: true, isInteraction: false })
+    const motion = selection.motion ?? ACTIVITY_MOTIONS[activity.kind]
+    if (motion) {
+      void startMotionWithPriority([motion], MotionPriority.NORMAL, { suppressFocus: true, isInteraction: false })
+    }
+    if (selection.expressions.length > 0) {
+      tempExpressions = selection.expressions
+      tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
+      refreshExpressionTargets()
+    }
+    // 台词：与状态事件同一条链路（预置台词先出，AI 台词到了再替换；接管时不显示预置）
+    const takeover = aiTakeover && aiEnabled && !aiTouchOnly
+    const line = pickEventLine(kind, 0)
+    if (!takeover && line) showBubble(line)
+    void requestSpeak({ kind: 'state', state: kind, hint: takeover ? undefined : line })
   }
 
   function applyState(next: PetStateView | null): void {
