@@ -117,7 +117,7 @@ describe('PetService 状态机', () => {
     }
     // ADR-037：部位只剩 id/name/boxes（台词与动作由 AI 决定）
     for (const part of parts) {
-      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'name'])
+      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'interactions', 'name'])
     }
   })
 

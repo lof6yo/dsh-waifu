@@ -250,7 +250,7 @@ describe('makePetRoutes API 路由', () => {
     // ADR-037：不再返回 events 绑定
     expect(body.events).toBeUndefined()
     for (const part of body.parts) {
-      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'name'])
+      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'interactions', 'name'])
     }
     cleanup()
   })

@@ -51,7 +51,7 @@ describe('listBuiltinPresets', () => {
     expect(jian.touchParts?.map((p) => p.name)).toEqual(['脸', '头发', '胸', '私处', '臀', '腰', '大腿', '手', '小腿', '脚'])
     // 部位不再带 motions/lines —— 台词与动作全部交给 AI
     for (const part of jian.touchParts ?? []) {
-      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'name'])
+      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'interactions', 'name'])
     }
     expect(resolveDefaultTouchParts('jian').length).toBe(10)
     expect(resolveDefaultTouchParts('nope')).toEqual([])

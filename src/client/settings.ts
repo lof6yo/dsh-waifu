@@ -1534,7 +1534,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         createElement('div', { key: 'interactions', style: { marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 } },
           createElement(FormLabel, {
             title: '交互',
-            hint: '名字自己起（会原样告诉模型，比如「抚摸」「捏脸」）；留空则用内置的轻碰 / 戳戳 / 抚摸三档',
+            hint: '名字自己起（会原样告诉模型，比如「抚摸」「捏脸」）；这个部位没有交互时，点它不会有任何反应',
           }),
           (part.interactions ?? []).length === 0
             ? createElement('div', { style: hintStyle }, '还没有交互，点「+ 添加交互」造一个。')

@@ -23,6 +23,20 @@
               "right": 0.6,
               "bottom": 0.2
             }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
+            }
           ]
         },
         {
@@ -34,6 +48,20 @@
               "top": 0.06,
               "right": 0.66,
               "bottom": 0.2
+            }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
             }
           ]
         },
@@ -47,6 +75,20 @@
               "right": 0.64,
               "bottom": 0.32
             }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
+            }
           ]
         },
         {
@@ -58,6 +100,20 @@
               "top": 0.41,
               "right": 0.51,
               "bottom": 0.47
+            }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
             }
           ]
         },
@@ -71,6 +127,20 @@
               "right": 0.68,
               "bottom": 0.48
             }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
+            }
           ]
         },
         {
@@ -83,6 +153,20 @@
               "right": 0.6,
               "bottom": 0.39
             }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
+            }
           ]
         },
         {
@@ -94,6 +178,20 @@
               "top": 0.48,
               "right": 0.68,
               "bottom": 0.65
+            }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
             }
           ]
         },
@@ -113,6 +211,20 @@
               "right": 0.78,
               "bottom": 0.53
             }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
+            }
           ]
         },
         {
@@ -125,6 +237,20 @@
               "right": 0.65,
               "bottom": 0.84
             }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
+            }
           ]
         },
         {
@@ -136,6 +262,20 @@
               "top": 0.84,
               "right": 0.59,
               "bottom": 0.96
+            }
+          ],
+          "interactions": [
+            {
+              "id": "i1",
+              "name": "轻碰",
+              "trigger": "tap",
+              "holdMs": 3000
+            },
+            {
+              "id": "i2",
+              "name": "抚摸",
+              "trigger": "hold",
+              "holdMs": 3000
             }
           ]
         }

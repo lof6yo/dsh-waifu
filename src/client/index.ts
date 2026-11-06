@@ -65,7 +65,6 @@ import {
   DEFAULT_TRIGGER_MODE,
   normalizeTriggerMode,
   type TriggerMode,
-  touchKindOf,
 } from '../defaults.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
 import { homePercentFromPos, onCaptureHome, onRecenter } from './pet-commands.ts'
@@ -277,8 +276,7 @@ async function readJson<T>(res: Response): Promise<T> {
 interface TriggerBody {
   kind: 'tap' | 'event' | 'chat' | 'idle'
   part?: string
-  tapKind?: 'light' | 'poke' | 'stroke'
-  /** 部位自定义交互名（ADR-038）；有值时场景句用它，不用 tapKind。 */
+  /** 部位自定义交互名（ADR-038）：场景句用它描述「主人做了什么」。 */
   interaction?: string
   durationMs?: number
   event?: string
@@ -2706,14 +2704,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const durationMs = tapDownAt > 0 ? Math.max(0, now - tapDownAt) : 0
       const fireTap = (clickCount: number): void => {
         const picked = pickInteraction(part, durationMs, clickCount)
+        // 部位没配交互 = 这个部位不参与互动（ADR-038 修订）：不再回落到时长三档
+        if (!picked) {
+          clientLog('info', `tap | ${part.name} | 没有匹配的交互，忽略 ${durationMs}ms`)
+          return
+        }
         const input: TriggerBody = {
           kind: 'tap',
           part: part.name,
-          tapKind: touchKindOf(durationMs),
+          interaction: picked.name,
           durationMs,
         }
-        if (picked) input.interaction = picked.name
-        clientLog('info', `tap | ${part.name} | ${picked ? `${picked.name}(${picked.trigger})` : input.tapKind} ${durationMs}ms`)
+        clientLog('info', `tap | ${part.name} | ${picked.name}(${picked.trigger}) ${durationMs}ms`)
         // 触摸必触发（不受事件开关/最小间隔限制），冷却由 fireTrigger 内部处理
         fireTrigger(input)
       }
