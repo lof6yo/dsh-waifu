@@ -222,21 +222,20 @@ describe('最近对话注入（ADR-030）', () => {
     { role: 'assistant', text: '第 4 句', at: T - 1000, provider: 'p', model: 'm' },
   ]
 
-  it('条数为 0 时不注入', () => {
+  it('轮数为 0 时不注入', () => {
     expect(historyMessages(history, 0, FALLBACK)).toHaveLength(0)
     expect(historyMessages([], 10, FALLBACK)).toHaveLength(0)
   })
 
-  it('按条数取最近若干条，且丢掉开头没有提问的 assistant', () => {
-    expect(historyMessages(history, 2, FALLBACK)).toHaveLength(2)
-    expect(historyMessages(history, 2, FALLBACK)[0].role).toBe('user')
-    // 取 1 条时末尾是 assistant → 整段丢弃（避免以 assistant 开头的上下文）
-    expect(historyMessages(history, 1, FALLBACK)).toHaveLength(0)
+  it('按「轮」取最近若干轮（1 轮 = 一问一答两条），且丢掉开头没有提问的 assistant', () => {
+    expect(historyMessages(history, 1, FALLBACK)).toHaveLength(2)
+    expect(historyMessages(history, 1, FALLBACK)[0].role).toBe('user')
+    expect(historyMessages(history, 2, FALLBACK)).toHaveLength(4)
     expect(historyMessages(history, 99, FALLBACK)).toHaveLength(4)
   })
 
   it('注入的历史带时间戳前缀（同一天只给时分，跨天补日期）', () => {
-    const rows = historyMessages(history, 2, FALLBACK)
+    const rows = historyMessages(history, 1, FALLBACK)
     // fixture 用的是「一分钟前」，必然落在今天 → 只带 HH:MM
     const clock = `${String(new Date(T - 2000).getHours()).padStart(2, '0')}:${String(new Date(T - 2000).getMinutes()).padStart(2, '0')}`
     expect(rows[0].content[0].text).toBe(`[${clock}] 第 3 句`)
@@ -270,7 +269,7 @@ describe('最近对话注入（ADR-030）', () => {
       persona: '人设',
       context: { kind: 'tap', part: '脸', hint: '别捏脸啦～' },
       history,
-      historyCount: 2,
+      historyCount: 1,
       onPayload: (payload) => payloads.push(payload),
     })
     expect(payloads).toHaveLength(1)
@@ -289,7 +288,7 @@ describe('最近对话注入（ADR-030）', () => {
       persona: '人设',
       context: { kind: 'tap', part: '脸' },
       history,
-      historyCount: 2,
+      historyCount: 1,
     })
     const messages = llm.calls[0].messages
     expect(messages).toHaveLength(3)
@@ -312,12 +311,12 @@ describe('最近对话注入（ADR-030）', () => {
   })
 
   it('历史只保留上限条数，且默认上限等于 limits.max', () => {
-    expect(AI_HISTORY_MAX_ENTRIES).toBe(AI_HISTORY_LIMITS.max)
+    expect(AI_HISTORY_MAX_ENTRIES).toBe(AI_HISTORY_LIMITS.max * 2)
     let list: AiHistoryEntry[] = []
-    for (let i = 0; i < AI_HISTORY_LIMITS.max + 20; i += 1) {
+    for (let i = 0; i < AI_HISTORY_MAX_ENTRIES + 20; i += 1) {
       list = appendHistory(list, { role: i % 2 === 0 ? 'user' : 'assistant', text: `t${i}`, at: 1_700_000_000_000 + i })
     }
-    expect(list).toHaveLength(AI_HISTORY_LIMITS.max)
-    expect(list[list.length - 1].text).toBe(`t${AI_HISTORY_LIMITS.max + 19}`)
+    expect(list).toHaveLength(AI_HISTORY_MAX_ENTRIES)
+    expect(list[list.length - 1].text).toBe(`t${AI_HISTORY_MAX_ENTRIES + 19}`)
   })
 })

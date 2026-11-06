@@ -32,6 +32,7 @@ export const DEFAULT_MODEL_ID = 'jian'
 export const DEFAULT_AI_PROVIDER = 'openrouter'
 export const DEFAULT_AI_MODEL = 'google/gemma-4-31b-it'
 /** 注入到 prompt 的最近对话条数（0 = 不注入；ADR-030）。 */
+/** 注入的最近对话轮数（1 轮 = 用户一句 + 桌宠一句）。 */
 export const DEFAULT_AI_HISTORY = 20
 
 /** 语音合成（TTS，ADR-033）：默认引擎 = OpenRouter 的 `/api/v1/audio/speech`。 */

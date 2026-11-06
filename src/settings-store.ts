@@ -79,6 +79,7 @@ export interface PetSettings {
   /** AI 回复使用的模型 id（provider 下可用模型）。 */
   aiModel: string
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
+  /** 注入的最近对话轮数（1 轮 = 一问一答两条消息；0 = 不注入）。 */
   aiHistoryCount: number
   /** 打断优先级：触摸互动与状态事件谁先占气泡/动作/AI 演绎（ADR-032）。 */
   interactionMode: InteractionMode
@@ -123,7 +124,7 @@ export interface PetSettingsView {
 
 const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注释）。
 // 路径：$DSH_HOME/waifu/settings.jsonc
-// 建议通过设置页「桌宠配置」修改；直接编辑保存后刷新页面生效。
+// 建议通过设置页「Waifu 设置」修改；直接编辑保存后刷新页面生效。
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
 //        aiEnabled / aiTouchOnly / aiProvider / aiModel / aiHistoryCount /

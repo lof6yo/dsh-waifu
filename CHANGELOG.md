@@ -14,6 +14,7 @@
 - `/api/dsh-waifu/ai-debug` 增加 `lastTtsPayload` / `lastSpeakPayload`：分别记录最近一次「试听合成」与「对话流式合成」实际发给供应商的 body（model / input / voice / response_format / 是否命中缓存），方便对照同一次调用的 LLM 载荷排查。
 
 ### Changed
+- 设置页标题「桌宠配置」→「Waifu 设置」；「画布与位置」的留白标注单位（% 模型宽/高），归位/捕捉独占一行；气泡垂直偏移只留 `px`；「等确认节奏」→「确认节奏」；「注入历史（条）」→「注入对话历史（轮）」（1 轮 = 一问一答两条消息，`aiHistoryCount` 语义随之按轮计）
 - 交互条静音按钮改用内联 SVG 描边图标（不再用 emoji，各平台字体下大小与基线不一致）
 - 设置页各设置项行间距统一为 10px（原先逐行覆盖 margin，行与行松紧不一）
 

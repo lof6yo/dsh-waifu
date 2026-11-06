@@ -1,5 +1,5 @@
 /**
- * dsh-waifu 浏览器半区：挂载 Live2D 桌宠 + 「桌宠配置」设置页。
+ * dsh-waifu 浏览器半区：挂载 Live2D 桌宠 + 「Waifu 设置」页。
  *
  * 架构（ADR-005 / 004，spike pkg-9 实证）：
  * - `shell.overlay` 注册零尺寸锚点（生命周期/设置锚点）
@@ -2880,7 +2880,7 @@ export function apply(ctx: ClientContext): void {
     () => createElement(PetAnchor),
   ))
 
-  // 桌宠配置设置页（settings.section，spec §2）：开关/尺寸/模型列表/事件绑定/触摸部位/调试，
+  // Waifu 设置页（settings.section，spec §2）：开关/尺寸/模型列表/事件绑定/触摸部位/调试，
   // 读写经插件自身 API（/api/dsh-waifu/settings，Host 直连插件私有 JSONC 文件；
   // 不走 settingsScope wire，见 docs/research/settings-tab.md「设置服务不可用」根因）。
   // 导航爪印：平台 settings-general 按 id 硬编码图标（未知 id→齿轮），故 register.icon
@@ -2892,7 +2892,7 @@ export function apply(ctx: ClientContext): void {
         name: 'settings.section',
         id: 'waifu',
         order: 200,
-        label: () => '桌宠配置',
+        label: () => 'Waifu 设置',
         icon: pawNavIcon,
       },
       () => createElement(PetSettingsSection, {}),

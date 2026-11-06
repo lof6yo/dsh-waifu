@@ -102,8 +102,10 @@ export interface ReplyContext {
   tz?: string
 }
 
+/** 设置里填的是「轮」；一轮 = 用户一句 + 桌宠一句。 */
+export const HISTORY_ENTRIES_PER_ROUND = 2
 /** 注入给模型的最近对话条数上限（防止超长历史把 token 预算吃满）。 */
-export const AI_HISTORY_MAX_ENTRIES: number = AI_HISTORY_LIMITS.max
+export const AI_HISTORY_MAX_ENTRIES: number = AI_HISTORY_LIMITS.max * HISTORY_ENTRIES_PER_ROUND
 
 /**
  * 一条对话历史（`user` = 我们发过去的情景描述，`assistant` = 桌宠当时的台词）。
@@ -224,11 +226,12 @@ export interface HistoryMessage {
  */
 export function historyMessages(
   history: readonly AiHistoryEntry[],
-  count: number,
+  rounds: number,
   fallback: { provider: string; model: string },
   timeZone?: string,
 ): HistoryMessage[] {
-  const limit = normalizeHistoryCount(count, 0)
+  // 设置页填「轮」：1 轮 = 一问一答，换算成消息条数
+  const limit = normalizeHistoryCount(rounds, 0) * HISTORY_ENTRIES_PER_ROUND
   if (limit <= 0 || history.length === 0) return []
   const tail = history.slice(-limit)
   while (tail.length > 0 && tail[0].role === 'assistant') tail.shift()

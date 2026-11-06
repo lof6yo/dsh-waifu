@@ -7,7 +7,7 @@
  * - 因此热设置（开关/尺寸/帧率/模型/人设/开发者选项）改存插件私有
  *   `$DSH_HOME/waifu/settings.jsonc`（ADR-013），经 SSE 实时推送；
  *   Config schema 只作为默认值 base 层，并用 `settings.configure({ auto: false })`
- *   隐藏自动生成的设置页（插件自带「桌宠配置」页）。
+ *   隐藏自动生成的设置页（插件自带「Waifu 设置」页）。
  * @module dsh-waifu
  */
 
@@ -156,7 +156,7 @@ export const Config: Schema<Config> = Schema.object({
   ]).default(DEFAULT_BAR_POSITION),
   /** 交互条沿吸附边的额外偏移（px，正数远离模型）。 */
   barOffset: Schema.number().min(BAR_OFFSET_LIMITS.min).max(BAR_OFFSET_LIMITS.max).default(DEFAULT_BAR_OFFSET),
-  /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
+  /** 注入到 prompt 的最近对话轮数（1 轮 = 一问一答；0 = 不注入；ADR-030）。 */
   aiHistoryCount: Schema.number().min(0).max(50).default(DEFAULT_AI_HISTORY),
   // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
   thinkingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.thinking.delay),
@@ -179,7 +179,7 @@ export const inject = ['webServer', 'settings', 'llm', 'credentials']
 
 /** 注册宠物服务、设置 API 与素材路由。 */
 export function apply(ctx: Context, config: Config): void {
-  // 插件自带「桌宠配置」设置页；隐藏 0.2.x 自动生成的 Config 表单页，
+  // 插件自带「Waifu 设置」页；隐藏 0.2.x 自动生成的 Config 表单页，
   // 避免两套入口并存且表单写入会触发整插件重载（ADR-013）。
   ctx.effect(() => ctx.settings.configure({ auto: false }), 'waifu: settings page policy')
 

@@ -1,5 +1,5 @@
 /**
- * 桌宠配置设置页（`settings.section` 注册体，spec §2）。
+ * Waifu 设置页（`settings.section` 注册体，spec §2）。
  * 单页信息架构（从上到下）：显示（开关 / 尺寸 / 留白 / 位置 / 气泡 / 帧率）/
  * 事件绑定（当前模型：6 事件的动作 / 表情 + 入态台词池）/ 触摸部位
  * （box / 台词 / 动作组）/ 开发者选项。仅内置「简」模型，不再有模型选择/导入、
@@ -2163,7 +2163,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   )
 
   const children: ReactNode[] = [
-    createElement('h3', { key: 'title', style: { margin: '0 0 4px', fontSize: 16, fontWeight: 600, color: C.textPrimary } }, '桌宠配置'),
+    createElement('h3', { key: 'title', style: { margin: '0 0 4px', fontSize: 16, fontWeight: 600, color: C.textPrimary } }, 'Waifu 设置'),
     createElement('p', { key: 'sub', style: { ...sectionDescStyle, margin: '0 0 16px' } },
       '设置立即生效；动画与台词按「事件」绑定，触摸部位可单独覆盖触摸时的表现。修改后点击分组内「保存」写入。'),
   ]
@@ -2278,7 +2278,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     createElement('div', { key: 'canvas-home', style: rowStyle },
       createElement('div', { style: cardHeadingStyle }, '画布与位置'),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '水平留白（%）'),
+        createElement('span', { style: formLabelInlineStyle }, '水平留白（% 模型宽）'),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2296,7 +2296,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '垂直留白（%）'),
+        createElement('span', { style: formLabelInlineStyle }, '垂直留白（% 模型高）'),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2347,6 +2347,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
             },
           }),
+        ),
+      ),
+      // 「归位 / 捕捉」独占一行：贴着数字输入会挤掉输入框宽度，动作类按钮也更好点
+      createElement('div', { style: formRowInlineStyle },
+        createElement('span', { style: formLabelInlineStyle }, '默认位置'),
+        createElement('div', { style: formControlInlineStyle },
           createElement('button', {
             type: 'button',
             className: 'dsh-btn dsh-btn-secondary',
@@ -2393,7 +2399,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '垂直偏移（px，正值向上）'),
+        createElement('span', { style: formLabelInlineStyle }, '垂直偏移（px）'),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2800,7 +2806,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '注入历史（条，0 = 不注入）'),
+        createElement('span', { style: formLabelInlineStyle }, '注入对话历史（轮）'),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',

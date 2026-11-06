@@ -3,7 +3,7 @@
  *
  * DSH `dsh-client-ui-settings-general` 当前按 section id 硬编码导航图标
  * （未知 id 一律齿轮），settings.section 的 `icon` 选项尚未接入投影。
- * 因此在导航出现「桌宠配置」时用爪印 SVG 替换齿轮，作为可随插件发布的兼容方案。
+ * 因此在导航出现「Waifu 设置」时用爪印 SVG 替换齿轮，作为可随插件发布的兼容方案。
  * @module dsh-waifu/client/paw-icon
  */
 
@@ -38,10 +38,10 @@ export function pawNavIcon(size: number): ReactNode {
   return createElement(PawPrintIcon, { size })
 }
 
-const NAV_LABEL = '桌宠配置'
+const NAV_LABEL = 'Waifu 设置'
 
 /**
- * 监视 DOM：把「桌宠配置」导航行上的默认齿轮换成爪印。
+ * 监视 DOM：把「Waifu 设置」导航行上的默认齿轮换成爪印。
  * 返回停止函数（插件卸载 / section 退订时调用）。
  */
 export function installPetSettingsNavIcon(): () => void {
