@@ -293,8 +293,6 @@ export function apply(ctx: Context, config: Config): void {
       kind: input.kind,
       part: input.part,
       interaction: input.interaction,
-      hover: input.hover,
-      durationMs: input.durationMs,
       event: input.event,
       text: input.text,
       merged: input.merged,

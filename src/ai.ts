@@ -98,10 +98,6 @@ export interface ReplyContext {
   /** 触摸类型（`kind: 'tap'`；轻碰/戳戳/抚摸）。部位没配自定义交互时的兜底描述。 */
   /** 部位自定义交互名（ADR-038，如「抚摸」「捏脸」）；有值时以它为准，`tapKind` 不再进场景句。 */
   interaction?: string
-  /** 「停留」交互（ADR-038 修订）：由鼠标悬停 box 触发（无按压）。场景句用悬停语义。 */
-  hover?: boolean
-  /** 触摸按住时长（ms，`kind: 'tap'`）。 */
-  durationMs?: number
   /** 用户输入的原话（`kind: 'chat'`，已单行化并截断）。 */
   text?: string
   /** DSH 事件键（`kind: 'event'`：状态或活动）。 */
@@ -317,41 +313,34 @@ export function eventSceneText(event: string, texts?: EventTexts): string {
 /**
  * 拼「现在发生了什么」的用户消息（模型只看这一句就能接话）。
  * `merged` 是触发频率窗口内被合并进来的事件描述（ADR-037）。
+ * 句式统一为「<场景>。按你的人设回应。」，触发方式不进场景句。
  */
 export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts): string {
   const now = formatNow(Date.now(), context.tz)
-  let where: string
+  let body: string
   if (context.kind === 'chat') {
     const said = (context.text ?? '').replace(/\s+/g, ' ').trim()
-    where = `主人刚对你说「${said || '（没说话）'}」`
+    body = `主人对你说「${said || '（没说话）'}」`
   } else if (context.kind === 'tap') {
-    // ADR-038 修订：「停留」= 鼠标悬停（hover），不是按压——场景句用悬停语义，
-    // 时长半句只对 tap/double 交互保留（按压类交互仍需要「按了多久」）。
+    // 触摸只描述「谁对哪个部位做了什么」：动作永远是用户给这个部位起的交互名。
+    // 「互动」是抽象概念——单击/双击/停留走同一条链路，场景句不区分触发方式，
+    // 也不描述时长（2026-11-06 用户指定句式）。
     const custom = (context.interaction ?? '').trim().slice(0, 20)
-    const isHold = custom !== '' && context.hover === true
-    if (isHold) {
-      // 悬停不描述「鼠标停在那里」——场景句子只说发生了什么，剩下的交给模型
-      where = `主人${custom}你的「${context.part || '身体'}」`
-    } else if (custom !== '') {
-      const duration = context.durationMs !== undefined && context.durationMs > 0
-        ? `，按了约 ${(context.durationMs / 1000).toFixed(1)} 秒`
-        : ''
-      where = `主人${custom}你的「${context.part || '身体'}」${duration}`
-    } else {
-      // 没有交互名（部位没配交互）就不描述具体动作——绝不回落到内建的「戳了戳」
-      where = `主人碰了你的「${context.part || '身体'}」`
-    }
+    const part = context.part || '身体'
+    body = custom !== ''
+      ? `主人「${custom}」了你的「${part}」`
+      // 没有交互名（部位没配交互）就不编造动词
+      : `主人碰了你的「${part}」`
   } else if (context.kind === 'idle') {
-    where = '有一阵子没人理你，也没发生什么事'
+    body = '有一阵子没人理你，也没发生什么事'
   } else {
     const event = context.event ?? 'idle'
-    where = `眼下${eventSceneText(event, eventTexts)}`
+    body = `眼下${eventSceneText(event, eventTexts)}`
   }
   // 事件合并：窗口内被攒下来的事件一起描述（模型自己会挑重点反应）
   const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
   const mergedText = merged.length > 0 ? `这期间还发生了：${merged.join('；')}。` : ''
-  // 统一一句「按你的人设回应」：不分场景，也不说「演」（2026-11-06 用户指定）
-  return `（现在是 ${now}。${where}。${mergedText}）按你的人设回应。`
+  return `现在是 ${now}。${body}。${mergedText}按你的人设回应。`
 }
 
 /**
@@ -366,11 +355,7 @@ export function historySceneText(context: ReplyContext, eventTexts?: EventTexts)
   if (context.kind === 'tap') {
     const custom = (context.interaction ?? '').trim().slice(0, 20)
     const part = context.part || '身体'
-    if (custom !== '' && context.hover === true) return `主人${custom}「${part}」`
-    const seconds = context.durationMs !== undefined && context.durationMs >= 1000
-      ? `（${(context.durationMs / 1000).toFixed(1)}s）`
-      : ''
-    return custom !== '' ? `主人${custom}「${part}」${seconds}` : `主人碰了「${part}」`
+    return custom !== '' ? `主人「${custom}」了「${part}」` : `主人碰了「${part}」`
   }
   if (context.kind === 'idle') return '一阵子没动静'
   const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)

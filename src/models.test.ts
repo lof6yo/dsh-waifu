@@ -20,8 +20,6 @@ import {
   expressionParams,
   normalizeInteractions,
   normalizeTouchParts,
-  pickInteraction,
-  hasDoubleInteraction,
   MAX_INTERACTIONS_PER_PART,
   TOUCH_HOLD_DEFAULT_MS,
   TOUCH_HOLD_LIMITS,
@@ -309,21 +307,4 @@ describe('部位自定义交互（ADR-038）', () => {
     expect(parts[1].interactions).toBeUndefined()
   })
 
-  it('挑交互：停留优先，其次双击，再次单击', () => {
-    const part = normalizeTouchParts([{
-      id: 'face', name: '脸', boxes: [],
-      interactions: [
-        { name: '捏脸', trigger: 'tap' },
-        { name: '戳两下', trigger: 'double' },
-        { name: '抚摸', trigger: 'hold', holdMs: 3000 },
-        { name: '长按', trigger: 'hold', holdMs: 1200 },
-      ],
-    }])[0]
-    expect(pickInteraction(part, 400, 1)?.name).toBe('捏脸')
-    expect(pickInteraction(part, 400, 2)?.name).toBe('戳两下')
-    expect(pickInteraction(part, 1500, 1)?.name).toBe('长按')
-    expect(pickInteraction(part, 3200, 2)?.name).toBe('抚摸')
-    expect(hasDoubleInteraction(part)).toBe(true)
-    expect(pickInteraction(normalizeTouchParts([{ id: 'a', name: 'a', boxes: [] }])[0], 900, 1)).toBeUndefined()
-  })
 })

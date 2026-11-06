@@ -99,20 +99,16 @@ describe('时区', () => {
 
 describe('buildSceneMessage（ADR-037 场景描述）', () => {
   it('部位自定义交互名优先于时长三档（ADR-038）', () => {
-    const scene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', durationMs: 3200, tz: 'Asia/Shanghai' })
-    // 「停留」交互（悬停触发，ADR-038 修订）：不用「按了约 N 秒」的按压措辞
-    const hoverScene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', hover: true, tz: 'Asia/Shanghai' })
-    // 悬停不描述「鼠标停在那里」（2026-11-06 修订）：场景句只写发生了什么
-    expect(hoverScene).toContain('主人抚摸你的「脸」')
-    expect(hoverScene).not.toContain('鼠标')
-    expect(hoverScene).not.toContain('按了约')
-    expect(scene).toContain('主人抚摸你的「脸」')
+    const scene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', tz: 'Asia/Shanghai' })
+    // 统一句式（2026-11-06）：触发方式（单击/双击/停留）不进场景句，只说交互名
+    expect(scene).toBe('现在是 ' + formatNow(Date.now(), 'Asia/Shanghai') + '。主人「抚摸」了你的「脸」。按你的人设回应。')
+    expect(scene).not.toContain('鼠标')
+    expect(scene).not.toContain('按了约')
     expect(scene).not.toContain('戳了戳')
-    expect(scene).toContain('按了约 3.2 秒')
   })
 
-  it('交互名带进场景句并附按压时长', () => {
-    expect(buildSceneMessage({ kind: 'tap', part: '脸', interaction: '轻碰', durationMs: 120, tz: 'Asia/Shanghai' })).toContain('主人轻碰你的「脸」，按了约 0.1 秒')
+  it('交互名进场景句，不带时长/触发方式', () => {
+    expect(buildSceneMessage({ kind: 'tap', part: '脸', interaction: '轻碰', tz: 'Asia/Shanghai' })).toContain('主人「轻碰」了你的「脸」')
   })
   it('没有交互名时只说「碰了」，绝不回落内建「戳了戳」（ADR-038 修订）', () => {
     const scene = buildSceneMessage({ kind: 'tap', part: '脸', tz: 'Asia/Shanghai' })
@@ -130,11 +126,8 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
   })
 
   it('历史只记最短事实，不重复整段场景句（ADR-039）', () => {
-    const tap = historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸', durationMs: 3200 })
-    // 悬停触发的「停留」交互：历史短句不带秒数（那会被模型读成「戳了 N 秒」）
-    const hovered = historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸', hover: true, durationMs: 3000 })
-    expect(hovered).toBe('主人抚摸「脸」')
-    expect(tap).toBe('主人抚摸「脸」（3.2s）')
+    // 历史短句与场景句同一句式，只是省略时间前缀与「按你的人设回应」
+    expect(historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸' })).toBe('主人「抚摸」了「脸」')
     expect(historySceneText({ kind: 'chat', text: '你在干嘛' })).toBe('主人说「你在干嘛」')
     expect(historySceneText({ kind: 'idle' })).toBe('一阵子没动静')
     expect(historySceneText({ kind: 'event', event: 'thinking' })).toBe('主人让你想事情，你正在思考')
@@ -150,7 +143,7 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
   })
 
   it('对话情景带上主人原话；静默超时说明「没人理你」', () => {
-    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('主人刚对你说「今天累不累？」')
+    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('主人对你说「今天累不累？」')
     expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('按你的人设回应')
     expect(buildSceneMessage({ kind: 'idle' })).toContain('有一阵子没人理你')
   })

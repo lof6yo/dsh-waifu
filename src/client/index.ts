@@ -278,9 +278,6 @@ interface TriggerBody {
   part?: string
   /** 部位自定义交互名（ADR-038）：场景句用它描述「主人做了什么」。 */
   interaction?: string
-  /** 「停留」交互为悬停触发（ADR-038 修订）。 */
-  hover?: boolean
-  durationMs?: number
   event?: string
   text?: string
   merged?: string[]
@@ -1986,13 +1983,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       hoverState = null
       if (aiEnabled && ttsEnabled) ensureAudio()
       clientLog('info', `tap | ${part.name} | ${hold.name}(hold 悬停) ${holdMs}ms`)
-      fireTrigger({
-        kind: 'tap',
-        part: part.name,
-        interaction: hold.name,
-        hover: true,
-        durationMs: holdMs,
-      })
+      fireTrigger({ kind: 'tap', part: part.name, interaction: hold.name })
     }, holdMs)
     hoverState = { partId: part.id, timer, fired: false }
   }
@@ -2789,12 +2780,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           clientLog('info', `tap | ${part.name} | 没有匹配的交互，忽略 ${durationMs}ms`)
           return
         }
-        const input: TriggerBody = {
-          kind: 'tap',
-          part: part.name,
-          interaction: picked.name,
-          durationMs,
-        }
+        const input: TriggerBody = { kind: 'tap', part: part.name, interaction: picked.name }
         clientLog('info', `tap | ${part.name} | ${picked.name}(${picked.trigger}) ${durationMs}ms`)
         // 触摸必触发（不受事件开关/最小间隔限制），冷却由 fireTrigger 内部处理
         fireTrigger(input)

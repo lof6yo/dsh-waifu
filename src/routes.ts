@@ -252,9 +252,6 @@ export interface TriggerInput {
   part?: string
   /** 部位自定义交互名（ADR-038）：场景句以它描述主人做了什么。 */
   interaction?: string
-  /** 「停留」交互为悬停触发（ADR-038 修订）：无按压。 */
-  hover?: boolean
-  durationMs?: number
   event?: string
   text?: string
   tz?: string
@@ -307,10 +304,6 @@ function parseTriggerInput(record: Record<string, unknown>): TriggerInput {
     kind,
     part: typeof record.part === 'string' ? record.part.slice(0, 40) : undefined,
     interaction: typeof record.interaction === 'string' ? record.interaction.slice(0, 20) : undefined,
-    hover: record.hover === true,
-    durationMs: typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)
-      ? Math.max(0, Math.min(600_000, Math.round(record.durationMs)))
-      : undefined,
     event: typeof record.event === 'string' ? record.event.slice(0, 20) : undefined,
     text: typeof record.text === 'string' ? record.text.slice(0, 200) : undefined,
     tz: typeof record.tz === 'string' ? record.tz.slice(0, 64) : undefined,

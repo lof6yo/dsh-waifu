@@ -168,7 +168,7 @@ describe('makePetRoutes API 路由', () => {
     expect(JSON.parse(res.state.body.toString('utf8'))).toEqual({
       ok: true, text: '别戳啦…', expressions: ['blush'], motions: ['Tilt'], memory: '主人爱戳',
     })
-    expect(reply).toHaveBeenCalledWith({ kind: 'tap', part: '胸', interaction: undefined, hover: false, durationMs: 420 })
+    expect(reply).toHaveBeenCalledWith({ kind: 'tap', part: '胸', interaction: undefined })
     cleanup()
   })
 

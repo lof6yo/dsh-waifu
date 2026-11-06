@@ -346,24 +346,6 @@ export function pickTapInteraction(part: TouchPart, clickCount: number): TouchIn
  * 3. 否则单击交互；
  * 4. 都没有返回 undefined（调用方回落内建轻碰/戳戳/抚摸）。
  */
-export function pickInteraction(
-  part: TouchPart,
-  durationMs: number,
-  clickCount: number,
-): TouchInteraction | undefined {
-  const list = part.interactions ?? []
-  if (list.length === 0) return undefined
-  const holds = list
-    .filter((item) => item.trigger === 'hold' && durationMs >= item.holdMs)
-    .sort((a, b) => b.holdMs - a.holdMs)
-  if (holds.length > 0) return holds[0]
-  if (clickCount >= 2) {
-    const double = list.find((item) => item.trigger === 'double')
-    if (double) return double
-  }
-  return list.find((item) => item.trigger === 'tap')
-}
-
 export function normalizeTouchParts(raw: unknown): TouchPart[] {
   if (!Array.isArray(raw)) return []
   const seen = new Set<string>()
