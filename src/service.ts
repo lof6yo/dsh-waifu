@@ -86,6 +86,7 @@ export interface PetStateView {
     ttsVoice: string
     lipsyncEnabled: boolean
     lipsyncGain: number
+    focusRange: number
     /** 六个事件的绑定（动画组候选 + 台词池；内置/自定义默认 → 用户覆盖）。 */
     events: EventBindings
     /** 当前模型生效的触摸部位（用户自定义优先，其次内置默认；spec §4）。 */
@@ -264,6 +265,7 @@ export class PetService {
         ttsVoice: settings.ttsVoice,
         lipsyncEnabled: settings.lipsyncEnabled,
         lipsyncGain: settings.lipsyncGain,
+        focusRange: settings.focusRange,
         events: this.effectiveEvents(settings.model),
         touchParts: this.touchPartsFor(settings.model),
       },

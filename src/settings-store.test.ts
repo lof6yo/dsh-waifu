@@ -45,6 +45,7 @@ const BASE: PetSettings = {
   ttsVoice: 'longanlingxin',
   lipsyncEnabled: true,
   lipsyncGain: 100,
+  focusRange: 60,
 }
 
 let home: string
@@ -338,6 +339,13 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
     expect(normalizeSettings({ lipsyncGain: 999 }, BASE).lipsyncGain).toBe(300)
     expect(normalizeSettings({ lipsyncGain: -5 }, BASE).lipsyncGain).toBe(0)
     expect(normalizeSettings({ lipsyncGain: 'abc' }, BASE).lipsyncGain).toBe(BASE.lipsyncGain)
+  })
+
+  it('跟随范围越界夹取，非法值回落 base', () => {
+    expect(normalizeSettings({ focusRange: 999 }, BASE).focusRange).toBe(300)
+    expect(normalizeSettings({ focusRange: -5 }, BASE).focusRange).toBe(0)
+    expect(normalizeSettings({ focusRange: 35 }, BASE).focusRange).toBe(35)
+    expect(normalizeSettings({ focusRange: 'abc' }, BASE).focusRange).toBe(BASE.focusRange)
   })
 
   it('音色允许空串（空 = 模型默认音色）', () => {

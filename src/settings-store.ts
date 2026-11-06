@@ -19,6 +19,7 @@ import {
   BAR_OFFSET_LIMITS,
   normalizeBarPosition,
   normalizeInteractionMode,
+  normalizeFocusRange,
   normalizeLipsyncGain,
   ttsModelOption,
   ttsModelRandomVoice,
@@ -114,6 +115,8 @@ export interface PetSettings {
   lipsyncEnabled: boolean
   /** 口型强度（0–300，100 = 标准）。 */
   lipsyncGain: number
+  /** 鼠标跟随范围（% 模型尺寸；0 = 只在模型框内跟随）。 */
+  focusRange: number
 }
 
 /** 设置文件视图（设置页读取用）。 */
@@ -273,6 +276,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     ttsVoice: voiceFix.voice,
     lipsyncEnabled: bool('lipsyncEnabled'),
     lipsyncGain: normalizeLipsyncGain(record.lipsyncGain, base.lipsyncGain),
+    focusRange: normalizeFocusRange(record.focusRange, base.focusRange),
   }
 }
 

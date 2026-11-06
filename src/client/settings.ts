@@ -44,6 +44,8 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_SETTINGS,
   LIPSYNC_GAIN_LIMITS,
+  FOCUS_RANGE_LIMITS,
+  normalizeFocusRange,
   normalizeHistoryCount,
   normalizeLipsyncGain,
   BAR_OFFSET_LIMITS,
@@ -122,6 +124,8 @@ export interface PetSettingsValue {
   lipsyncEnabled: boolean
   /** 口型强度（0–300）。 */
   lipsyncGain: number
+  /** 鼠标跟随范围（% 模型尺寸；0 = 只在模型框内跟随）。 */
+  focusRange: number
   /** 长状态「思考」AI 演绎节奏：入态延迟（秒）/ 间隔（秒）/ 每次入态上限（ADR-026）。 */
   thinkingAiDelay: number
   thinkingAiInterval: number
@@ -2272,6 +2276,25 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               enqueueWrite(() => [{ op: 'set', path: ['maxFps'], value: normalizeMaxFps(Number(id)) }])
             },
           }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, { title: '跟随范围', hint: '鼠标进到模型外扩这个百分比的矩形内才跟随；0 = 只在模型框内' }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'number',
+            min: FOCUS_RANGE_LIMITS.min,
+            max: FOCUS_RANGE_LIMITS.max,
+            step: 5,
+            style: { width: 90 },
+            value: value.focusRange,
+            disabled: !writable,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeFocusRange(e.target.value, DEFAULT_SETTINGS.focusRange)
+              enqueueWrite(() => [{ op: 'set', path: ['focusRange'], value: next }])
+            },
+          }),
+          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, `% 模型尺寸`),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },

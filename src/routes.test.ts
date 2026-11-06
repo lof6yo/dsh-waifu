@@ -83,6 +83,7 @@ const BASE_SETTINGS: PetSettings = {
   ttsVoice: 'longanlingxin',
   lipsyncEnabled: true,
   lipsyncGain: 100,
+  focusRange: 60,
 }
 
 function makeRoutes(

@@ -58,6 +58,8 @@ import {
   DEFAULT_HOME_BOTTOM,
   DEFAULT_HOME_RIGHT,
   DEFAULT_MAX_FPS,
+  DEFAULT_FOCUS_RANGE,
+  normalizeFocusRange,
   DEFAULT_BAR_OFFSET,
   DEFAULT_BAR_POSITION,
   BAR_OFFSET_LIMITS,
@@ -1279,6 +1281,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** canvas 的视口 rect 缓存：pointermove 每次都要用，不能每次读布局。 */
   let canvasRectCache: DOMRect | null = null
+  /** 鼠标跟随范围（% 模型尺寸，0 = 只在模型框内跟随，spec §4）。 */
+  let focusRangePct = DEFAULT_FOCUS_RANGE
+  /** 指针当前是否落在跟随范围内；出范围时只复位一次，避免每帧重复写。 */
+  let focusInRange = true
 
   /** 按 client 坐标应用鼠标跟随（model.focus 吃 canvas 本地坐标）。 */
   function applyFocus(clientX: number, clientY: number): void {
@@ -1286,7 +1292,30 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!canvasRectCache) {
       try { canvasRectCache = canvas.getBoundingClientRect() } catch { return }
     }
-    model.focus(clientX - canvasRectCache.left, clientY - canvasRectCache.top)
+    const localX = clientX - canvasRectCache.left
+    const localY = clientY - canvasRectCache.top
+    // 跟随范围（spec §4）：只在模型包围盒外扩 focusRangePct% 的矩形内才跟随，
+    // 出范围就回正前方，避免整个屏幕都在看鼠标。
+    let bounds: { x: number; y: number; width: number; height: number } | undefined
+    try { bounds = model.getBounds?.() } catch { bounds = undefined }
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      const padX = (bounds.width * focusRangePct) / 100
+      const padY = (bounds.height * focusRangePct) / 100
+      const inside =
+        localX >= bounds.x - padX &&
+        localX <= bounds.x + bounds.width + padX &&
+        localY >= bounds.y - padY &&
+        localY <= bounds.y + bounds.height + padY
+      if (!inside) {
+        if (focusInRange) {
+          focusInRange = false
+          model.internalModel?.focusController?.focus(0, 0, true)
+        }
+        return
+      }
+      focusInRange = true
+    }
+    model.focus(localX, localY)
   }
 
   /** 解除非 idle 动作期间的 focus 抑制；若有最近指针位置则立即恢复跟随。 */
@@ -2577,6 +2606,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     lipsyncEnabled = cfg.lipsyncEnabled !== false
     bodyLanguageEnabled = cfg.lipsyncEnabled !== false
     lipsyncGain = Number.isFinite(cfg.lipsyncGain) ? cfg.lipsyncGain! : DEFAULT_SETTINGS.lipsyncGain
+    focusRangePct = normalizeFocusRange(cfg.focusRange, DEFAULT_SETTINGS.focusRange)
     interactionMode = normalizeInteractionMode(cfg.interactionMode, interactionMode)
     applyLongAiConfig(cfg)
     applyBubbleMaxConfig(cfg)
@@ -2644,6 +2674,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 仅当真正离开页面/窗口时复位；元素间移动会冒泡 mouseout，需排除 relatedTarget 非空
     if (e.relatedTarget) return
     lastPointerClient = null
+    focusInRange = true
     if (!model || dragging || !petShown() || hidden) return
     // 非 idle 动作期间 focus 已被归零并抑制，不需要额外复位
     if (!focusSuppressed) {
@@ -2904,6 +2935,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         lipsyncGain = Number.isFinite(view.config.lipsyncGain)
           ? view.config.lipsyncGain!
           : DEFAULT_SETTINGS.lipsyncGain
+        focusRangePct = normalizeFocusRange(view.config.focusRange, DEFAULT_SETTINGS.focusRange)
         interactionMode = normalizeInteractionMode(view.config.interactionMode, interactionMode)
         applyLongAiConfig(view.config)
         applyBubbleMaxConfig(view.config)

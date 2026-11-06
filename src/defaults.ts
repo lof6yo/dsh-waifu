@@ -107,6 +107,16 @@ export function ttsDefaultVoice(model: string): string {
 export const DEFAULT_LIPSYNC_ENABLED = true
 /** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
 export const DEFAULT_LIPSYNC_GAIN = 140
+
+/** 鼠标跟随范围：以模型包围盒为基准向外扩展的百分比（0 = 只在模型框内才跟随）。 */
+export const DEFAULT_FOCUS_RANGE = 60
+
+export const FOCUS_RANGE_LIMITS = { min: 0, max: 300 } as const
+
+/** 跟随范围归一化：整数百分比，越界夹取，非法回落。 */
+export function normalizeFocusRange(value: unknown, fallback: number): number {
+  return clampInt(value, fallback, FOCUS_RANGE_LIMITS.min, FOCUS_RANGE_LIMITS.max)
+}
 /** 口型强度边界。 */
 export const LIPSYNC_GAIN_LIMITS = { min: 0, max: 300 } as const
 
@@ -192,4 +202,5 @@ export const DEFAULT_SETTINGS = {
   ttsVoice: DEFAULT_TTS_VOICE,
   lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,
   lipsyncGain: DEFAULT_LIPSYNC_GAIN,
+  focusRange: DEFAULT_FOCUS_RANGE,
 } as const

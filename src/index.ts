@@ -39,6 +39,7 @@ import {
   DEFAULT_HOME_RIGHT,
   DEFAULT_MAX_FPS,
   DEFAULT_SETTINGS,
+  FOCUS_RANGE_LIMITS,
   LIPSYNC_GAIN_LIMITS,
 } from './defaults.ts'
 import {
@@ -174,6 +175,7 @@ export const Config: Schema<Config> = Schema.object({
   ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
   lipsyncEnabled: Schema.boolean().default(DEFAULT_SETTINGS.lipsyncEnabled),
   lipsyncGain: Schema.number().min(LIPSYNC_GAIN_LIMITS.min).max(LIPSYNC_GAIN_LIMITS.max).default(DEFAULT_SETTINGS.lipsyncGain),
+  focusRange: Schema.number().min(FOCUS_RANGE_LIMITS.min).max(FOCUS_RANGE_LIMITS.max).default(DEFAULT_SETTINGS.focusRange),
 })
 
 /** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）、llm（AI 回复，ADR-025）。 */
@@ -226,6 +228,7 @@ export function apply(ctx: Context, config: Config): void {
     ttsVoice: config.ttsVoice,
     lipsyncEnabled: config.lipsyncEnabled,
     lipsyncGain: config.lipsyncGain,
+    focusRange: config.focusRange,
   }
   const settingsStore = new SettingsStore(baseSettings)
 
