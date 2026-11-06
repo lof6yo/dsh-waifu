@@ -33,3 +33,15 @@ const onFocus      = () => { hidden = false;  syncTicker() }
 - 标签页隐藏/最小化仍会暂停（保留最后画面），省电行为不变。
 - 失焦时鼠标不在页面上，本就收不到 pointermove；恢复焦点后跟随从最后位置接上。
 - 代价：窗口被别的应用完全遮住时仍在跑渲染循环（不可见但耗一点 GPU），与「标签页可见就算前台」的浏览器语义一致。
+
+## 修订（2026-11-06）：隐藏时「全停」
+
+页面隐藏（切标签页 / 最小化）时除了停 ticker，还一并停掉一切会花钱的东西：
+
+- `fireTrigger()` 直接返回（活动类触发不排队、不补发），`startTurn()` 兜底再挡一次；
+- `scheduleIdleTimer()` 不挂计时器（隐藏时不累积静默触发），恢复可见时重新计时；
+- `visibilitychange → hidden` 时 `stopSpeaking()`：`speakAbort.abort()` 断掉 `/speak` SSE，
+  服务端 `TtsEngine.synthesize` 随 signal 取消，音频播放同时停止。
+
+关掉网页/标签页时更彻底：客户端 JS 整体销毁，请求由客户端发起，Host 侧没有任何 AI 定时器
+（`PetService` 只有一个 2 秒的状态保持计时），所以不会有 LLM/TTS 调用。

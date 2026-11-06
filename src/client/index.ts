@@ -1122,7 +1122,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   function scheduleIdleTimer(): void {
     clearIdleTimer()
-    if (!(idleTimeoutSec > 0)) return
+    // 页面隐藏时不必计时：反正不请求，回来时由下一次活动重新计时
+    if (hidden || !(idleTimeoutSec > 0)) return
     idleTimer = window.setTimeout(() => {
       idleTimer = undefined
       if (disposed || !aiEnabled) return
@@ -1140,6 +1141,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    */
   function fireTrigger(input: TriggerBody): void {
     if (!aiEnabled) return
+    // 页面隐藏（切标签页/最小化）：不请求、不排队——活动照常累积在 Host，回来再看
+    if (hidden) {
+      clientLog('info', `trigger skipped | page hidden | ${input.kind}${input.event ? `:${input.event}` : ''}`)
+      return
+    }
     if (input.kind === 'tap' || input.kind === 'chat') {
       scheduleIdleTimer()
       if (input.kind === 'tap') {
@@ -1169,6 +1175,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** interrupt 模式开新轮：作废旧轮的 SSE 结果与音频。 */
   function startTurn(input: TriggerBody): Promise<string | null> {
+    if (hidden) return Promise.resolve(null)
     // 触发期间攒下的其他事件：并进这轮场景（「这期间还发生了：…」）
     if (pendingTrigger !== null && pendingTrigger.kind === 'event') {
       const extra = pendingTrigger.event
@@ -2991,7 +2998,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         // EventSource 不可用：保留首帧快照（静态宠物），不再更新
       }
       // 标签页隐藏/窗口失焦 → 暂停渲染循环；恢复时继续（spec §7）
-      const onVisibility = () => { hidden = document.visibilityState === 'hidden'; syncTicker() }
+      const onVisibility = () => {
+        hidden = document.visibilityState === 'hidden'
+        // 隐藏即全停：停渲染、掐掉在播/在合成的语音（省算力），回来再重新计时
+        if (hidden) stopSpeaking()
+        else scheduleIdleTimer()
+        syncTicker()
+      }
       // 窗口失焦不再停渲染（ADR-042）：用户点到别处时角色继续动，只有标签页隐藏/最小化才暂停
       const onBlur = () => { windowFocused = false }
       const onFocus = () => { windowFocused = true }
