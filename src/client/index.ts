@@ -2458,6 +2458,29 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   const CON_VIEW_LINES = 20
   /** 控制台行高（px）：font 11px 与 scrollTop 计算共用同一值。 */
   const CON_LINE_HEIGHT = 16
+  /** 「复制」按钮的临时文案计时器（只在点过按钮后短暂存在，面板关闭/再次点击即清）。 */
+  let conCopyTimer = 0
+
+  /** 复制文本到剪贴板：优先 Clipboard API（https / localhost 才有），失败回落到 textarea + execCommand。 */
+  async function copyToClipboard(text: string): Promise<boolean> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch { /* 权限被拒 / 非安全上下文：走兜底 */ }
+    try {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.setAttribute('readonly', '')
+      area.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0'
+      document.body.appendChild(area)
+      area.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(area)
+      return ok
+    } catch { return false }
+  }
 
   function conClock(): string {
     const now = new Date()
@@ -2489,6 +2512,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function setConsoleRecording(next: boolean): void {
     conRecording = next
     clientLog('info', `console recording ${next ? 'on' : 'off'}`)
+  }
+
+  /** 控制台当前全部记录（按行拼接）：DOM 就是缓冲区，逐行取 innerText 保留「时间 标签 原文」。 */
+  function consoleText(): string {
+    if (!conBody) return ''
+    const lines: string[] = []
+    for (const child of Array.from(conBody.children)) {
+      const element = child as HTMLElement
+      const text = element.innerText ?? element.textContent ?? ''
+      if (text.trim()) lines.push(text.replace(/\n+$/, ''))
+    }
+    return lines.join('\n')
   }
 
   /** 拉一次 /ai-debug，把这一轮的 LLM 与 TTS 原始请报落进控制台。 */
@@ -2640,13 +2675,27 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 控制台（ADR-043）：开启后记录所有事件与 LLM/TTS 原始报文
       debugBody.appendChild(sectionLabel('控制台'))
       const conRow = document.createElement('div')
-      conRow.style.cssText = 'display:flex;gap:6px;align-items:center'
+      conRow.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap'
       const conToggle = document.createElement('button')
       conToggle.textContent = '开始记录'
       conToggle.style.cssText = 'padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;background:rgba(120,170,255,.28);color:#e8eaf0;border:1px solid rgba(120,170,255,.35);outline:none'
       const conClear = document.createElement('button')
       conClear.textContent = '清空'
       conClear.style.cssText = 'padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;background:rgba(128,128,128,.14);color:#dbe2ef;border:1px solid rgba(128,128,128,.3);outline:none'
+      // 一键复制：把当前全部记录按行拼成纯文本，粘贴到别处排查/贴 issue
+      const conCopy = document.createElement('button')
+      conCopy.textContent = '复制'
+      conCopy.style.cssText = 'padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;background:rgba(128,128,128,.14);color:#dbe2ef;border:1px solid rgba(128,128,128,.3);outline:none'
+      const flashConCopy = (label: string): void => {
+        conCopy.textContent = label
+        if (conCopyTimer) window.clearTimeout(conCopyTimer)
+        conCopyTimer = window.setTimeout(() => { conCopy.textContent = '复制'; conCopyTimer = 0 }, 1200)
+      }
+      conCopy.onclick = (): void => {
+        const text = consoleText()
+        if (!text) { flashConCopy('无内容'); return }
+        void copyToClipboard(text).then((ok) => flashConCopy(ok ? '已复制' : '复制失败'))
+      }
       const conState = document.createElement('span')
       conState.style.cssText = 'color:#7f8aa0;font-size:11px'
       const paintConState = (): void => {
@@ -2661,6 +2710,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       conClear.onclick = () => { if (conBody) conBody.textContent = ''; paintConState() }
       conRow.appendChild(conToggle)
       conRow.appendChild(conClear)
+      conRow.appendChild(conCopy)
       conRow.appendChild(conState)
       debugBody.appendChild(conRow)
       conBody = document.createElement('div')
@@ -2688,6 +2738,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugTextEl = null
       conBody = null
       conRecording = false
+      if (conCopyTimer) { window.clearTimeout(conCopyTimer); conCopyTimer = 0 }
       // 手动几何留在内存与 localStorage 里：下次开面板还回原位（ADR-044）
       debugPanelTopLogical = Number.NaN
       debugPanelBottomLogical = Number.NaN

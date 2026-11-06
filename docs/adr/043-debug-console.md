@@ -23,7 +23,9 @@
   - 每轮结束后拉一次 `/ai-debug`，把 `lastPayload`（provider/model/system/逐条 messages）、
     `lastTtsPayload` / `lastSpeakPayload`（endpoint/body/cached）落成多行。
 - 渲染：单行 `<div>` 追加（`时间 | 标签 | 原文`），上限 300 行、单行 4000 字符，超出从头丢弃；
-  贴底时自动滚动，翻到上面看历史时不打断。
+  贴底时自动滚动，翻到上面看历史时不打断。可视区固定 20 行（行高 16px）在框内滚动。
+- 「复制」：把 DOM 里现存的全部行按行拼成纯文本（保留时间与标签）写进剪贴板，用于把一次排查原样贴到 issue / 编辑器；
+  优先 `navigator.clipboard`（https / localhost 才有），非安全上下文回落 `textarea + execCommand('copy')`，按钮上给「已复制 / 无内容 / 复制失败」1.2s 反馈。
 - 生命周期：`conRecording === false` 时 `conPush()` 直接返回（零开销）；**停止记录不清空**——已记录行留在 DOM 里，重新开始记录接着往下追加（排查时经常要「停一下再开始」对照）；「清空」按钮清 DOM，调试面板关闭时一并置空引用（内容随面板消失）。
 
 ## 后果
