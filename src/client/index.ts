@@ -1472,6 +1472,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 活动事件和状态事件共用事件绑定（动作 / 表情 / 台词池 / AI 演绎，ADR-036）
     const binding = eventBindings[kind]
     const selection = splitMotionSelection(binding?.motions ?? [])
+    const takeover = aiTakeover && aiEnabled && !aiTouchOnly
+    const line = pickEventLine(kind, 0)
+    // 台词与 AI 演绎不依赖模型是否就绪：模型还没加载好也要能说话
+    clientLog('info', `activity | ${kind} | ${line ?? ''}`)
+    if (!takeover && line) showBubble(line)
+    void requestSpeak({ kind: 'state', state: kind, hint: takeover ? undefined : line })
+    // 动作 / 表情只有模型在场时才播（预览态、拖拽中、隐藏时不抢动作）
     if (!model || dragging || previewActive || hidden) return
     const motion = selection.motion ?? ACTIVITY_MOTIONS[activity.kind]
     if (motion) {
@@ -1482,11 +1489,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
       refreshExpressionTargets()
     }
-    // 台词：与状态事件同一条链路（预置台词先出，AI 台词到了再替换；接管时不显示预置）
-    const takeover = aiTakeover && aiEnabled && !aiTouchOnly
-    const line = pickEventLine(kind, 0)
-    if (!takeover && line) showBubble(line)
-    void requestSpeak({ kind: 'state', state: kind, hint: takeover ? undefined : line })
   }
 
   function applyState(next: PetStateView | null): void {
