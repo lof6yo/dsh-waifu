@@ -8,6 +8,10 @@
  *   `$DSH_HOME/waifu/settings.jsonc`（ADR-013），经 SSE 实时推送；
  *   Config schema 只作为默认值 base 层，并用 `settings.configure({ auto: false })`
  *   隐藏自动生成的设置页（插件自带「Waifu 设置」页）。
+ *
+ * ADR-037（全 AI 驱动）：固定对白与手动动作/表情映射全部移除，Host 只负责
+ * 场景打包（时间/事件/触摸类型/静默超时）→ LLM（人设+记忆+历史+目录）
+ * → 解析输出（标签流式：[表情][动作] 台词 + [记] 记忆行）→ 控制角色 + 落盘记忆。
  * @module dsh-waifu
  */
 
@@ -18,15 +22,19 @@ import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-llm'
 import { PetService } from './service.ts'
-import { DEFAULT_LONG_AI } from './models.ts'
 import {
   DEFAULT_AI_HISTORY,
+  DEFAULT_AI_MEMORY,
+  defaultEventTriggers,
   DEFAULT_AI_MODEL,
   DEFAULT_AI_PROVIDER,
+  DEFAULT_AI_MIN_INTERVAL_SEC,
+  DEFAULT_IDLE_TIMEOUT_SEC,
+  DEFAULT_ACTIVITY_WINDOW_SEC,
+  DEFAULT_TRIGGER_MODE,
   BAR_OFFSET_LIMITS,
   DEFAULT_BAR_OFFSET,
   DEFAULT_BAR_POSITION,
-  DEFAULT_INTERACTION_MODE,
   DEFAULT_BUBBLE_BG_COLOR,
   DEFAULT_BUBBLE_BG_OPACITY,
   DEFAULT_BUBBLE_MAX_SECONDS,
@@ -47,8 +55,10 @@ import {
   petPackageRoot,
   type AiRoutesApi,
   type InteractRoutesApi,
+  type MemoryRoutesApi,
   type SettingsRoutesApi,
   type SpeakRoutesApi,
+  type TriggerInput,
 } from './routes.ts'
 import {
   AI_HISTORY_MAX_ENTRIES,
@@ -65,11 +75,17 @@ import {
   type ReplyContext,
 } from './ai.ts'
 import {
+  loadMemory,
+  appendMemory,
+  saveMemory,
+  memoryContext,
+  memoryPath,
+} from './memory.ts'
+import {
   defaultModelId,
   listBuiltinPresets,
   resolveDefaultTouchParts,
   resolveModelUrl,
-  resolveMotionMap,
 } from './models-host.ts'
 import { SettingsStore, type PetSettings } from './settings-store.ts'
 import { OPENROUTER_SPEECH_URL } from './tts.ts'
@@ -81,13 +97,10 @@ export { PetService } from './service.ts'
 export type { PetState, PetStateView } from './service.ts'
 export { makePetRoutes, petPackageRoot, PET_API_PREFIX, PET_ASSET_PREFIX } from './routes.ts'
 // 再导出（复用上面的 import，避免同一模块被 import + export-from 各写一遍）
-export { listBuiltinPresets, resolveModelUrl, resolveMotionMap, resolveDefaultTouchParts, defaultModelId }
+export { listBuiltinPresets, resolveModelUrl, resolveDefaultTouchParts, defaultModelId }
 export {
-  DEFAULT_MOTION_MAP,
-  DEFAULT_LONG_AI,
-  LONG_AI_LIMITS,
-  LONG_STATES,
-  isLongState,
+  AI_MOTIONS,
+  AI_MOTION_IDS,
   ANIMATION_SLOTS,
   DEFAULT_TOUCH_PARTS,
   MAX_BOXES_PER_PART,
@@ -95,11 +108,12 @@ export {
   normalizeTouchParts,
   normalizeTouchBox,
   pointToBoundsRatio,
+  isMotionId,
 } from './models.ts'
 export type {
   BuiltinPreset,
   AnimationSlot,
-  MotionMap,
+  MotionDef,
   TouchBox,
   TouchPart,
 } from './models.ts'
@@ -111,7 +125,7 @@ export const name = 'dsh-waifu'
 export type MaxFpsOption = 30 | 60 | 0
 
 /** 插件配置（cordis.patch.yml 的 config 是 base 层；用户改动落插件私有设置文件，ADR-013）。 */
-export interface Config extends Omit<PetSettings, 'maxFps'> {
+export interface Config extends Omit<PetSettings, 'maxFps' | 'eventTriggers'> {
   /** 渲染帧率档（30 / 60 / 0=不限制；Schema 层用字面量联合校验）。 */
   maxFps: MaxFpsOption
 }
@@ -139,18 +153,27 @@ export const Config: Schema<Config> = Schema.object({
   /** 气泡最长连续可见秒数（0 = 不限）；默认 30。 */
   bubbleMaxSeconds: Schema.number().min(0).max(600).default(DEFAULT_BUBBLE_MAX_SECONDS),
   bubbleTextColor: Schema.string().default(DEFAULT_BUBBLE_TEXT_COLOR),
+  /** AI 驱动总开关（ADR-037）：关闭后角色完全静默（无固定台词可回落）。 */
   aiEnabled: Schema.boolean().default(DEFAULT_SETTINGS.aiEnabled),
-  aiTouchOnly: Schema.boolean().default(DEFAULT_SETTINGS.aiTouchOnly),
-  aiTakeover: Schema.boolean().default(DEFAULT_SETTINGS.aiTakeover),
   /** 待机小动作：每隔十几秒随机来一个微动作，避免像定格动画。 */
   idleMotionEnabled: Schema.boolean().default(DEFAULT_SETTINGS.idleMotionEnabled),
   aiProvider: Schema.string().default(DEFAULT_AI_PROVIDER),
   aiModel: Schema.string().default(DEFAULT_AI_MODEL),
-  interactionMode: Schema.union([
-    Schema.const('mutual'),
-    Schema.const('touch-first'),
-    Schema.const('event-first'),
-  ]).default(DEFAULT_INTERACTION_MODE),
+  /** 注入到 prompt 的最近对话轮数（1 轮 = 一问一答；0 = 不注入；ADR-030）。 */
+  aiHistoryCount: Schema.number().min(0).max(50).default(DEFAULT_AI_HISTORY),
+  /** 注入到 prompt 的最近记忆条数（0 = 不注入；ADR-037）。 */
+  aiMemoryCount: Schema.number().min(0).max(100).default(DEFAULT_AI_MEMORY),
+  /** 新触发的处理方式：interrupt = 掐掉上一轮立刻反应，queue = 等上一轮说完再反应（ADR-037）。 */
+  triggerMode: Schema.union([
+    Schema.const('interrupt'),
+    Schema.const('queue'),
+  ]).default(DEFAULT_TRIGGER_MODE),
+  /** 事件类触发的最小间隔（秒，0 = 不限制；触摸/对话不受限；ADR-037）。 */
+  aiMinIntervalSec: Schema.number().min(0).max(600).default(DEFAULT_AI_MIN_INTERVAL_SEC),
+  /** 静默超时（秒，0 = 关闭）：多久没有任何事件/互动就自动让角色说一句话（ADR-037）。 */
+  idleTimeoutSec: Schema.number().min(0).max(3600).default(DEFAULT_IDLE_TIMEOUT_SEC),
+  /** 同类 DSH 事件的触发窗口（秒）：窗口内同类事件只触发一次（ADR-037）。 */
+  activityWindowSec: Schema.number().min(0).max(300).default(DEFAULT_ACTIVITY_WINDOW_SEC),
   /** 交互条贴在模型上方 / 下方，或干脆不显示（静音 + 对话输入）。 */
   barPosition: Schema.union([
     Schema.const('top'),
@@ -159,15 +182,6 @@ export const Config: Schema<Config> = Schema.object({
   ]).default(DEFAULT_BAR_POSITION),
   /** 交互条沿吸附边的额外偏移（px，正数远离模型）。 */
   barOffset: Schema.number().min(BAR_OFFSET_LIMITS.min).max(BAR_OFFSET_LIMITS.max).default(DEFAULT_BAR_OFFSET),
-  /** 注入到 prompt 的最近对话轮数（1 轮 = 一问一答；0 = 不注入；ADR-030）。 */
-  aiHistoryCount: Schema.number().min(0).max(50).default(DEFAULT_AI_HISTORY),
-  // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
-  thinkingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.thinking.delay),
-  thinkingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.thinking.interval),
-  thinkingAiMax: Schema.number().min(1).max(10).default(DEFAULT_LONG_AI.thinking.max),
-  waitingAiDelay: Schema.number().min(0).max(120).default(DEFAULT_LONG_AI.waiting.delay),
-  waitingAiInterval: Schema.number().min(5).max(600).default(DEFAULT_LONG_AI.waiting.interval),
-  waitingAiMax: Schema.number().min(1).max(10).default(DEFAULT_LONG_AI.waiting.max),
   // 语音合成与口型（ADR-033）：模型/音色留成设置项，换供应商只加引擎实现
   ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
   ttsEngine: Schema.string().default(DEFAULT_SETTINGS.ttsEngine),
@@ -178,7 +192,7 @@ export const Config: Schema<Config> = Schema.object({
   focusRange: Schema.number().min(FOCUS_RANGE_LIMITS.min).max(FOCUS_RANGE_LIMITS.max).default(DEFAULT_SETTINGS.focusRange),
 })
 
-/** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）、llm（AI 回复，ADR-025）。 */
+/** 依赖服务：webServer（同源路由）、settings（隐藏自动设置页）、llm（AI 驱动，ADR-037）。 */
 export const inject = ['webServer', 'settings', 'llm', 'credentials']
 
 /** 注册宠物服务、设置 API 与素材路由。 */
@@ -207,21 +221,18 @@ export function apply(ctx: Context, config: Config): void {
     bubbleMaxSeconds: config.bubbleMaxSeconds,
     bubbleTextColor: config.bubbleTextColor,
     aiEnabled: config.aiEnabled,
-    aiTouchOnly: config.aiTouchOnly,
-    aiTakeover: config.aiTakeover,
     idleMotionEnabled: config.idleMotionEnabled,
     aiProvider: config.aiProvider,
     aiModel: config.aiModel,
-    interactionMode: config.interactionMode,
+    aiHistoryCount: config.aiHistoryCount,
+    aiMemoryCount: config.aiMemoryCount,
+    triggerMode: config.triggerMode,
+    aiMinIntervalSec: config.aiMinIntervalSec,
+    idleTimeoutSec: config.idleTimeoutSec,
+    activityWindowSec: config.activityWindowSec,
+    eventTriggers: defaultEventTriggers(),
     barPosition: config.barPosition,
     barOffset: config.barOffset,
-    aiHistoryCount: config.aiHistoryCount,
-    thinkingAiDelay: config.thinkingAiDelay,
-    thinkingAiInterval: config.thinkingAiInterval,
-    thinkingAiMax: config.thinkingAiMax,
-    waitingAiDelay: config.waitingAiDelay,
-    waitingAiInterval: config.waitingAiInterval,
-    waitingAiMax: config.waitingAiMax,
     ttsEnabled: config.ttsEnabled,
     ttsEngine: config.ttsEngine,
     ttsModel: config.ttsModel,
@@ -245,8 +256,15 @@ export function apply(ctx: Context, config: Config): void {
     },
   }
 
-  // AI 回复（ADR-025）：复用 DSH 已配置的 provider/model 与账号，人设读 $DSH_HOME/waifu/persona.md。
-  // 冷却：同类触发（tap/state）1.2s 内只回一次，避免连点刷屏与刷 token。
+  // 记忆文件（ADR-037）：$DSH_HOME/waifu/memory.md；设置页查看/编辑；AI 输出 [记] 行时追加
+  const waifuHome = dirname(settingsStore.path)
+  const memoryApi: MemoryRoutesApi = {
+    read: () => ({ text: loadMemory(waifuHome).text, path: memoryPath(waifuHome) }),
+    write: (text) => saveMemory(waifuHome, text),
+  }
+
+  // AI 驱动（ADR-037）：全部反应（台词/动作/表情/记忆）由一次 LLM 调用产生。
+  // 冷却：1.2s 内只接一次新触发（触摸/对话在客户端另有一层调度；这里是最后防线）
   const AI_COOLDOWN_MS = 1200
   let lastAiAt = 0
   // 最近对话（ADR-030）：只存内存，进程重启即清空；条数由设置页 `aiHistoryCount` 决定注入多少
@@ -257,11 +275,11 @@ export function apply(ctx: Context, config: Config): void {
   let lastSpeakPayload: TtsPayload | null = null
   let payloadSink: 'tts' | 'speak' = 'tts'
   /**
-   * AI 触发的公共前置（/interact 与 /speak 共用，ADR-025/028/031）：
-   * 开关 → 1.2s 冷却 → 全 AI 接管时丢掉参考台词（旧客户端/手工调用也不再泄露固定对白）。
+   * AI 触发的公共前置（/interact 与 /speak 共用）：开关 → 1.2s 冷却 → 时区归一化。
+   * 触发频率策略（interrupt/queue）在客户端执行；Host 只挡最基本的刷屏。
    */
   const beginAiTurn = (
-    input: ReplyContext,
+    input: TriggerInput,
   ): { ok: true; settings: PetSettings; context: ReplyContext } | { ok: false; error: string } => {
     const settings = settingsStore.get()
     if (!settings.aiEnabled) return { ok: false, error: 'ai-disabled' }
@@ -270,35 +288,53 @@ export function apply(ctx: Context, config: Config): void {
     lastAiAt = now
     // 时区来自浏览器（宿主可能在 UTC 上跑），非法或缺省时 formatNow 会回落本地时区
     const tz = normalizeTimeZone(input.tz)
-    const context: ReplyContext = settings.aiTakeover
-      ? { ...input, hint: undefined, tz }
-      : { ...input, tz }
+    const context: ReplyContext = {
+      kind: input.kind,
+      part: input.part,
+      tapKind: input.tapKind,
+      durationMs: input.durationMs,
+      event: input.event,
+      text: input.text,
+      merged: input.merged,
+      tz,
+    }
     return { ok: true, settings, context }
   }
 
-  /** 两个入口共用的请求参数（provider/model/人设/历史注入）。 */
+  /** 两个入口共用的请求参数（provider/model/人设+记忆/历史注入）。 */
   const aiRequest = (
     settings: PetSettings,
     context: ReplyContext,
     onPayload: (payload: AiPayload) => void,
     signal?: AbortSignal,
-  ) => ({
-    provider: settings.aiProvider,
-    model: settings.aiModel,
-    persona: loadPersona(dirname(settingsStore.path)),
-    context,
-    history: aiHistory,
-    historyCount: settings.aiHistoryCount,
-    onPayload,
-    signal,
-  })
+  ) => {
+    const memories = loadMemory(waifuHome).entries
+    return {
+      provider: settings.aiProvider,
+      model: settings.aiModel,
+      persona: loadPersona(waifuHome),
+      memory: memoryContext(memories, settings.aiMemoryCount),
+      context,
+      history: aiHistory,
+      historyCount: settings.aiHistoryCount,
+      onPayload,
+      signal,
+    }
+  }
 
-  /** 只记录成功的往来：失败的请求不该污染上下文；参考台词不进历史（ADR-030）。 */
+  /** 记忆落盘（ADR-037）：AI 输出的 [记] 行追加进 memory.md（带时间戳，用触发方时区）。 */
+  const rememberNote = (note: string, tz?: string): void => {
+    const trimmed = note.trim()
+    if (!trimmed) return
+    appendMemory(waifuHome, trimmed, tz)
+  }
+
+  /** 只记录成功的往来：失败的请求不该污染上下文；场景描述不携带参考台词（ADR-030/037）。 */
   const recordAiTurn = (context: ReplyContext, text: string, settings: PetSettings): void => {
     const at = Date.now()
     aiHistory = appendHistory(aiHistory, {
       role: 'user',
-      text: buildSceneMessage(context, { forHistory: true }),
+      text: buildSceneMessage(context),
       at,
     })
     aiHistory = appendHistory(
@@ -317,7 +353,14 @@ export function apply(ctx: Context, config: Config): void {
       }))
       if (attempt.text) {
         recordAiTurn(turn.context, attempt.text, turn.settings)
-        return { ok: true, text: attempt.text, emotion: attempt.emotion ?? null }
+        if (attempt.memory) rememberNote(attempt.memory, input.tz)
+        return {
+          ok: true,
+          text: attempt.text,
+          expressions: attempt.expressions,
+          motions: attempt.motions,
+          memory: attempt.memory,
+        }
       }
       // 失败原因回传（ADR-028）：设置页/排查时能直接看到是「没配 provider」还是「模型空回复」
       return { ok: false, error: `no-reply: ${attempt.error ?? 'unknown'}` }
@@ -349,18 +392,18 @@ export function apply(ctx: Context, config: Config): void {
       return { providers, models }
     },
     readPersona: () => {
-      const home = dirname(settingsStore.path)
-      return { text: loadPersona(home), path: personaPath(home) }
+      return { text: loadPersona(waifuHome), path: personaPath(waifuHome) }
     },
-    writePersona: (text) => savePersona(dirname(settingsStore.path), text),
+    writePersona: (text) => savePersona(waifuHome, text),
     // 连通性自检（设置页「测试连接」）：用显式 provider/model 或已保存配置真实发一次请求
     check: async (input) => {
       const settings = settingsStore.get()
       const attempt = await generateReply(ctx.llm, {
         provider: input?.provider || settings.aiProvider,
         model: input?.model || settings.aiModel,
-        persona: loadPersona(dirname(settingsStore.path)),
-        context: { kind: 'tap', part: '脸', hint: '有人戳了戳你的脸' },
+        persona: loadPersona(waifuHome),
+        memory: memoryContext(loadMemory(waifuHome).entries, settings.aiMemoryCount),
+        context: { kind: 'tap', part: '脸', tapKind: 'poke' },
         timeoutMs: 20000,
       })
       if (attempt.text) return { ok: true, text: attempt.text }
@@ -385,7 +428,7 @@ export function apply(ctx: Context, config: Config): void {
   }
   const ttsEngine = new OpenRouterTtsEngine(
     resolveOpenRouterKey,
-    dirname(settingsStore.path),
+    waifuHome,
     fetch,
     OPENROUTER_SPEECH_URL,
     (payload) => {
@@ -433,6 +476,8 @@ export function apply(ctx: Context, config: Config): void {
       }
       const result = await runSpeakPipeline({ chunks, synthesize, emit, signal })
       if (result.text) recordAiTurn(context, result.text, settings)
+      // 记忆行（ADR-037）：管线收尾时若 AI 留了 [记]，落盘 memory.md
+      if (result.memory) rememberNote(result.memory, input.tz)
     },
   }
 
@@ -446,6 +491,7 @@ export function apply(ctx: Context, config: Config): void {
       settings: settingsApi,
       ai: aiApi,
       aiSettings: aiSettingsApi,
+      memory: memoryApi,
       speak: speakApi,
       onStream: (close) => { openStreams.add(close) },
     })

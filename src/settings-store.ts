@@ -15,20 +15,26 @@ import { dirname, join } from 'node:path'
 import { petHomeDir, fileStamp } from './home.ts'
 import { clampInt } from './clamp.ts'
 import {
+  ACTIVITY_WINDOW_LIMITS,
   AI_HISTORY_LIMITS,
+  AI_MEMORY_LIMITS,
+  AI_MIN_INTERVAL_LIMITS,
   BAR_OFFSET_LIMITS,
+  IDLE_TIMEOUT_LIMITS,
+  defaultEventTriggers,
   normalizeBarPosition,
-  normalizeInteractionMode,
+  normalizeEventTriggers,
   normalizeFocusRange,
   normalizeLipsyncGain,
+  normalizeTriggerMode,
   ttsModelOption,
   ttsModelRandomVoice,
   type BarPosition,
-  type InteractionMode,
+  type EventTriggers,
+  type TriggerMode,
 } from './defaults.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { stripJsonComments } from './jsonc.ts'
-import { LONG_AI_LIMITS } from './models.ts'
 
 /** 设置文件名（$DSH_HOME/waifu 下）。 */
 export const SETTINGS_FILENAME = 'settings.jsonc'
@@ -69,39 +75,32 @@ export interface PetSettings {
   bubbleTextColor: string
   /** 气泡最长连续可见秒数（0 = 不限，默认 30；ADR-027 兜底断流导致的气泡常驻）。 */
   bubbleMaxSeconds: number
-  /** AI 回复总开关（ADR-025）：开启后触摸/状态回复改由 `ctx.llm` 生成。 */
+  /** AI 驱动总开关（ADR-037）：关闭后角色完全静默（无固定台词可回落）。 */
   aiEnabled: boolean
-  /** 仅触摸：状态变化只用预置台词，AI 只在触摸部位时发言（ADR-025）。 */
-  aiTouchOnly: boolean
-  /** 全 AI 接管（ADR-031）：不显示预置对白，长状态延迟失效、入态即请求模型。 */
-  aiTakeover: boolean
   /** 待机小动作总开关。 */
   idleMotionEnabled: boolean
-  /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider，如 `deepseek-official`）。 */
+  /** AI 使用的 provider 路由（DSH 已配置的 LLM provider，如 `deepseek-official`）。 */
   aiProvider: string
-  /** AI 回复使用的模型 id（provider 下可用模型）。 */
+  /** AI 使用的模型 id（provider 下可用模型）。 */
   aiModel: string
-  /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
   /** 注入的最近对话轮数（1 轮 = 一问一答两条消息；0 = 不注入）。 */
   aiHistoryCount: number
-  /** 打断优先级：触摸互动与状态事件谁先占气泡/动作/AI 演绎（ADR-032）。 */
-  interactionMode: InteractionMode
+  /** 注入的最近记忆条数（0 = 不注入）。 */
+  aiMemoryCount: number
+  /** 新触发的处理方式：interrupt = 掐掉上一轮立刻反应，queue = 等上一轮说完再反应。 */
+  triggerMode: TriggerMode
+  /** 事件类触发的最小间隔（秒，0 = 不限制；触摸/对话不受限）。 */
+  aiMinIntervalSec: number
+  /** 静默超时（秒，0 = 关闭）：多久没有任何事件/互动就自动让角色说一句话。 */
+  idleTimeoutSec: number
+  /** 同类 DSH 事件的触发窗口（秒）：窗口内同类事件只触发一次。 */
+  activityWindowSec: number
+  /** 按 DSH 事件类型粒度的触发开关（触摸/对话始终可触发，不在此表）。 */
+  eventTriggers: EventTriggers
   /** 交互条位置（模型上方 / 下方）。 */
   barPosition: BarPosition
   /** 交互条额外偏移（px，正数远离模型）。 */
   barOffset: number
-  /** 长状态「思考」的 AI 演绎节奏：入态后延迟多久开始（秒，0–120）。 */
-  thinkingAiDelay: number
-  /** 「思考」的演绎间隔（秒，5–600）。 */
-  thinkingAiInterval: number
-  /** 「思考」每次入态最多演绎几次（1–10）。 */
-  thinkingAiMax: number
-  /** 长状态「等确认」的入态延迟（秒）。 */
-  waitingAiDelay: number
-  /** 「等确认」的演绎间隔（秒）。 */
-  waitingAiInterval: number
-  /** 「等确认」每次入态最多演绎几次。 */
-  waitingAiMax: number
 
   /** 语音合成开关（ADR-033）。 */
   ttsEnabled: boolean
@@ -132,7 +131,8 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 建议通过设置页「Waifu 设置」修改；直接编辑保存后刷新页面生效。
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
-//        aiEnabled / aiTouchOnly / aiProvider / aiModel / aiHistoryCount /
+//        aiEnabled / aiProvider / aiModel / aiHistoryCount / aiMemoryCount / triggerMode /
+//        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / eventTriggers /
 //        ttsEnabled / ttsEngine / ttsModel / ttsVoice / lipsyncEnabled / lipsyncGain`
 
 /**
@@ -143,8 +143,10 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
  * - 5 起默认语音模型换成音色可固定的 MAI-Voice 2.1 Flash（Drama 3 每句都换人声，ADR-033 修订）
  * - 6 起默认回到 Fish Audio Drama 3（MAI-Voice 只存活一个版本）
  * - 7 起语音目录只剩通义千问 TTS，目录外的旧模型（Drama 3 / MAI / Kokoro）统一回落到新默认
+ * - 8 起 ADR-037 全 AI 驱动：删 aiTouchOnly、aiTakeover、interactionMode、thinkingAi 与 waitingAi 系列，
+ *        加 aiMemoryCount/triggerMode/aiMinIntervalSec/idleTimeoutSec/activityWindowSec/eventTriggers
  */
-const SETTINGS_SCHEMA_VERSION = 7
+const SETTINGS_SCHEMA_VERSION = 8
 
 /** home 改成视口百分比的版本（3）；更早的文件 home 语义不同，直接回退 base。 */
 const HOME_PERCENT_VERSION = 3
@@ -235,6 +237,9 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
   // v5 起默认语音模型换成「音色可固定」的 MAI-Voice：旧文件里若还是「随机音色模型 + 没选音色」
   // 就自动迁移过去，否则每句话的人声都不一样（ADR-033 修订）。
   const voiceFix = migrateTtsVoice(version, record.ttsModel, record.ttsVoice, base)
+  // v8 起 ADR-037：旧字段（aiTouchOnly/aiTakeover/interactionMode/thinking*/waiting*）在返回对象里
+  // 根本没有位置，天然作废；eventTriggers 允许部分写入，缺的键按默认（开）补齐。
+  const eventTriggers = normalizeEventTriggers(record.eventTriggers)
   return {
     enabled: bool('enabled'),
     size: clampSize(record.size) ?? base.size,
@@ -254,21 +259,18 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     bubbleTextColor: color(record.bubbleTextColor, base.bubbleTextColor),
     bubbleMaxSeconds: clampBubbleMax(record.bubbleMaxSeconds, base.bubbleMaxSeconds),
     aiEnabled: bool('aiEnabled'),
-    aiTouchOnly: bool('aiTouchOnly'),
-    aiTakeover: bool('aiTakeover'),
     idleMotionEnabled: bool('idleMotionEnabled'),
     aiProvider: pickString(record.aiProvider) ?? base.aiProvider,
     aiModel: pickString(record.aiModel) ?? base.aiModel,
     aiHistoryCount: clampInt(record.aiHistoryCount, base.aiHistoryCount, AI_HISTORY_LIMITS.min, AI_HISTORY_LIMITS.max),
-    interactionMode: normalizeInteractionMode(record.interactionMode, base.interactionMode),
+    aiMemoryCount: clampInt(record.aiMemoryCount, base.aiMemoryCount, AI_MEMORY_LIMITS.min, AI_MEMORY_LIMITS.max),
+    triggerMode: normalizeTriggerMode(record.triggerMode, base.triggerMode),
+    aiMinIntervalSec: clampInt(record.aiMinIntervalSec, base.aiMinIntervalSec, AI_MIN_INTERVAL_LIMITS.min, AI_MIN_INTERVAL_LIMITS.max),
+    idleTimeoutSec: clampInt(record.idleTimeoutSec, base.idleTimeoutSec, IDLE_TIMEOUT_LIMITS.min, IDLE_TIMEOUT_LIMITS.max),
+    activityWindowSec: clampInt(record.activityWindowSec, base.activityWindowSec, ACTIVITY_WINDOW_LIMITS.min, ACTIVITY_WINDOW_LIMITS.max),
+    eventTriggers: version >= SETTINGS_SCHEMA_VERSION ? eventTriggers : defaultEventTriggers(),
     barPosition: normalizeBarPosition(record.barPosition, base.barPosition),
     barOffset: clampInt(record.barOffset, base.barOffset, BAR_OFFSET_LIMITS.min, BAR_OFFSET_LIMITS.max),
-    thinkingAiDelay: clampInt(record.thinkingAiDelay, base.thinkingAiDelay, LONG_AI_LIMITS.delay.min, LONG_AI_LIMITS.delay.max),
-    thinkingAiInterval: clampInt(record.thinkingAiInterval, base.thinkingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
-    thinkingAiMax: clampInt(record.thinkingAiMax, base.thinkingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
-    waitingAiDelay: clampInt(record.waitingAiDelay, base.waitingAiDelay, LONG_AI_LIMITS.delay.min, LONG_AI_LIMITS.delay.max),
-    waitingAiInterval: clampInt(record.waitingAiInterval, base.waitingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
-    waitingAiMax: clampInt(record.waitingAiMax, base.waitingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
     ttsEnabled: bool('ttsEnabled'),
     ttsEngine: pickString(record.ttsEngine) ?? base.ttsEngine,
     ttsModel: voiceFix.model,
@@ -340,21 +342,35 @@ export class SettingsStore {
   }
 
   /**
-   * 应用设置页的 path 操作（`{op:'set',path:['size'],value}` / `{op:'unset'}`），
-   * 过滤未知路径与非法值，写回文件并返回最新视图。
+   * 应用设置页的 path 操作（`{op:'set',path:['size'],value}` / `{op:'unset'}`）。
+   * 标量键沿用「一层路径」规则；`eventTriggers` 支持 `['eventTriggers','tool-read']` 二层路径
+   * （单个事件开关），也支持 `['eventTriggers']` 整体写入（normalizeSettings 会补齐缺省键）。
    */
   applyOps(ops: readonly SettingsPathOp[]): PetSettingsView {
     const current = this.get()
     // 带上 schema 版本，避免写入路径被「旧版 home 语义迁移」误判
     let next: Record<string, unknown> = { ...current, version: SETTINGS_SCHEMA_VERSION }
     for (const op of ops) {
-      if (!Array.isArray(op.path) || op.path.length !== 1) continue
+      if (!Array.isArray(op.path) || op.path.length === 0) continue
       const key = op.path[0]
       if (typeof key !== 'string' || !(key in current)) continue
       if (op.op === 'unset') {
         delete next[key]
         continue
       }
+      if (key === 'eventTriggers') {
+        // 二层路径：单个事件开关
+        if (op.path.length === 2 && typeof op.path[1] === 'string') {
+          const eventKey = op.path[1]
+          const triggers = { ...(next.eventTriggers as Record<string, boolean>) }
+          triggers[eventKey] = op.value === true
+          next.eventTriggers = triggers
+        } else if (op.path.length === 1) {
+          next.eventTriggers = op.value
+        }
+        continue
+      }
+      if (op.path.length !== 1) continue
       next[key] = op.value
     }
     this.lastGood = normalizeSettings(next, this.base)

@@ -11,7 +11,7 @@ import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { PetService } from './service.ts'
-import type { EventBindings, TouchPart } from './models.ts'
+import type { TouchPart } from './models.ts'
 import { appendClientLog, clientLogPath } from './client-log.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 
@@ -19,6 +19,14 @@ import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 export interface SettingsRoutesApi {
   view(): { value: unknown; writable?: boolean; error?: string | null; path?: string }
   write(ops: readonly SettingsPathOp[]): Promise<unknown> | unknown
+}
+
+/** 记忆文件读写 API（ADR-037）：memory.md 的查看/编辑。 */
+export interface MemoryRoutesApi {
+  /** 读记忆文件（缺失时自动写模板头）。 */
+  read(): { text: string; path: string }
+  /** 整存记忆文件（设置页「记忆」编辑保存；超长截断）。 */
+  write(text: string): { text: string; path: string }
 }
 
 /** 浏览器侧宠物 API 基路径。 */
@@ -235,32 +243,79 @@ export interface AiRoutesApi {
   debug?(): Promise<unknown> | unknown
 }
 
-/** AI 回复 API（ADR-025）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
+/**
+ * 触发场景输入（ADR-037）：触摸（轻碰/戳戳/抚摸 + 时长）、DSH 事件、对话、静默超时。
+ * `merged` 是上一轮反应进行期间攒下的事件（事件合并），由调度器填。
+ */
+export interface TriggerInput {
+  kind: 'tap' | 'event' | 'chat' | 'idle'
+  part?: string
+  tapKind?: 'light' | 'poke' | 'stroke'
+  durationMs?: number
+  event?: string
+  text?: string
+  tz?: string
+  /** 本轮触发时窗口内合并进来的其他事件。 */
+  merged?: string[]
+}
+
+/** AI 回复 API（ADR-025 / ADR-037）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
 export interface InteractRoutesApi {
-  reply(input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string }): Promise<{
+  reply(input: TriggerInput): Promise<{
     ok: boolean
     text?: string
-    /** 模型标注的情绪（happy / angry / sad / shy / surprised / smug / neutral）。 */
-    emotion?: string | null
+    /** 模型选中的表情（目录 id，如 blush / angry）。 */
+    expressions?: string[]
+    /** 模型选中的动作（目录 id，如 Nod / ShakeHead）。 */
+    motions?: string[]
+    /** 模型要记住的事（写 memory.md）。 */
+    memory?: string
     error?: string
   }>
 }
 
-/** 流式演绎 API（ADR-033）：文本增量 → 句读 → 音频，事件由路由层写成 SSE 帧。 */
+/** 流式演绎 API（ADR-033 / ADR-037）：文本增量 → 句读 → 音频，事件由路由层写成 SSE 帧。 */
 export interface SpeakRoutesApi {
   /**
    * 跑一轮流式演绎并把事件写进 `emit`。
-   * @param input - 场景（触摸/状态），与 `/interact` 同构。
+   * @param input - 触发场景（触摸/事件/对话/静默），与 `/interact` 同构。
    * @param emit - `(event, data)`，由路由层转成 `event: …\ndata: …`。
    * @param signal - 连接断开时中止合成。
    */
   stream(
-    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string },
-    emit: (event: 'text' | 'clause' | 'audio' | 'emotion' | 'done' | 'error', data: unknown) => void,
+    input: TriggerInput,
+    emit: (event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error', data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void>
   /** 单段合成（排查用）：直接回一段音频字节。 */
   synthesize?(text: string): Promise<{ mime: string; audio: Buffer }>
+}
+
+/** 解析 `/interact` 与 `/speak` 的请求体为 TriggerInput（长度限制与旧版一致）。 */
+function parseTriggerInput(record: Record<string, unknown>): TriggerInput {
+  const kind = record.kind === 'event' ? 'event' as const
+    : record.kind === 'chat' ? 'chat' as const
+    : record.kind === 'idle' ? 'idle' as const
+    : 'tap' as const
+  const tapKind = record.tapKind === 'light' ? 'light' as const
+    : record.tapKind === 'stroke' ? 'stroke' as const
+    : record.tapKind === 'poke' ? 'poke' as const
+    : undefined
+  const merged = Array.isArray(record.merged)
+    ? record.merged.filter((item): item is string => typeof item === 'string').slice(0, 8)
+    : undefined
+  return {
+    kind,
+    part: typeof record.part === 'string' ? record.part.slice(0, 40) : undefined,
+    tapKind,
+    durationMs: typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)
+      ? Math.max(0, Math.min(600_000, Math.round(record.durationMs)))
+      : undefined,
+    event: typeof record.event === 'string' ? record.event.slice(0, 20) : undefined,
+    text: typeof record.text === 'string' ? record.text.slice(0, 200) : undefined,
+    tz: typeof record.tz === 'string' ? record.tz.slice(0, 64) : undefined,
+    merged,
+  }
 }
 
 /** 构建完整路由族（API + SSE + 素材 + 本地模型）供 ctx.webServer.register。 */
@@ -272,16 +327,18 @@ export function makePetRoutes(deps: {
   ai?: InteractRoutesApi
   /** AI 设置（可选：未接线时不注册 /ai-options 与 /persona）。 */
   aiSettings?: AiRoutesApi
+  /** 记忆文件（可选：未接线时不注册 /memory）。 */
+  memory?: MemoryRoutesApi
   /** 流式演绎 + 语音合成（可选：未接线时不注册 /speak 与 /tts）。 */
   speak?: SpeakRoutesApi
   /** SSE 活跃流注册钩子：插件卸载时由调用方逐一 close（ADR-006）。 */
   onStream?: (close: () => void) => void
 }): WebRoute[] {
-  const { service, packageRoot, settings, ai, aiSettings, speak, onStream } = deps
+  const { service, packageRoot, settings, ai, aiSettings, memory, speak, onStream } = deps
   const apiRoutes: WebRoute[] = [
     sseStateRoute(`${PET_API_PREFIX}/events`, service, onStream),
     getRoute(`${PET_API_PREFIX}/state`, async () => service.snapshot()),
-    // 触摸部位（spec §4）：GET 读当前模型 + 文件视图；POST 保存某模型的部位列表
+    // 触摸部位（spec §4 / ADR-037）：GET 读当前模型 + 文件视图；POST 保存某模型的部位列表
     getPostRoute(
       `${PET_API_PREFIX}/touch-parts`,
       () => {
@@ -291,8 +348,6 @@ export function makePetRoutes(deps: {
           model,
           parts: service.touchPartsFor(model),
           saved: view.models[model] !== undefined,
-          // 当前模型生效的事件绑定（动画组 + 台词池，含用户覆盖）；设置页「事件绑定」据此初始化
-          events: service.effectiveEvents(model),
           error: view.error,
           path: view.path,
         }
@@ -301,17 +356,11 @@ export function makePetRoutes(deps: {
         const model = typeof body.model === 'string' ? body.model.trim() : ''
         if (!model) throw new Error('model 不能为空')
         const parts = Array.isArray(body.parts) ? body.parts as TouchPart[] : []
-        const events = body.events === undefined
-          ? undefined
-          : (typeof body.events === 'object' && body.events !== null
-            ? body.events as Partial<EventBindings>
-            : {})
-        const view = service.saveTouchParts(model, parts, events)
+        const view = service.saveTouchParts(model, parts)
         return {
           ok: true,
           model,
           touchParts: service.touchPartsFor(model),
-          events: service.effectiveEvents(model),
           error: view.error,
           path: view.path,
         }
@@ -325,6 +374,14 @@ export function makePetRoutes(deps: {
         return Promise.resolve(settings.write(ops)).then(() => settings.view())
       },
     ),
+    // 记忆文件（ADR-037）：查看 / 编辑保存
+    ...(memory ? [
+      getPostRoute(
+        `${PET_API_PREFIX}/memory`,
+        () => memory.read(),
+        (body) => memory.write(typeof body.text === 'string' ? body.text : ''),
+      ),
+    ] : []),
     postRoute(`${PET_API_PREFIX}/set-display`, (body) => {
       const patch: { right?: number; bottom?: number; size?: number } = {}
       if (typeof body.right === 'number') patch.right = body.right
@@ -348,18 +405,12 @@ export function makePetRoutes(deps: {
         model: typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined,
       }))] : []),
     ] : []),
-    // AI 回复（ADR-025）：客户端上报「戳了哪里 / 变成什么状态」，Host 用 ctx.llm 生成一句台词
+    // AI 回复（ADR-025 / ADR-037）：客户端上报触发场景，Host 用 ctx.llm 生成台词 + 动作/表情 + 记忆
     ...(ai ? [postRoute(`${PET_API_PREFIX}/interact`, (body) => {
-      const kind = body.kind === 'state' ? 'state' as const : body.kind === 'chat' ? 'chat' as const : 'tap' as const
-      const part = typeof body.part === 'string' ? body.part.slice(0, 40) : undefined
-      const state = typeof body.state === 'string' ? body.state.slice(0, 20) : undefined
-      const hint = typeof body.hint === 'string' ? body.hint.slice(0, 120) : undefined
-      const text = typeof body.text === 'string' ? body.text.slice(0, 200) : undefined
-      const tz = typeof body.tz === 'string' ? body.tz.slice(0, 64) : undefined
-      return ai.reply({ kind, part, state, hint, text, tz })
+      return ai.reply(parseTriggerInput(body))
     })] : []),
-    // 流式演绎（ADR-033）：SSE 下发 text / clause / audio / done / error，
-    // 客户端按 clause 显示气泡、按 audio 播放并用同一段音频驱动口型。
+    // 流式演绎（ADR-033 / ADR-037）：SSE 下发 text / clause / audio / tags / memory / done / error，
+    // 客户端按 clause 显示气泡、按 audio 播放并用同一段音频驱动口型、按 tags 换表情动作、按 memory 落盘。
     ...(speak ? [{
       kind: 'exact' as const,
       path: `${PET_API_PREFIX}/speak`,
@@ -370,14 +421,7 @@ export function makePetRoutes(deps: {
         }
         readJsonBody(req).then((body) => {
           const record = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {}
-          const input = {
-            kind: record.kind === 'state' ? 'state' as const : record.kind === 'chat' ? 'chat' as const : 'tap' as const,
-            part: typeof record.part === 'string' ? record.part.slice(0, 40) : undefined,
-            state: typeof record.state === 'string' ? record.state.slice(0, 20) : undefined,
-            hint: typeof record.hint === 'string' ? record.hint.slice(0, 120) : undefined,
-            text: typeof record.text === 'string' ? record.text.slice(0, 200) : undefined,
-            tz: typeof record.tz === 'string' ? record.tz.slice(0, 64) : undefined,
-          }
+          const input = parseTriggerInput(record)
           res.writeHead(200, {
             'content-type': 'text/event-stream; charset=utf-8',
             'cache-control': 'no-cache, no-store',

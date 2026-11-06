@@ -8,6 +8,7 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_TTS_MODEL,
   DEFAULT_TTS_VOICE,
+  TRIGGER_EVENTS,
   TTS_MODELS,
   ttsDefaultVoice,
   ttsModelRandomVoice,
@@ -19,6 +20,14 @@ describe('默认值一致性', () => {
 
   it('Config schema 的标量默认值与 DEFAULT_SETTINGS 一致', () => {
     for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+      // eventTriggers 不进 cordis schema（解析对象不带该键），由 Host baseSettings 用
+      // defaultEventTriggers() 生成——单独断言其形状，避免「schema 里查不到」的假失败。
+      if (key === 'eventTriggers') {
+        expect(Object.keys(value as Record<string, boolean>).sort()).toEqual(
+          [...TRIGGER_EVENTS].sort(),
+        )
+        continue
+      }
       expect(resolved[key], `schema 默认 ${key}`).toBe(value)
     }
   })

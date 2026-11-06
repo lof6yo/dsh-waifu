@@ -31,18 +31,14 @@ import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
 import { stripTimestamps } from '../models.ts'
 import { clientLog } from './client-log.ts'
 import {
-  DEFAULT_EVENT_BINDINGS,
-  isLongState,
-  type LongState,
   EXPRESSIONS,
   expressionParams,
   EXPRESSION_SWITCH_PARAMS,
+  isExpressionId,
+  isMotionId,
   normalizeExpressionId,
-  splitMotionSelection,
   hitTestTouchParts,
   pointToBoundsRatio,
-  type EventBindings,
-  type PetEventKey,
   type TouchBox,
   type TouchPart,
 } from '../models.ts'
@@ -64,11 +60,12 @@ import {
   DEFAULT_BAR_OFFSET,
   DEFAULT_BAR_POSITION,
   BAR_OFFSET_LIMITS,
-  DEFAULT_INTERACTION_MODE,
   normalizeBarPosition,
   type BarPosition,
-  normalizeInteractionMode,
-  type InteractionMode,
+  DEFAULT_TRIGGER_MODE,
+  normalizeTriggerMode,
+  type TriggerMode,
+  touchKindOf,
 } from '../defaults.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
 import { homePercentFromPos, onCaptureHome, onRecenter } from './pet-commands.ts'
@@ -113,7 +110,6 @@ const BUBBLE_MAX_DEFAULT = DEFAULT_BUBBLE_MAX_SECONDS
  */
 const AI_REQUEST_COOLDOWN_MS = 1200
 /** AI 台词最短可见时长：状态切换再快，也要让这句露一脸（ADR-025 补丁）。 */
-const AI_BUBBLE_HOLD_MS = 1400
 /**
  * 默认渲染帧率上限（spec §2/§7）：未封顶时 PIXI ticker 可达 120–140fps，
  * 长时间挂页会持续占满 GPU/主线程；桌宠动画默认 30fps 足够，用户可在设置中改档。
@@ -167,23 +163,10 @@ const TOUCHBOX_PALETTE = [
 
 /** 表情淡入淡出时长（ms）：切换表情时开关参数按该时长线性逼近目标值。 */
 const EXPRESSION_FADE_MS = 280
-/** 触摸部位表情的临时保持时长（ms）：到点自动回到当前事件绑定的表情。 */
-/** 触摸互动的「保持窗口」：这段时间内触摸拥有气泡与动作（ADR-032）。 */
-const TAP_INTERACTION_HOLD_MS = 2600
-const EXPRESSION_TEMP_MS = 2200
-/** 待机小动作：随机间隔与候选动作组（幅度很小，只为消除「定格动画」感）。 */
-/** 模型标注的情绪 → 表情组合（表情 id 见 models.ts 的 EXPRESSIONS）。 */
-const EMOTION_EXPRESSIONS: Record<string, readonly string[]> = {
-  happy: ['star'],
-  angry: ['angry'],
-  sad: ['tear'],
-  shy: ['blush'],
-  surprised: ['whites'],
-  smug: ['heart'],
-  neutral: [],
-}
-/** 情绪表情的保持时长：比触摸短表情长一点，念完一句还在。 */
-const EMOTION_HOLD_MS = 4200
+/** AI 标签表情的临时保持时长（ms）：到期回落默认表情（ADR-037）。 */
+const TAG_EXPRESSION_HOLD_MS = 4200
+/** 静默超时兜底步长（ms）：计时器误差容忍，避免和设置值贴边抖动。 */
+const IDLE_TIMER_SLACK_MS = 250
 
 const IDLE_MICRO_MOTIONS = ['Glance', 'Perk', 'Shift', 'Sigh'] as const
 const IDLE_MICRO_MIN_MS = 7000
@@ -284,19 +267,22 @@ interface ModelLike {
   }
 }
 
-/** 从台词池随机取一句；可选避开上一条（池 ≥2 时，spec §4）。 */
-function pickLine(pool: readonly string[], avoid?: string): string | undefined {
-  if (pool.length === 0) return undefined
-  if (pool.length === 1) return pool[0]
-  const candidates = avoid ? pool.filter((line) => line !== avoid) : pool
-  const list = candidates.length > 0 ? candidates : pool
-  return list[Math.floor(Math.random() * list.length)]
-}
-
 /** JSON 响应读取:非 2xx 抛错——错误响应不得当作合法视图/结果解析。 */
 async function readJson<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`http ${res.status}`)
   return await res.json() as T
+}
+
+/** 触发场景（ADR-037）：与 Host 的 TriggerInput 同构；`merged` 由本侧调度器填。 */
+interface TriggerBody {
+  kind: 'tap' | 'event' | 'chat' | 'idle'
+  part?: string
+  tapKind?: 'light' | 'poke' | 'stroke'
+  durationMs?: number
+  event?: string
+  text?: string
+  merged?: string[]
+  tz?: string
 }
 
 const api = {
@@ -315,8 +301,8 @@ const api = {
     es.onerror = onError
     return () => es.close()
   },
-  /** AI 回复（ADR-025）：上报「戳了哪里/变成什么状态」，拿回一句台词（失败返回 ok:false）。 */
-  interact: (body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string }): Promise<{ ok: boolean; text?: string; emotion?: string | null; error?: string }> =>
+  /** AI 回复（ADR-037）：上报触发场景，拿回台词 + 表情/动作 + 记忆（失败返回 ok:false）。 */
+  interact: (body: TriggerBody): Promise<{ ok: boolean; text?: string; expressions?: string[]; motions?: string[]; error?: string }> =>
     fetch(`${PET_API}/interact`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -327,7 +313,7 @@ const api = {
    * 用 fetch + ReadableStream 手动解帧（EventSource 不支持 POST 带 body）。
    */
   speak: async (
-    body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string },
+    body: TriggerBody,
     onEvent: (event: string, data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void> => {
@@ -427,7 +413,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let disposed = false
   pushCleanup(() => { disposed = true })
   // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
-  pushCleanup(() => { clearLongState(); clearTapHold(); clearBubbleHideTimer(); clearPendingTap(); stopSpeaking() })
+  pushCleanup(() => { clearIdleTimer(); clearBubbleHideTimer(); clearPendingTap(); stopSpeaking() })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
@@ -479,10 +465,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let editState: TouchEditState | null = null
   /** 当前模型生效的触摸部位（SSE config.touchParts；编辑态改用 editState.parts，spec §4）。 */
   let touchParts: TouchPart[] = []
-  /** 当前模型生效的事件绑定（SSE config.events；缺省 DEFAULT_EVENT_BINDINGS，spec §3）。 */
-  let eventBindings: EventBindings = DEFAULT_EVENT_BINDINGS
-  /** 事件绑定内容签名：配置变化时刷新长状态当前阶段文案（spec §3）。 */
-  let eventBindingsSignature = ''
   /** 统一浮层逐帧循环句柄（命中层 / 触摸色块 / 调试面板 / 气泡共用一条 rAF，spec §3/§4）。 */
   let overlayRaf = 0
   /** 上一次真正执行帧的时间戳：按 settings.maxFps 节流（0 = 不限），不再固定 60fps 空转。 */
@@ -527,10 +509,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let pendingSize: number | null = null
   let sizeRaf = 0
   let lastTapAt = 0
-  /** 各部位自定义台词（part.lines）上一次抽中的句子，按 part.id 记录（部位间互不干扰，spec §4）。 */
-  const lastPartLine = new Map<string, string>()
-  /** 各事件阶段上一次抽中的台词（key = 状态 + 阶段下标，避开连抽同一句，spec §3）。 */
-  const lastEventLine = new Map<string, string>()
+  /** 本次按压开始时间（pointerdown 记，pointerup 算时长 → 轻碰/戳戳/抚摸，ADR-037）。 */
+  let tapDownAt = 0
   /** 互动动作世代：新互动或新非 idle 状态动作会作废上一次互动的恢复回调。 */
   let interactionGen = 0
   /** 动作启动世代：任何新动作都会使异步 fallback/旧启动失效，避免被 stopAllMotions 打断后继续启动。 */
@@ -549,12 +529,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let bubbleMaxMs = BUBBLE_MAX_DEFAULT * 1000
   /** 气泡当前是否可见（用于判断一次新的显示是否要重新起算最长时长）。 */
   let bubbleVisible = false
-  /** 长状态的 AI 演绎计时器（入态延迟 + 间隔重试，ADR-026）。 */
-  let longAiTimers: number[] = []
-  /** 当前长状态（thinking/waiting）；非空时气泡常驻。 */
-  let longState: LongState | null = null
-  /** 长状态常驻气泡的底稿：入态台词，AI 演绎成功后换成 AI 那句。 */
-  let bubbleStickyText: string | null = null
   let lastState: PetState | null = null
   let demoState: PetState | null = null
   let view: PetStateView | null = null
@@ -570,15 +544,24 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let repaintDebugExpressions: (() => void) | null = null
   /** 表达式开关参数当前混合值（每帧向目标逼近 → 淡入淡出）。 */
   const expressionMix = new Map<string, number>()
-  /** AI 回复开关（SSE config.aiEnabled；ADR-025）：开启后触摸/状态台词改由 Host 调 LLM 生成。 */
+  /** AI 驱动总开关（SSE config.aiEnabled；ADR-037）：关闭后角色完全静默。 */
   let aiEnabled = false
-  /** 仅触摸（SSE config.aiTouchOnly）：开启后状态气泡只用预置台词，AI 只在触摸时发言。 */
-  let aiTouchOnly = false
-  /**
-   * 全 AI 接管（SSE config.aiTakeover；ADR-031）：不显示任何预置对白，气泡内容全部来自模型；
-   * 长状态的「延迟」失效——入态立刻请求一句，之后仍按间隔/上限反复演绎。
-   */
-  let aiTakeover = false
+  /** 触发频率（SSE config.triggerMode；ADR-037）：interrupt = 截断抢占，queue = 排队等完成。 */
+  let triggerMode: TriggerMode = DEFAULT_TRIGGER_MODE
+  /** 事件类触发的最小间隔（秒，0 = 不限；触摸/对话豁免，ADR-037）。 */
+  let aiMinIntervalSec = 0
+  /** 静默超时（秒，0 = 关闭）：多久没动静就让角色自己说一句（ADR-037）。 */
+  let idleTimeoutSec = 0
+  /** 上次事件类触发的时间戳（最小间隔判定用）。 */
+  let lastEventTriggerAt = 0
+  /** 静默超时计时器：任何触发都重排。 */
+  let idleTimer: number | undefined
+  /** 按 DSH 事件类型的触发开关（SSE config.eventTriggers；触摸/对话不在表内，必触发）。 */
+  let eventTriggers: Record<string, boolean> = {}
+  /** queue 模式下攒着的触发（等上一轮说完再发；只留最新一条，ADR-037）。 */
+  let pendingTrigger: TriggerBody | null = null
+  /** 上一轮演绎是否还在进行中（queue 模式的判定依据）。 */
+  let speakingTurnActive = false
   /** 说话时的身体语言（点头/挑眉）开关，与口型跟随一起生效。 */
   let bodyLanguageEnabled = true
   /** 待机小动作开关（设置页「待机小动作」）。 */
@@ -590,8 +573,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let lipsyncEnabled: boolean = DEFAULT_SETTINGS.lipsyncEnabled
   /** 口型强度百分比（0–300，100 = 标准）。 */
   let lipsyncGain: number = DEFAULT_SETTINGS.lipsyncGain
-  /** 打断优先级（ADR-032）：触摸互动与状态事件抢气泡/动作/AI 演绎时的规则。 */
-  let interactionMode: InteractionMode = DEFAULT_INTERACTION_MODE
   /** 交互条（模型上下的静音按钮 + 对话输入框）位置与 DOM。 */
   let barPosition: BarPosition = DEFAULT_BAR_POSITION
   let barOffset = DEFAULT_BAR_OFFSET
@@ -603,28 +584,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let barW = 0
   let barH = 0
   let barKey = ''
-  /** 触摸互动保持窗口的截止时间戳；窗口内状态事件按优先级决定是否接管。 */
-  let tapHoldUntil = 0
-  let tapResumeTimer: number | undefined
-  /** 长状态 AI 演绎节奏（SSE config.*AiDelay/Interval/Max，秒/秒/次；ADR-026）。 */
-  let thinkingAiDelay = 3
-  let thinkingAiInterval = 20
-  let thinkingAiMax = 3
-  let waitingAiDelay = 4
-  let waitingAiInterval = 30
-  let waitingAiMax = 3
   /** AI 回复请求序号：只采用最后一次请求的结果，避免连点时旧回复覆盖新回复。 */
   let aiRequestSeq = 0
   /** 上一次真正发出的 AI 请求时间戳（与 Host 冷却同源，避免发出注定被拒的请求）。 */
   let lastAiRequestAt = 0
-  /** 冷却期内被挡下的点击：到点再补一次，让「点快了」不至于白点。 */
-  let pendingTap: { part: string; hint?: string } | null = null
+  /** 冷却期内被挡下的触摸：到点再补一次，让「点快了」不至于白点。 */
+  let pendingTap: TriggerBody | null = null
   let pendingTapTimer: number | undefined
-  /** AI 台词的最短可见时间截止点：其间状态/预置台词先排队，避免「刚到就被状态切走」。 */
-  let aiTextUntil = 0
-  /** 被 AI 台词短暂压住的预置台词（等 AI 台词显示够久再换上）。 */
-  let pendingBubbleText: string | null = null
-  let pendingBubbleTimer: number | undefined
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
   let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
@@ -691,14 +657,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     bubbleMaxTimer = window.setTimeout(() => {
       bubbleMaxTimer = undefined
       bubbleVisible = false
-      // 长状态的出态事件可能没送到：气泡不能永远挂着，顺手停掉 AI 演绎，避免继续烧 token
-      clearLongState()
-      if (pendingBubbleTimer !== undefined) {
-        window.clearTimeout(pendingBubbleTimer)
-        pendingBubbleTimer = undefined
-      }
-      pendingBubbleText = null
-      aiTextUntil = 0
+      // 出态事件可能没送到：气泡不能永远挂着，顺手掐掉正在说的语音，避免继续烧 token
+      stopSpeaking()
       clearBubbleHideTimer()
       if (bubble) bubble.style.opacity = '0'
     }, bubbleMaxMs)
@@ -937,7 +897,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     input.value = ''
     syncSendState()
     if (ttsEnabled) ensureAudio()
-    await requestSpeak({ kind: 'chat', text })
+    await fireTrigger({ kind: 'chat', text })
   }
 
   /** 交互条定位：贴模型包围盒上方或下方居中（视口内横向夹取）。 */
@@ -984,87 +944,21 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     updateBubblePosition()
   }
 
-  /** 取事件某阶段的台词池：index 越界用最后一组；无台词 → 空数组（不回退固定人设）。 */
-  function eventLinesFor(state: PetEventKey, index: number): string[] {
-    const pools = eventBindings[state]?.lines ?? []
-    if (pools.length === 0) return []
-    return pools[Math.min(index, pools.length - 1)] ?? []
-  }
-
-  /** 随机取事件某阶段的一句台词（避开该阶段上一条，spec §3）；无台词返回 undefined。 */
-  function pickEventLine(state: PetEventKey, index: number): string | undefined {
-    const pool = eventLinesFor(state, index)
-    if (pool.length === 0) return undefined
-    const key = `${state}\u0000${index}`
-    const line = pickLine(pool, lastEventLine.get(key))
-    if (line !== undefined) lastEventLine.set(key, line)
-    return line
-  }
-
-  /** 隐藏气泡并取消瞬态隐藏计时（事件台词池为空时不显示气泡，spec §3）。 */
-  function hideBubble(): void {
-    clearBubbleHideTimer()
-    clearBubbleMaxTimer()
-    bubbleVisible = false
-    if (bubble) bubble.style.opacity = '0'
-  }
-
-  /** 重绘长状态的常驻气泡（瞬态气泡到时回落/事件绑定变化或拖拽结束后恢复）。 */
-  function showStickyText(): void {
-    if (longState === null) return
-    if (bubbleStickyText === null) { hideBubble(); return }
-    // 走 showBubble：常驻底稿同样要给 AI 台词让出最短可见时间
-    showBubble(bubbleStickyText)
-  }
-
-  /**
-   * 瞬态气泡（交互/短状态，spec §3/§4）：立刻换文案并重置隐藏计时（连点可打断）；
-   * 到时隐藏——若正处于阶段演进状态则回落到当前阶段文案（交互短暂抢占常驻气泡，过后归还）。
-   */
-  function showBubble(text: string): void {
-    if (!bubble) return
-    // AI 台词刚上来、还没看够就被状态切换顶掉（状态变化比模型出字快）：先排队，
-    // 等它的最短可见时间结束后再换；排队期间再有预置台词就只留最后一条。
-    const now = Date.now()
-    if (now < aiTextUntil) {
-      pendingBubbleText = text
-      if (pendingBubbleTimer !== undefined) return
-      pendingBubbleTimer = window.setTimeout(() => {
-        pendingBubbleTimer = undefined
-        const next = pendingBubbleText
-        pendingBubbleText = null
-        if (next !== null) showBubble(next)
-      }, aiTextUntil - now)
-      return
-    }
-    showBubbleNow(text)
-  }
-
-  /** 立刻替换气泡文案（不经 AI 排队），到时隐藏并回落到阶段文案。 */
+  /** 立刻替换气泡文案（不经 AI 排队），到时隐藏。 */
   function showBubbleNow(text: string): void {
     if (!bubble) return
     clearBubbleHideTimer()
     setBubbleText(text)
     bubbleHideTimer = window.setTimeout(() => {
       bubbleHideTimer = undefined
-      if (longState !== null) showStickyText()
-      else {
-        bubbleVisible = false
-        clearBubbleMaxTimer()
-        if (bubble) bubble.style.opacity = '0'
-      }
+      bubbleVisible = false
+      clearBubbleMaxTimer()
+      if (bubble) bubble.style.opacity = '0'
     }, BUBBLE_DISPLAY_MS)
   }
 
-  /** AI 台词上屏：比预置台词多留一点时间，并在这段时间内挡住后面的状态切换。 */
+  /** AI 台词上屏（ADR-037：不再有预置台词排队，直接换文案）。 */
   function showAiBubble(text: string): void {
-    if (!bubble) return
-    aiTextUntil = Date.now() + AI_BUBBLE_HOLD_MS
-    if (pendingBubbleTimer !== undefined) {
-      window.clearTimeout(pendingBubbleTimer)
-      pendingBubbleTimer = undefined
-    }
-    pendingBubbleText = null
     showBubbleNow(text)
   }
 
@@ -1156,22 +1050,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (last >= 0) revealClausesUntil(speakClauses[last]!.index)
   }
 
-  /** 退出长状态：取消演绎计时、清掉常驻底稿。 */
-  function clearLongState(): void {
-    for (const t of longAiTimers) window.clearTimeout(t)
-    longAiTimers = []
-    longState = null
-    bubbleStickyText = null
-  }
-
   /** 距离下次允许发 AI 请求还有多久（ms）。 */
   function aiCooldownLeft(): number {
     const left = AI_REQUEST_COOLDOWN_MS - (Date.now() - lastAiRequestAt)
     return left > 0 ? left : 0
   }
 
-  /** 冷却期内的点击：记下最后一下，等冷却结束补发（新的点击覆盖旧的）。 */
-  function deferTapRequest(input: { part: string; hint?: string }, delay: number): void {
+  /** 冷却期内的触摸：记下最后一下，等冷却结束补发（新的点击覆盖旧的）。 */
+  function deferTapRequest(input: TriggerBody, delay: number): void {
     pendingTap = input
     if (pendingTapTimer !== undefined) window.clearTimeout(pendingTapTimer)
     pendingTapTimer = window.setTimeout(() => {
@@ -1179,7 +1065,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const next = pendingTap
       pendingTap = null
       if (!next || disposed) return
-      void requestSpeak({ kind: 'tap', part: next.part, hint: next.hint })
+      void startTurn(next)
     }, delay + 30)
   }
 
@@ -1191,93 +1077,101 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 触摸是否还处于「保持窗口」内（窗口内由 interactionMode 决定谁优先）。 */
-  function tapActive(): boolean {
-    return Date.now() < tapHoldUntil
+  // ---- 触发调度（ADR-037）----
+  /**
+   * 事件类触发开关（触摸/对话必触发，不在表内）。
+   * 表内缺键按「开」处理：设置页只关显式关掉的那些。
+   */
+  function eventTriggerEnabled(event: string): boolean {
+    const value = eventTriggers[event]
+    return value !== false
   }
 
-  /** 结束触摸保持窗口（事件优先/互相打断里由状态变化调用）。 */
-  function clearTapHold(): void {
-    tapHoldUntil = 0
-    if (tapResumeTimer !== undefined) {
-      window.clearTimeout(tapResumeTimer)
-      tapResumeTimer = undefined
+  /** 事件类触发的最小间隔是否已过（触摸/对话不受限）。 */
+  function eventIntervalPassed(): boolean {
+    if (!(aiMinIntervalSec > 0)) return true
+    return Date.now() - lastEventTriggerAt >= aiMinIntervalSec * 1000
+  }
+
+  /** 静默超时：任何真实触发都重排；0 = 关闭。 */
+  function clearIdleTimer(): void {
+    if (idleTimer !== undefined) {
+      window.clearTimeout(idleTimer)
+      idleTimer = undefined
     }
+  }
+
+  function scheduleIdleTimer(): void {
+    clearIdleTimer()
+    if (!(idleTimeoutSec > 0)) return
+    idleTimer = window.setTimeout(() => {
+      idleTimer = undefined
+      if (disposed || !aiEnabled) return
+      void startTurn({ kind: 'idle' })
+    }, idleTimeoutSec * 1000 + IDLE_TIMER_SLACK_MS)
   }
 
   /**
-   * 触摸接管（ADR-032）：进入保持窗口；非「事件优先」时立刻停掉长状态的演绎计时与
-   * 常驻底稿，让触摸台词/AI 台词拥有气泡；窗口结束后若长状态仍在，再把演绎交还。
+   * 触发入口（ADR-037）：统一走这条。
+   * - 触摸/对话：必触发；冷却内触摸记 defer 到点补发。
+   * - 事件类（DSH 状态/活动）：先过 eventTriggers 开关，再过最小间隔；
+   *   interrupt 模式直接开新一轮（旧一轮的 SSE 由 speakSeq 作废）；
+   *   queue 模式下若上一轮还在说，攒 pendingTrigger 等本轮结束后发（只留最新）。
+   * - 上一轮进行中到达的事件（interrupt 模式下被截断前的窗口内事件）合并进 `merged`。
    */
-  function beginTapHold(): void {
-    tapHoldUntil = Date.now() + TAP_INTERACTION_HOLD_MS
-    if (tapResumeTimer !== undefined) window.clearTimeout(tapResumeTimer)
-    if (interactionMode !== 'event-first' && longState !== null) {
-      for (const t of longAiTimers) window.clearTimeout(t)
-      longAiTimers = []
-      bubbleStickyText = null
-    }
-    tapResumeTimer = window.setTimeout(() => {
-      tapResumeTimer = undefined
-      if (interactionMode === 'event-first') return
-      if (longState !== null && longState === lastState) {
-        enterLongState(longState, pickEventLine(longState, 0))
+  function fireTrigger(input: TriggerBody): void {
+    if (!aiEnabled) return
+    if (input.kind === 'tap' || input.kind === 'chat') {
+      scheduleIdleTimer()
+      if (input.kind === 'tap') {
+        const cooldownLeft = aiCooldownLeft()
+        if (cooldownLeft > 0) {
+          deferTapRequest(input, cooldownLeft)
+          return
+        }
       }
-    }, TAP_INTERACTION_HOLD_MS)
-  }
-
-  /** 读取长状态 AI 节奏配置（缺省/非法值保留当前值）。 */
-  function applyLongAiConfig(cfg: Partial<PetStateView['config']>): void {
-    const num = (value: unknown, fallback: number): number =>
-      typeof value === 'number' && Number.isFinite(value) ? value : fallback
-    thinkingAiDelay = num(cfg.thinkingAiDelay, thinkingAiDelay)
-    thinkingAiInterval = num(cfg.thinkingAiInterval, thinkingAiInterval)
-    thinkingAiMax = num(cfg.thinkingAiMax, thinkingAiMax)
-    waitingAiDelay = num(cfg.waitingAiDelay, waitingAiDelay)
-    waitingAiInterval = num(cfg.waitingAiInterval, waitingAiInterval)
-    waitingAiMax = num(cfg.waitingAiMax, waitingAiMax)
-  }
-
-  /** 长状态的 AI 演绎节奏（秒 → ms）；取自 SSE config，越界值按默认兜底。 */
-  function longAiCadence(state: LongState): { delay: number; interval: number; max: number } {
-    const delay = state === 'thinking' ? thinkingAiDelay : waitingAiDelay
-    const interval = state === 'thinking' ? thinkingAiInterval : waitingAiInterval
-    const max = state === 'thinking' ? thinkingAiMax : waitingAiMax
-    return {
-      delay: Math.max(0, delay),
-      interval: Math.max(1, interval),
-      max: Math.max(0, Math.round(max)),
+      void startTurn(input)
+      return
     }
-  }
-
-  /**
-   * 进入长状态（ADR-026）：入态台词常驻，之后按设置节奏让 AI 反复演绎同一状态——
-   * 第一次等 `delay` 秒，之后每 `interval` 秒一次，最多 `max` 次；出态即停。
-   */
-  function enterLongState(state: LongState, hint: string | undefined): void {
-    clearLongState()
-    longState = state
-    // 全 AI 接管：预置对白整段不出（连常驻底稿也留空），气泡只等模型那句。
-    // 例外：开了「仅触摸」时状态事件根本不会问模型（下面直接 return），死守接管等于让状态彻底哑掉，
-    // 所以此时固定台词照旧显示（ADR-031 修订）。
-    const takeover = aiTakeover && aiEnabled && !aiTouchOnly
-    bubbleStickyText = takeover ? null : hint ?? null
-    if (bubbleStickyText === null) hideBubble()
-    else showStickyText()
-    if (!aiEnabled || aiTouchOnly) return
-    const cadence = longAiCadence(state)
-    if (cadence.max <= 0) return
-    let attempts = 0
-    const tick = (): void => {
-      if (longState !== state) return
-      attempts += 1
-      void requestSpeak({ kind: 'state', state, hint: takeover ? undefined : hint }, { sticky: true })
-      if (attempts < cadence.max) {
-        longAiTimers.push(window.setTimeout(tick, cadence.interval * 1000))
+    // 事件类：idle 状态本身不是触发（静默超时另行处理）
+    if (input.kind === 'event') {
+      if (input.event !== undefined && !eventTriggerEnabled(input.event)) return
+      if (!eventIntervalPassed()) return
+      lastEventTriggerAt = Date.now()
+      scheduleIdleTimer()
+      if (triggerMode === 'queue' && speakingTurnActive) {
+        // 排队等完成：只留最新一条
+        pendingTrigger = input
+        return
       }
+      void startTurn(input)
     }
-    // 接管模式下「延迟」不生效：入态立刻问模型（设置页对应输入框会置灰）
-    longAiTimers.push(window.setTimeout(tick, takeover ? 0 : cadence.delay * 1000))
+  }
+
+  /** interrupt 模式开新轮：作废旧轮的 SSE 结果与音频。 */
+  function startTurn(input: TriggerBody): Promise<string | null> {
+    // 触发期间攒下的其他事件：并进这轮场景（「这期间还发生了：…」）
+    if (pendingTrigger !== null && pendingTrigger.kind === 'event') {
+      const extra = pendingTrigger.event
+      if (extra !== undefined && extra !== input.event) {
+        input = { ...input, merged: [...(input.merged ?? []), extra] }
+      }
+      pendingTrigger = null
+    }
+    if (triggerMode === 'interrupt') {
+      stopSpeaking()
+      speakSeq += 1
+    }
+    speakingTurnActive = true
+    // 轮次真正结束（语音播完或一次性回复返回）才解锁；queue 模式随即补发攒下的下一条
+    return requestSpeak(input).finally(() => {
+      speakingTurnActive = false
+      if (triggerMode === 'queue' && pendingTrigger !== null && aiEnabled) {
+        const next = pendingTrigger
+        pendingTrigger = null
+        void startTurn(next)
+      }
+    })
   }
 
   /** canvas 的视口 rect 缓存：pointermove 每次都要用，不能每次读布局。 */
@@ -1370,21 +1264,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     return false
   }
 
-  /**
-   * 播放状态动作：取该事件绑定的动作组随机打乱后逐个尝试；空数组 → 不播动作（spec §3）。
-   * 状态动作会取代正在播放的互动/旧状态动作。
-   */
-  function playState(state: PetState): void {
-    if (!model) return
-    const motion = splitMotionSelection(eventBindings[state]?.motions ?? []).motion
-    if (!motion) return
-    const names = [motion]
-    interactionGen += 1
-    interactionActive = false
-    const priority = state === 'idle' ? MotionPriority.IDLE : MotionPriority.FORCE
-    void startMotionWithPriority(names, priority, { suppressFocus: state !== 'idle', isInteraction: false })
-  }
-
   /** 待机小动作调度：一次只挂一个 setTimeout（不轮询、空闲无开销），
    * 触发时只有「确实是 idle、没在互动/预览、页面可见」才播，否则延后重试。 */
   function clearIdleMicro(): void {
@@ -1406,7 +1285,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   function playIdleMicro(): void {
     if (!model || !idleMotionEnabled) return
-    const busy = previewActive || tapActive() || longState !== null || interactionActive
+    const busy = previewActive || interactionActive
     if (busy || lastState !== 'idle' || document.visibilityState === 'hidden') {
       scheduleIdleMicro(IDLE_MICRO_RETRY_MS)
       return
@@ -1434,8 +1313,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       releaseFocusSuppression()
       // debug 原生预览结束后只恢复 focus，不触发状态动作恢复
       if (wasPreview) return
-      if (wasInteraction && gen === interactionGen && !interactionActive && lastState) {
-        playState(lastState)
+      // 互动动作结束后回到 idle 循环（ADR-037：状态动作已由 AI tags 驱动，无固定恢复目标）
+      if (wasInteraction && gen === interactionGen && !interactionActive && lastState === 'idle') {
+        void startMotionWithPriority(['Idle'], MotionPriority.IDLE, { suppressFocus: false, isInteraction: false })
       }
     })
   }
@@ -1443,94 +1323,31 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 上一次应用过的快照签名（display + config）：一致就跳过整段 applyConfig。 */
   let viewSignature = ''
 
-  /** 活动提示（ADR-036）→ 复用现有动作组，避免为每个事件再生成一份动作资源。 */
-  const ACTIVITY_MOTIONS: Record<string, string> = {
-    'tool-read': 'Glance',
-    'tool-write': 'Perk',
-    'tool-run': 'Shift',
-    'tool-agent': 'Nod',
-    'tool-other': 'Tilt',
-    'approval-granted': 'Nod',
-    'approval-denied': 'ShakeHead',
-    'session-open': 'Perk',
-    'session-close': 'Sigh',
-    'subagent-start': 'Glance',
-    'subagent-end': 'Nod',
-  }
   /** 已播过的活动序号：SSE 每帧都带同一个 activity，靠它去重（不重复播）。 */
   let lastActivitySeq = 0
 
   /**
-   * 播一次性活动动作（工具执行 / 审批结果 / 会话开关 / 子代理进出）。
-   * 用 NORMAL 优先级：不压状态动作、更不压触摸的 FORCE；调试预览与拖拽中不播。
+   * 一次性活动（工具执行 / 审批结果 / 会话开关 / 子代理进出，ADR-036）→
+   * ADR-037 起只作为「触发场景」交给 AI：动作/表情/台词全由模型选，本函数只去重 + 触发。
    */
   function applyActivity(activity: { seq: number; kind: string } | null | undefined): void {
     if (!activity || typeof activity.seq !== 'number') return
     if (activity.seq <= lastActivitySeq) return
     lastActivitySeq = activity.seq
-    const kind = activity.kind as PetEventKey
-    // 活动事件和状态事件共用事件绑定（动作 / 表情 / 台词池 / AI 演绎，ADR-036）
-    const binding = eventBindings[kind]
-    const selection = splitMotionSelection(binding?.motions ?? [])
-    const takeover = aiTakeover && aiEnabled && !aiTouchOnly
-    const line = pickEventLine(kind, 0)
-    // 台词与 AI 演绎不依赖模型是否就绪：模型还没加载好也要能说话
-    clientLog('info', `activity | ${kind} | ${line ?? ''}`)
-    if (!takeover && line) showBubble(line)
-    void requestSpeak({ kind: 'state', state: kind, hint: takeover ? undefined : line })
-    // 动作 / 表情只有模型在场时才播（预览态、拖拽中、隐藏时不抢动作）
-    if (!model || dragging || previewActive || hidden) return
-    const motion = selection.motion ?? ACTIVITY_MOTIONS[activity.kind]
-    if (motion) {
-      void startMotionWithPriority([motion], MotionPriority.NORMAL, { suppressFocus: true, isInteraction: false })
-    }
-    if (selection.expressions.length > 0) {
-      tempExpressions = selection.expressions
-      tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
-      refreshExpressionTargets()
-    }
+    clientLog('info', `activity | ${activity.kind}`)
+    fireTrigger({ kind: 'event', event: activity.kind })
   }
 
   function applyState(next: PetStateView | null): void {
     const state = demoState ?? next?.state ?? 'idle'
     applyActivity(next?.activity)
-    // 状态变化时播状态气泡与状态动作（spec §3）：长状态（思考/等审批）走
-    // 阶段演进常驻气泡，短状态气泡瞬态显示；点击互动另走 handleTap（可连点打断）。
-    // 动作只在状态变化（及长状态阶段推进）时触发；startMotionWithPriority 会先
-    // stopAllMotions 再按优先级启动，保证状态动作可立即切换、阶段可重播。
-    // 台词/动作均来自事件绑定（config.events），无固定人设、无默认回退。
+    // 状态变化（ADR-037）：动作/表情/台词全部交给 AI——这里只把状态当作触发场景。
+    // idle 不是触发；静默超时由 scheduleIdleTimer 单独兜底。
     if (state !== lastState) {
       lastState = state
-      refreshExpressionTargets()
-      // 打断优先级（ADR-032）：互相打断 = 状态一变立刻收回触摸窗口；触摸优先 = 窗口内
-      // 事件不抢气泡/动作/AI 演绎，只在窗口结束后把控制权交还；事件优先 = 照旧。
-      if (interactionMode === 'mutual') clearTapHold()
-      const touchHolding = interactionMode === 'touch-first' && tapActive()
-      const line = pickEventLine(state, 0)
-      if (isLongState(state)) {
-        if (touchHolding) {
-          // 触摸优先：先记住长状态，入态台词与演绎推迟到窗口结束（beginTapHold 的收尾）
-          clearLongState()
-          longState = state
-        } else {
-          // 长状态：入态台词常驻，AI 按设置节奏反复演绎替换（ADR-026）
-          enterLongState(state, line)
-        }
-      } else {
-        clearLongState()
-        // 全 AI 接管：预置对白不显示，气泡留给模型（失败也不回落到固定台词）。
-        // 同 enterLongState：开了「仅触摸」就不接管，否则状态事件会一句台词都没有。
-        const takeover = aiTakeover && aiEnabled && !aiTouchOnly
-        if (touchHolding) {
-          // 触摸优先：短状态不抢正在显示的触摸台词，也不另发一次状态请求
-        } else if (takeover) hideBubble()
-        else if (line !== undefined) showBubble(line)
-        else hideBubble()
-        if (state !== 'idle' && !touchHolding) {
-          void requestSpeak({ kind: 'state', state, hint: takeover ? undefined : line })
-        }
+      if (state !== 'idle') {
+        fireTrigger({ kind: 'event', event: state })
       }
-      if (!touchHolding) playState(state)
     }
     if (debugTextEl) {
       debugTextEl.textContent =
@@ -1847,7 +1664,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (!(baseModelW > 0 && baseModelH > 0)) {
         try { app.ticker.addOnce(() => fitModel(pos.size)) } catch { /* 首帧适配 */ }
       }
-      if (lastState) playState(lastState)
+      // 模型（重）加载后回到 idle 循环（ADR-037：状态动作已由 AI tags 驱动）
+      if (model) void startMotionWithPriority(['Idle'], MotionPriority.IDLE, { suppressFocus: false, isInteraction: false })
       // 触摸部位叠加层：编辑态/开发者选项开启时启动重绘循环（spec §4）
       syncTouchboxOverlay()
       // 命中层：按当前部位 box 建立透明命中 div，并开始逐帧跟随模型包围盒
@@ -2428,10 +2246,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 当前应显示的表情 id 列表：调试预览 > 触摸临时表情 > 当前事件绑定（spec §5）。 */
+  /** 当前应显示的表情 id 列表（ADR-037）：调试预览 > AI 标签表情；无则空（默认脸）。 */
   function desiredExpressions(): string[] {
-    // 情绪/触摸带来的临时表情优先级最高：调试面板停在上一次选择里时，
-    // 不能让「预览」把真实表情吃掉（否则 AI 选了表情画面不动）。
     if (tempExpressions.length > 0) {
       if (Date.now() < tempExpressionUntil) return tempExpressions
       tempExpressions = []
@@ -2440,8 +2256,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const id = normalizeExpressionId(debugExpression)
       return id === 'none' ? [] : [id]
     }
-    if (!lastState) return []
-    return splitMotionSelection(eventBindings[lastState]?.motions ?? []).expressions
+    return []
   }
 
   /** 表情目标值缓存：只在表情/状态真的变化时重算（此前每帧重新映射 + 分配对象）。 */
@@ -2583,16 +2398,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 开关：显示/隐藏 + 暂停/恢复渲染循环（syncPetVisibility 合并编辑态/隐藏/失焦，spec §7）
     enabled = cfg.enabled
     syncPetVisibility()
-    // 事件绑定：随当前模型解析结果热更新（动作组 + 台词池，spec §3）；内容变化时
-    // 若正处于长状态且未拖拽，立刻刷新当前阶段文案（不打断阶段计时节奏）。
-    // 先于调试面板/状态应用更新，保证首次 applyState 用到的就是最新绑定。
-    const nextEvents = cfg.events ?? DEFAULT_EVENT_BINDINGS
-    const eventsSignature = JSON.stringify(nextEvents)
-    if (eventsSignature !== eventBindingsSignature) {
-      eventBindings = nextEvents
-      eventBindingsSignature = eventsSignature
-      if (longState !== null && !dragging) showStickyText()
-    }
     // 调试面板 + 触摸部位色块（开发者选项，互不强制绑定；编辑态强制显示，spec §2/§4）
     ensureDebugPanel(cfg.debug)
     showTapZones = !!cfg.showTapZones
@@ -2640,8 +2445,20 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       ? cfg.bubbleTextColor
       : DEFAULT_BUBBLE_TEXT_COLOR
     aiEnabled = cfg.aiEnabled === true
-    aiTouchOnly = cfg.aiTouchOnly === true
-    aiTakeover = cfg.aiTakeover === true
+    const nextTriggerMode = normalizeTriggerMode(cfg.triggerMode, triggerMode)
+    const nextMinInterval = Number.isFinite(cfg.aiMinIntervalSec) ? cfg.aiMinIntervalSec! : aiMinIntervalSec
+    const nextIdleTimeout = Number.isFinite(cfg.idleTimeoutSec) ? cfg.idleTimeoutSec! : idleTimeoutSec
+    const nextTriggers = (cfg.eventTriggers && typeof cfg.eventTriggers === 'object')
+      ? cfg.eventTriggers
+      : eventTriggers
+    const scheduleChanged = nextTriggerMode !== triggerMode
+      || nextMinInterval !== aiMinIntervalSec
+      || nextIdleTimeout !== idleTimeoutSec
+    triggerMode = nextTriggerMode
+    aiMinIntervalSec = Math.max(0, nextMinInterval)
+    idleTimeoutSec = Math.max(0, nextIdleTimeout)
+    eventTriggers = nextTriggers
+    if (scheduleChanged) scheduleIdleTimer()
     idleMotionEnabled = cfg.idleMotionEnabled !== false
     scheduleIdleMicro()
     ttsEnabled = cfg.ttsEnabled !== false
@@ -2657,8 +2474,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     bodyLanguageEnabled = cfg.lipsyncEnabled !== false
     lipsyncGain = Number.isFinite(cfg.lipsyncGain) ? cfg.lipsyncGain! : DEFAULT_SETTINGS.lipsyncGain
     focusRangePct = normalizeFocusRange(cfg.focusRange, DEFAULT_SETTINGS.focusRange)
-    interactionMode = normalizeInteractionMode(cfg.interactionMode, interactionMode)
-    applyLongAiConfig(cfg)
     applyBubbleMaxConfig(cfg)
     applyBubbleStyle()
     syncDebugPanelWidth()
@@ -2673,6 +2488,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function handlePointerDown(e: PointerEvent): void {
     down = { x: e.clientX, y: e.clientY, startRight: pos.right, startBottom: pos.bottom }
     dragging = false
+    tapDownAt = Date.now()
     // 捕获到命中 div 本身（canvas 已 pointer-events:none，不能作为捕获目标）
     const target = e.currentTarget as HTMLElement | null
     target?.setPointerCapture?.(e.pointerId)
@@ -2706,8 +2522,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       handleTap(e)
     } else if (dragging) {
       api.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {})
-      // 拖拽中隐藏的常驻气泡恢复当前文案（spec §4：拖拽中暂停、结束恢复）
-      showStickyText()
     }
     down = null
     dragging = false
@@ -2734,67 +2548,35 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /**
-   * AI 回复（ADR-025）：Host 生成一句台词后替换气泡；失败/超时保持预置台词不动。
-   * 连点时只采用最新一次请求的结果（`aiRequestSeq`）。
+   * 一次性 AI 回复（ADR-025/037）：/interact 拿一句台词 + 动作/表情标签。
+   * 由 startTurn 统一调度（触发过滤/冷却/合并都在那边）；本函数只负责发请求与落地结果。
    */
-  async function requestAiReply(
-    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string; tz?: string },
-    options?: { sticky?: boolean; ignoreCooldown?: boolean },
-  ): Promise<string | null> {
-    if (!aiEnabled) return null
-    // 仅触摸：状态变化只用预置台词，不打扰模型（状态切换往往只有几百毫秒）
-    if (aiTouchOnly && input.kind === 'state') return null
-    // 触摸优先/互相打断：触摸保持窗口内不让状态类演绎抢气泡（ADR-032）
-    if (input.kind === 'state' && interactionMode !== 'event-first' && tapActive()) return null
-    // 冷却内不发（Host 会直接回 cooldown），否则白白作废上一条还在说的台词
-    if (!options?.ignoreCooldown && aiCooldownLeft() > 0) return null
-    lastAiRequestAt = Date.now()
+  async function requestAiReply(input: TriggerBody): Promise<string | null> {
     const seq = ++aiRequestSeq
-    const targetState = input.state
     try {
       const result = await api.interact(input)
       if (seq !== aiRequestSeq) return null
-      // 状态类回复：期间状态又变了就丢弃（新状态会自己发请求），否则这句会盖在新状态的气泡上
-      if (targetState !== undefined && targetState !== lastState) return null
       if (!result.ok || !result.text) return null
-      applyEmotion(result.emotion)
-      // 长状态下 AI 那句成为新的常驻底稿，2.5s 后回落时显示的就是它
-      if (options?.sticky) bubbleStickyText = result.text
+      applyTags(result.expressions, result.motions)
       showAiBubble(result.text)
       return result.text
     } catch {
-      // 忽略：保留预置台词（无网络/模型不可用时的降级路径）
+      // AI 失败 = 完全静默（ADR-037 决策）：不出气泡不播动作
       return null
     }
   }
 
   /**
-   * 流式演绎（ADR-033）：/speak 同时给出文本段与音频段，气泡按「音频播到第几段」逐段显示，
-   * 口型吃同一段音频的波形。语音关闭或一句都没出来时回落到一次性的 {@link requestAiReply}。
+   * 流式演绎（ADR-033/037）：/speak 下发 text/clause/audio/tags/memory/done/error。
+   * 气泡按「音频播到第几段」逐段显示，口型吃同一段音频的波形，tags 立刻换表情/动作。
+   * 由 startTurn 统一调度；语音关闭时回落到一次性回复。
    */
-  async function requestSpeak(
-    rawInput: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
-    options?: { sticky?: boolean },
-  ): Promise<string | null> {
-    // 每个请求都带上浏览器时区，Host 用它换算「现在几点」
-    const input = CLIENT_TIME_ZONE ? { ...rawInput, tz: CLIENT_TIME_ZONE } : rawInput
-    if (!aiEnabled) return null
-    if (aiTouchOnly && input.kind === 'state') return null
-    if (input.kind === 'state' && interactionMode !== 'event-first' && tapActive()) return null
-    // 冷却内直接返回：**不能**先 stopSpeaking() 再发请求，那会把上一条说了一半的台词掐掉
-    if (aiCooldownLeft() > 0) return null
-    // 语音关掉：走一次性回复（少一条长连接，行为与 ADR-025 完全一致）
-    if (!ttsEnabled) {
-      lastAiRequestAt = Date.now()
-      return requestAiReply(input, { ...options, ignoreCooldown: true })
-    }
-    lastAiRequestAt = Date.now()
+  async function requestSpeak(input: TriggerBody): Promise<string | null> {
+    const withTz = CLIENT_TIME_ZONE ? { ...input, tz: CLIENT_TIME_ZONE } : input
+    if (!ttsEnabled) return requestAiReply(withTz)
     const seq = ++speakSeq
-    // 新的一轮先掐掉上一轮的播放与合成
-    stopSpeaking()
     // 作废可能在飞的 /interact 结果，避免两句台词抢同一个气泡
     aiRequestSeq += 1
-    const targetState = input.state
     const controller = new AbortController()
     speakAbort = controller
     speakClauses = []
@@ -2803,7 +2585,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     let finalText: string | null = null
     let sawClause = false
     try {
-      await api.speak(input, (event, data) => {
+      await api.speak(withTz, (event, data) => {
         if (seq !== speakSeq) return
         if (event === 'clause') {
           const item = data as { index?: unknown; text?: unknown }
@@ -2825,9 +2607,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           })
           return
         }
-        if (event === 'emotion') {
-          const payload = data as { emotion?: unknown }
-          applyEmotion(payload.emotion)
+        if (event === 'tags') {
+          const payload = data as { expressions?: unknown; motions?: unknown }
+          applyTags(payload.expressions, payload.motions)
+          return
+        }
+        if (event === 'memory') {
+          // 记忆行由 Host 落盘 memory.md（ADR-037）；客户端只记日志
+          const payload = data as { note?: unknown }
+          clientLog('info', 'memory noted', typeof payload.note === 'string' ? payload.note : '')
           return
         }
         if (event === 'done') {
@@ -2836,44 +2624,53 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           return
         }
         if (event === 'error') {
-          // 交给下面的兜底判断：一句都没有就回落一次性回复
+          // 交给下面的兜底判断：一句都没有就完全静默
           return
         }
       }, controller.signal)
     } catch {
-      // 连接失败/中止：同样走兜底
+      // 连接失败/中止：同样静默
     }
     if (seq !== speakSeq) return null
     await speakChain.catch(() => undefined)
     if (seq !== speakSeq) return null
-    if (targetState !== undefined && targetState !== lastState) return null
     if (!sawClause && finalText === null) {
-      // 禁用/冷却/失败/零文本：与改造前一致，回落一次性回复（冷却已在上方可判，这里强制放行）
-      return requestAiReply(input, { ...options, ignoreCooldown: true })
+      // 失败/零文本 = 完全静默（ADR-037）：不回落固定台词（已不存在）
+      return null
     }
     // 合成失败被跳过的段也要补上文字
     revealAllClauses()
     if (finalText !== null) {
-      if (options?.sticky) bubbleStickyText = finalText
       showAiBubble(finalText)
       return finalText
     }
     return null
   }
 
-  /** AI 情绪标签落地：临时切到对应表情（到期回落到事件表情）。 */
-  function applyEmotion(emotion: unknown): void {
-    if (typeof emotion !== 'string' || emotion.length === 0) return
-    const list = EMOTION_EXPRESSIONS[emotion]
-    if (!list || list.length === 0) return
-    tempExpressions = [...list]
-    tempExpressionUntil = Date.now() + EMOTION_HOLD_MS
-    // 真实表情优先：清掉调试面板残留的预览选择，免得把情绪挡掉
+  /**
+   * AI 标签落地（ADR-037）：`[表情][动作]` 目录标签 → 临时表情 + 一次动作。
+   * 目录外的 id 直接忽略（不让模型幻觉参数写进渲染层）；为空则什么都不做。
+   */
+  function applyTags(expressions: unknown, motions: unknown): void {
+    // 真实表情优先：清掉调试面板残留的预览选择，免得把 AI 表情挡掉
     debugExpression = null
-    repaintDebugExpressions?.()
-    clientLog('info', 'emotion', `${String(emotion)} → ${list.join('+')}`)
-    refreshExpressionTargets()
-    clientLog('info', 'emotion applied', `${list.join('+')} → ${JSON.stringify(expressionTargets)}`)
+    const list = Array.isArray(expressions)
+      ? expressions.filter((item): item is string => typeof item === 'string' && isExpressionId(item))
+      : []
+    if (list.length > 0) {
+      tempExpressions = [...list]
+      tempExpressionUntil = Date.now() + TAG_EXPRESSION_HOLD_MS
+      repaintDebugExpressions?.()
+      clientLog('info', 'ai expressions', list.join('+'))
+      refreshExpressionTargets()
+    }
+    const motionList = Array.isArray(motions)
+      ? motions.filter((item): item is string => typeof item === 'string' && isMotionId(item))
+      : []
+    if (motionList.length > 0 && model && !dragging && !previewActive && !hidden) {
+      clientLog('info', 'ai motions', motionList.join('+'))
+      void playInteractionMotion(motionList)
+    }
   }
 
   function handleTap(e: PointerEvent): void {
@@ -2897,36 +2694,17 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 命中最小 box 优先。
       const part = hitTestTouchParts(editState?.parts ?? touchParts, ratio.nx, ratio.ny)
       if (!part) return
-      // 触摸接管窗口（ADR-032）：先占住气泡/动作，再决定台词与 AI
-      beginTapHold()
-      // 台词：该部位自定义台词（part.lines）非空时随机选一条，并避开该部位上一条
-      // （按 part.id 记录，部位间互不干扰）；未配置台词 → 不显示气泡，只播部位动作（spec §4）。
-      let spoken: string | undefined
-      // 全 AI 接管：部位预置台词不显示也不作为 hint，完全交给模型（persona + 场景 + 历史）
-      const takeover = aiTakeover && aiEnabled
-      if (!takeover && part.lines && part.lines.length > 0) {
-        const line = pickLine(part.lines, lastPartLine.get(part.id))
-        if (line !== undefined) {
-          lastPartLine.set(part.id, line)
-          showBubble(line)
-          spoken = line
-        }
+      // 触摸类型（ADR-037）：按压时长决定 轻碰(<250ms) / 戳戳(250–900ms) / 抚摸(≥900ms)。
+      const durationMs = tapDownAt > 0 ? Math.max(0, now - tapDownAt) : 0
+      const input: TriggerBody = {
+        kind: 'tap',
+        part: part.name,
+        tapKind: touchKindOf(durationMs),
+        durationMs,
       }
-      // AI 回复（ADR-025/033）：预置台词先出、AI 台词到了再替换（失败即保持预置台词）。
-      // 冷却期内的点击不丢弃——记下最后一下，冷却结束补发；期间上一条台词继续播完。
-      const tapHint = takeover ? undefined : spoken
-      const cooldownLeft = aiEnabled ? aiCooldownLeft() : 0
-      if (cooldownLeft > 0) deferTapRequest({ part: part.name, hint: tapHint }, cooldownLeft)
-      else void requestSpeak({ kind: 'tap', part: part.name, hint: tapHint })
-      // 动作组 / 表情：部位混选里 1 个动作组 + 若干表情；表情短暂切过去（EXPRESSION_TEMP_MS 后回落到事件表情）
-      const selection = splitMotionSelection(part.motions)
-      if (selection.expressions.length > 0) {
-        tempExpressions = selection.expressions
-        tempExpressionUntil = Date.now() + EXPRESSION_TEMP_MS
-        refreshExpressionTargets()
-      }
-      // 动作：有动作组才播（空 = 只出气泡，spec §4）
-      if (selection.motion) void playInteractionMotion([selection.motion])
+      clientLog('info', `tap | ${part.name} | ${input.tapKind} ${durationMs}ms`)
+      // 触摸必触发（不受事件开关/最小间隔限制），冷却由 fireTrigger 内部处理
+      fireTrigger(input)
     } catch {
       // 命中检测异常：忽略本次点击
     }
@@ -2971,8 +2749,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           ? view.config.bubbleTextColor
           : DEFAULT_BUBBLE_TEXT_COLOR
         aiEnabled = view.config.aiEnabled === true
-        aiTouchOnly = view.config.aiTouchOnly === true
-        aiTakeover = view.config.aiTakeover === true
+        triggerMode = normalizeTriggerMode(view.config.triggerMode, triggerMode)
+        aiMinIntervalSec = Number.isFinite(view.config.aiMinIntervalSec) ? Math.max(0, view.config.aiMinIntervalSec!) : aiMinIntervalSec
+        idleTimeoutSec = Number.isFinite(view.config.idleTimeoutSec) ? Math.max(0, view.config.idleTimeoutSec!) : idleTimeoutSec
+        eventTriggers = (view.config.eventTriggers && typeof view.config.eventTriggers === 'object')
+          ? view.config.eventTriggers
+          : eventTriggers
         idleMotionEnabled = view.config.idleMotionEnabled !== false
         scheduleIdleMicro()
         ttsEnabled = view.config.ttsEnabled !== false
@@ -2986,8 +2768,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           ? view.config.lipsyncGain!
           : DEFAULT_SETTINGS.lipsyncGain
         focusRangePct = normalizeFocusRange(view.config.focusRange, DEFAULT_SETTINGS.focusRange)
-        interactionMode = normalizeInteractionMode(view.config.interactionMode, interactionMode)
-        applyLongAiConfig(view.config)
+        scheduleIdleTimer()
         applyBubbleMaxConfig(view.config)
       }
       clientLog('info', `state ready: model=${view?.config.model ?? '?'} url=${view?.config.modelUrl ?? 'none'}`)

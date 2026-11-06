@@ -9,6 +9,7 @@ import { makePetRoutes, PET_API_PREFIX, PET_ASSET_PREFIX } from './routes.ts'
 import { PetService } from './service.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 import type { PetSettings } from './settings-store.ts'
+import { defaultEventTriggers } from './defaults.ts'
 
 /** 伪 IncomingMessage：EventEmitter + method/headers/url；body 在微任务中按 chunk 吐出。 */
 type FakeReq = EventEmitter & { method: string; headers: Record<string, string>; url: string }
@@ -62,21 +63,18 @@ const BASE_SETTINGS: PetSettings = {
   bubbleTextColor: '#222222',
   bubbleMaxSeconds: 30,
   aiEnabled: false,
-  aiTouchOnly: false,
-  aiTakeover: false,
   idleMotionEnabled: true,
-  interactionMode: 'touch-first',
   barPosition: 'bottom',
   barOffset: 0,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,
-  thinkingAiDelay: 3,
-  thinkingAiInterval: 20,
-  thinkingAiMax: 3,
-  waitingAiDelay: 4,
-  waitingAiInterval: 30,
-  waitingAiMax: 3,
+  aiMemoryCount: 20,
+  triggerMode: 'interrupt',
+  aiMinIntervalSec: 3,
+  idleTimeoutSec: 300,
+  activityWindowSec: 3,
+  eventTriggers: defaultEventTriggers(),
   ttsEnabled: true,
   ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
@@ -87,7 +85,7 @@ const BASE_SETTINGS: PetSettings = {
 }
 
 function makeRoutes(
-  ai?: { reply: (input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }) => Promise<{ ok: boolean; text?: string; error?: string }> },
+  ai?: { reply: (input: { kind: 'tap' | 'event' | 'chat' | 'idle'; part?: string; tapKind?: 'light' | 'poke' | 'stroke'; durationMs?: number; event?: string; text?: string; tz?: string; merged?: string[] }) => Promise<{ ok: boolean; text?: string; expressions?: string[]; motions?: string[]; memory?: string; error?: string }> },
   aiSettings?: {
     options: () => Promise<{ providers: { id: string; name: string }[]; models: Record<string, { id: string; name: string }[]> }>
     readPersona: () => { text: string; path: string }
@@ -156,18 +154,20 @@ describe('makePetRoutes API 路由', () => {
   })
 
 
-  it('POST /interact 把部位/状态转给 AI 并返回台词', async () => {
-    const reply = vi.fn(async () => ({ ok: true, text: '别戳啦…' }))
+  it('POST /interact 把触发场景转给 AI 并返回台词/标签（ADR-037）', async () => {
+    const reply = vi.fn(async () => ({ ok: true, text: '别戳啦…', expressions: ['blush'], motions: ['Tilt'], memory: '主人爱戳' }))
     const { route, cleanup } = makeRoutes({ reply })
     const res = fakeRes()
     await route(`${PET_API_PREFIX}/interact`)!.handler(
-      fakeReq('POST', JSON.stringify({ kind: 'tap', part: '胸', hint: '呀！那里不能戳啦…' })),
+      fakeReq('POST', JSON.stringify({ kind: 'tap', part: '胸', tapKind: 'poke', durationMs: 420 })),
       res as never,
     )
     await flush()
     expect(res.state.status).toBe(200)
-    expect(JSON.parse(res.state.body.toString('utf8'))).toEqual({ ok: true, text: '别戳啦…' })
-    expect(reply).toHaveBeenCalledWith({ kind: 'tap', part: '胸', state: undefined, hint: '呀！那里不能戳啦…' })
+    expect(JSON.parse(res.state.body.toString('utf8'))).toEqual({
+      ok: true, text: '别戳啦…', expressions: ['blush'], motions: ['Tilt'], memory: '主人爱戳',
+    })
+    expect(reply).toHaveBeenCalledWith({ kind: 'tap', part: '胸', tapKind: 'poke', durationMs: 420 })
     cleanup()
   })
 
@@ -247,13 +247,15 @@ describe('makePetRoutes API 路由', () => {
     expect(body.model).toBe('jian')
     expect(body.saved).toBe(false)
     expect(body.parts.length).toBe(10)
-    // 事件绑定（当前模型生效值，供设置页初始化）
-    expect(body.events.idle.motions).toEqual(['Idle'])
-    expect(body.events.thinking.lines.length).toBe(1)
+    // ADR-037：不再返回 events 绑定
+    expect(body.events).toBeUndefined()
+    for (const part of body.parts) {
+      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'name'])
+    }
     cleanup()
   })
 
-  it('POST /touch-parts 保存部位并被 GET 读回', async () => {
+  it('POST /touch-parts 保存部位并被 GET 读回（旧 motions 被剥掉）', async () => {
     const { route, cleanup } = makeRoutes()
     const parts = [{ id: 'p1', name: '手', boxes: [{ left: 0.1, top: 0.1, right: 0.4, bottom: 0.5 }], motions: ['TapHead'] }]
     const post = fakeRes()
@@ -267,29 +269,7 @@ describe('makePetRoutes API 路由', () => {
     await flush()
     const body = JSON.parse(get.state.body.toString('utf8'))
     expect(body.saved).toBe(true)
-    expect(body.parts).toEqual(parts)
-    cleanup()
-  })
-
-  it('POST /touch-parts 可同时保存事件绑定覆盖（动画 + 台词）', async () => {
-    const { route, cleanup } = makeRoutes()
-    const post = fakeRes()
-    await route(`${PET_API_PREFIX}/touch-parts`)!.handler(
-      fakeReq('POST', JSON.stringify({
-        model: 'jian',
-        parts: [{ id: 'face', name: '脸', boxes: [{ left: 0.3, top: 0.4, right: 0.7, bottom: 0.7 }], motions: ['TapFace'] }],
-        events: { thinking: { motions: ['TapFace'], lines: [['想不出来…']] } },
-      })),
-      post as never,
-    )
-    expect(JSON.parse(post.state.body.toString('utf8')).ok).toBe(true)
-    const get = fakeRes()
-    route(`${PET_API_PREFIX}/touch-parts`)!.handler(fakeReq('GET'), get as never)
-    await flush()
-    const body = JSON.parse(get.state.body.toString('utf8'))
-    expect(body.parts[0].name).toBe('脸')
-    expect(body.events.thinking.motions).toEqual(['TapFace'])
-    expect(body.events.thinking.lines).toEqual([['想不出来…']])
+    expect(body.parts).toEqual([{ id: 'p1', name: '手', boxes: [{ left: 0.1, top: 0.1, right: 0.4, bottom: 0.5 }] }])
     cleanup()
   })
 

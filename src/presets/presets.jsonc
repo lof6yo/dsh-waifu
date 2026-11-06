@@ -1,11 +1,4 @@
 {
-  // 内置模型清单（只读，随包分发）。
-  // ⚠ 修改会随插件升级/重装被覆盖；本版不提供自定义模型。
-  // 字段说明：
-  //   - modelUrl   : .model3.json 地址。内置模型随包分发，走 Host 同源 /waifu-assets/models/<id>/ 路由
-  //   - animationMap: 事件 → 动作组名（当前模型只有 Idle 与原始 Scene1；未映射的事件不播动作）
-  //   - touchParts : 默认触摸部位（用户保存过自定义部位后以其为准，见 touch-parts.jsonc）
-  //   - 部位的 motions 是「动作组 / 表情」混选：最多 1 个动作组 + 1 个表情，同时触发（ADR-023）
   "version": 5,
   "presets": [
     {
@@ -19,91 +12,132 @@
       },
       "cubism": 4,
       "status": "bundled",
-      // 简的动作组（assets/models/jian/motions/：Idle/Nod/ShakeHead/Tilt/Sway；ADR-021）
-      // 事件默认挂载 = 动作组 + 表情混选（ADR-023）：思考=歪头、等待=左右晃、
-      // 出错=摇头+白眼+脸黑、完成=点头+星星眼、交付=歪头+星星眼。
-      "animationMap": {
-        "idle": ["Idle"],
-        "thinking": ["Tilt"],
-        "error": ["ShakeHead", "whites", "dark"],
-        "done": ["Nod", "star"],
-        "waiting": ["Sway"],
-        "delivered": ["Tilt", "star"]
-      },
-      // 默认触摸部位（按「简」实际渲染构图调好的取值，用户可在设置页覆盖/增删）。
-      // 脸部的 motions 里 "blush" 是表情 id（不是动作组）：摸脸 = 脸红的开关，ADR-023。
-      // 数组顺序 = 图层顺序（第 0 项最上层）：脸 > 头发 > 胸 > 私处 > 臀 > 腰 > 大腿 > 手 > 小腿 > 脚（spec §4）。
-      // 每个部位带示例台词（随机一条）；动作为空则只出气泡。
       "touchParts": [
         {
           "id": "face",
           "name": "脸",
-          "boxes": [{ "left": 0.38, "top": 0.11, "right": 0.6, "bottom": 0.2 }],
-          "motions": ["Tilt", "blush"],
-          "lines": ["干嘛捏脸啦~"]
+          "boxes": [
+            {
+              "left": 0.38,
+              "top": 0.11,
+              "right": 0.6,
+              "bottom": 0.2
+            }
+          ]
         },
         {
           "id": "head",
           "name": "头发",
-          "boxes": [{ "left": 0.34, "top": 0.06, "right": 0.66, "bottom": 0.2 }],
-          "motions": ["Nod", "blush"],
-          "lines": ["摸头…好舒服…"]
+          "boxes": [
+            {
+              "left": 0.34,
+              "top": 0.06,
+              "right": 0.66,
+              "bottom": 0.2
+            }
+          ]
         },
         {
           "id": "chest",
           "name": "胸",
-          "boxes": [{ "left": 0.26, "top": 0.22, "right": 0.64, "bottom": 0.32 }],
-          "motions": ["ShakeHead", "blush", "heart"],
-          "lines": ["喂，那里不能摸啦…"]
+          "boxes": [
+            {
+              "left": 0.26,
+              "top": 0.22,
+              "right": 0.64,
+              "bottom": 0.32
+            }
+          ]
         },
         {
           "id": "part-10",
           "name": "私处",
-          "boxes": [{ "left": 0.41, "top": 0.41, "right": 0.51, "bottom": 0.47 }],
-          "motions": ["ShakeHead", "blush", "tear"],
-          "lines": ["……"]
+          "boxes": [
+            {
+              "left": 0.41,
+              "top": 0.41,
+              "right": 0.51,
+              "bottom": 0.47
+            }
+          ]
         },
         {
           "id": "hip",
           "name": "臀",
-          "boxes": [{ "left": 0.27, "top": 0.39, "right": 0.68, "bottom": 0.48 }],
-          "motions": ["Sway", "blush", "heart"],
-          "lines": ["笨、笨蛋！"]
+          "boxes": [
+            {
+              "left": 0.27,
+              "top": 0.39,
+              "right": 0.68,
+              "bottom": 0.48
+            }
+          ]
         },
         {
           "id": "waist",
           "name": "腰",
-          "boxes": [{ "left": 0.31, "top": 0.32, "right": 0.6, "bottom": 0.39 }],
-          "motions": ["Sway", "heart", "blush"],
-          "lines": ["再摸我就躲到屏幕外面去…"]
+          "boxes": [
+            {
+              "left": 0.31,
+              "top": 0.32,
+              "right": 0.6,
+              "bottom": 0.39
+            }
+          ]
         },
         {
           "id": "thigh",
           "name": "大腿",
-          "boxes": [{ "left": 0.28, "top": 0.48, "right": 0.68, "bottom": 0.65 }],
-          "motions": ["Sway", "blush", "heart"],
-          "lines": ["再摸…就踢你了哦。"]
+          "boxes": [
+            {
+              "left": 0.28,
+              "top": 0.48,
+              "right": 0.68,
+              "bottom": 0.65
+            }
+          ]
         },
         {
           "id": "hand",
           "name": "手",
-          "boxes": [{ "left": 0.1, "top": 0.2, "right": 0.28, "bottom": 0.26 }, { "left": 0.65, "top": 0.45, "right": 0.78, "bottom": 0.53 }],
-          "motions": ["Nod", "blush", "star"],
-          "lines": ["要牵手？……那就一下。"]
+          "boxes": [
+            {
+              "left": 0.1,
+              "top": 0.2,
+              "right": 0.28,
+              "bottom": 0.26
+            },
+            {
+              "left": 0.65,
+              "top": 0.45,
+              "right": 0.78,
+              "bottom": 0.53
+            }
+          ]
         },
         {
           "id": "calf",
           "name": "小腿",
-          "boxes": [{ "left": 0.32, "top": 0.65, "right": 0.65, "bottom": 0.84 }],
-          "motions": ["Sway", "blush", "heart"],
-          "lines": ["再摸就站不住了啦…"]
+          "boxes": [
+            {
+              "left": 0.32,
+              "top": 0.65,
+              "right": 0.65,
+              "bottom": 0.84
+            }
+          ]
         },
         {
           "id": "foot",
           "name": "脚",
-          "boxes": [{ "left": 0.36, "top": 0.84, "right": 0.59, "bottom": 0.96 }],
-          "motions": ["ShakeHead", "whites"],
-          "lines": ["真的怕痒…快住手…"]
+          "boxes": [
+            {
+              "left": 0.36,
+              "top": 0.84,
+              "right": 0.59,
+              "bottom": 0.96
+            }
+          ]
         }
       ]
     }

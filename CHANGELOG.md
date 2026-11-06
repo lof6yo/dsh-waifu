@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **全 AI 驱动（ADR-037）**：彻底移除固定对白与手动动作/表情映射——事件绑定台词池、触摸部位台词、动作/表情多选、情绪标签映射、长状态多阶段台词全部删除；角色的台词、动作、表情、记忆一律由模型按「人设 + 场景 + 带时间戳历史 + 记忆 + 动作表情目录」即兴决定（输出 `[表情][动作] 正文`，另起 `[记]` 行写入 `$DSH_HOME/waifu/memory.md`）。触摸按住时长分三档（轻碰 <250ms / 戳戳 250–900ms / 抚摸 ≥900ms）作为场景；交互框对话与触摸必可触发，事件类触发按 16 个开关 + 最小间隔（默认 3s）+ 同类窗口（默认 3s，合并进下轮场景）；新触发可选「截断抢占 / 排队等说完」；静默超时（默认 5 分钟，0=关）让角色主动开口。设置文件版本升到 8，`aiTouchOnly` / `aiTakeover` / `interactionMode` / `thinking*` / `waiting*` 字段删除，新增 `aiMemoryCount` / `triggerMode` / `aiMinIntervalSec` / `idleTimeoutSec` / `activityWindowSec` / `eventTriggers`。**AI 失败时角色完全静默**（不回落固定台词）。设置页删除「事件绑定」组与部位台词/动作编辑，「AI 回复」改名「AI 驱动」并新增触发调度与记忆卡。
+
 ### Added
 
 - 修复：子代理的 turn 结束不再让宠物误庆祝「完成」（子代理会话 id 从 `subagent/start` 记录后过滤 `agent/status`、`agent/error`、`agent/turn-stopping`）。

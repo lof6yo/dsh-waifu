@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SettingsStore, normalizeSettings, SETTINGS_FILENAME, type PetSettings } from './settings-store.ts'
-import { DEFAULT_SETTINGS } from './defaults.ts'
+import { DEFAULT_SETTINGS, defaultEventTriggers, TRIGGER_EVENTS } from './defaults.ts'
 
 const BASE: PetSettings = {
   enabled: true,
@@ -24,21 +24,18 @@ const BASE: PetSettings = {
   bubbleTextColor: '#222222',
   bubbleMaxSeconds: 30,
   aiEnabled: false,
-  aiTouchOnly: false,
-  aiTakeover: false,
   idleMotionEnabled: true,
-  interactionMode: 'touch-first',
   barPosition: 'bottom',
   barOffset: 0,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,
-  thinkingAiDelay: 3,
-  thinkingAiInterval: 20,
-  thinkingAiMax: 3,
-  waitingAiDelay: 4,
-  waitingAiInterval: 30,
-  waitingAiMax: 3,
+  aiMemoryCount: 20,
+  triggerMode: 'interrupt',
+  aiMinIntervalSec: 3,
+  idleTimeoutSec: 300,
+  activityWindowSec: 3,
+  eventTriggers: defaultEventTriggers(),
   ttsEnabled: true,
   ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
@@ -106,6 +103,11 @@ describe('表情字段迁移（v4）', () => {
       exprAngry2: -5,
       exprCry: 33.6,
       exprEye: 'x',
+      // ADR-037 前的旧字段也一并忽略（结果里没有位置）
+      aiTouchOnly: true,
+      aiTakeover: true,
+      interactionMode: 'event-first',
+      thinkingAiDelay: 9,
     }, BASE)
     expect(value).toEqual({ ...BASE })
   })
@@ -126,13 +128,39 @@ describe('SettingsStore', () => {
     expect(readFileSync(store.path, 'utf8')).toContain('桌宠设置文件')
   })
 
-  it('aiTakeover 默认关、可写、非法值回落 false', () => {
+  it('触发节奏（ADR-037）：triggerMode 可写、非法值回落；最小间隔越界夹取', () => {
     const store = new SettingsStore(BASE)
-    expect(store.get().aiTakeover).toBe(false)
-    store.applyOps([{ op: 'set', path: ['aiTakeover'], value: true }])
-    expect(store.get().aiTakeover).toBe(true)
-    store.applyOps([{ op: 'set', path: ['aiTakeover'], value: 'yes' }])
-    expect(store.get().aiTakeover).toBe(false)
+    expect(store.get().triggerMode).toBe('interrupt')
+    store.applyOps([{ op: 'set', path: ['triggerMode'], value: 'queue' }])
+    expect(store.get().triggerMode).toBe('queue')
+    store.applyOps([{ op: 'set', path: ['triggerMode'], value: 'nonsense' }])
+    expect(store.get().triggerMode).toBe('interrupt')
+    store.applyOps([{ op: 'set', path: ['aiMinIntervalSec'], value: 999 }])
+    expect(store.get().aiMinIntervalSec).toBe(600)
+    store.applyOps([{ op: 'set', path: ['aiMinIntervalSec'], value: 'soon' }])
+    expect(store.get().aiMinIntervalSec).toBe(3)
+  })
+
+  it('静默超时与同类事件窗口可写、越界夹取（ADR-037）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().idleTimeoutSec).toBe(300)
+    store.applyOps([{ op: 'set', path: ['idleTimeoutSec'], value: 0 }])
+    expect(store.get().idleTimeoutSec).toBe(0)
+    store.applyOps([{ op: 'set', path: ['idleTimeoutSec'], value: 99999 }])
+    expect(store.get().idleTimeoutSec).toBe(3600)
+    store.applyOps([{ op: 'set', path: ['activityWindowSec'], value: 999 }])
+    expect(store.get().activityWindowSec).toBe(300)
+  })
+
+  it('注入记忆条数可写、越界夹取（ADR-037）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().aiMemoryCount).toBe(20)
+    store.applyOps([{ op: 'set', path: ['aiMemoryCount'], value: 0 }])
+    expect(store.get().aiMemoryCount).toBe(0)
+    store.applyOps([{ op: 'set', path: ['aiMemoryCount'], value: 999 }])
+    expect(store.get().aiMemoryCount).toBe(100)
+    store.applyOps([{ op: 'set', path: ['aiMemoryCount'], value: 'lots' }])
+    expect(store.get().aiMemoryCount).toBe(20)
   })
 
   it('barPosition 默认下方、可写、非法值回落（交互条位置）', () => {
@@ -159,24 +187,25 @@ describe('SettingsStore', () => {
     expect(store.get().barOffset).toBe(0)
   })
 
-  it('interactionMode 默认触摸优先、可写、非法值回落默认（ADR-032）', () => {
+  it('eventTriggers 二层路径可单开关写入，非法值回落 true（ADR-037）', () => {
     const store = new SettingsStore(BASE)
-    expect(store.get().interactionMode).toBe('touch-first')
-    store.applyOps([{ op: 'set', path: ['interactionMode'], value: 'event-first' }])
-    expect(store.get().interactionMode).toBe('event-first')
-    store.applyOps([{ op: 'set', path: ['interactionMode'], value: 'mutual' }])
-    expect(store.get().interactionMode).toBe('mutual')
-    store.applyOps([{ op: 'set', path: ['interactionMode'], value: 'nonsense' }])
-    expect(store.get().interactionMode).toBe('touch-first')
-  })
-
-  it('aiTouchOnly 默认关、可写、非法值回落 false', () => {
-    const store = new SettingsStore(BASE)
-    expect(store.get().aiTouchOnly).toBe(false)
-    store.applyOps([{ op: 'set', path: ['aiTouchOnly'], value: true }])
-    expect(store.get().aiTouchOnly).toBe(true)
-    store.applyOps([{ op: 'set', path: ['aiTouchOnly'], value: 'yes' }])
-    expect(store.get().aiTouchOnly).toBe(false)
+    expect(store.get().eventTriggers).toEqual(defaultEventTriggers())
+    store.applyOps([{ op: 'set', path: ['eventTriggers', 'tool-read'], value: false }])
+    expect(store.get().eventTriggers['tool-read']).toBe(false)
+    expect(store.get().eventTriggers['thinking']).toBe(true)
+    // 开关只认布尔：非 true 一律视为关（normalizeEventTriggers 保留 boolean 值）
+    store.applyOps([{ op: 'set', path: ['eventTriggers', 'tool-run'], value: 'nope' }])
+    expect(store.get().eventTriggers['tool-run']).toBe(false)
+    store.applyOps([{ op: 'set', path: ['eventTriggers', 'tool-run'], value: true }])
+    expect(store.get().eventTriggers['tool-run']).toBe(true)
+    // 整体写入会补齐缺省键
+    store.applyOps([{ op: 'set', path: ['eventTriggers'], value: { error: false } }])
+    const triggers = store.get().eventTriggers
+    expect(triggers['error']).toBe(false)
+    for (const key of TRIGGER_EVENTS) {
+      if (key === 'error') continue
+      expect(triggers[key], `整体写入后 ${key} 应回默认开`).toBe(true)
+    }
   })
 
   it('气泡最长显示：默认 30、可写、越界夹到 0–600（ADR-027）', () => {
@@ -188,23 +217,6 @@ describe('SettingsStore', () => {
     expect(store.get().bubbleMaxSeconds).toBe(600)
     store.applyOps([{ op: 'set', path: ['bubbleMaxSeconds'], value: 'long' }])
     expect(store.get().bubbleMaxSeconds).toBe(30)
-  })
-
-  it('长状态 AI 节奏：默认值、可写、越界夹到区间（ADR-026）', () => {
-    const store = new SettingsStore(BASE)
-    expect(store.get().thinkingAiDelay).toBe(3)
-    expect(store.get().thinkingAiInterval).toBe(20)
-    expect(store.get().waitingAiMax).toBe(3)
-    store.applyOps([
-      { op: 'set', path: ['thinkingAiDelay'], value: 999 },
-      { op: 'set', path: ['waitingAiInterval'], value: 1 },
-      { op: 'set', path: ['waitingAiMax'], value: 7 },
-    ])
-    expect(store.get().thinkingAiDelay).toBe(120)
-    expect(store.get().waitingAiInterval).toBe(5)
-    expect(store.get().waitingAiMax).toBe(7)
-    store.applyOps([{ op: 'set', path: ['thinkingAiMax'], value: 'many' }])
-    expect(store.get().thinkingAiMax).toBe(3)
   })
 
   it('applyOps 写回并返回最新视图', () => {
@@ -303,6 +315,40 @@ describe('SettingsStore 读取缓存（B1）', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('v8 迁移（ADR-037）', () => {
+  it('version < 8 的文件 eventTriggers 强制全开（旧文件没有开关表）', () => {
+    const store = new SettingsStore(BASE)
+    writeFileSync(store.path, JSON.stringify({
+      version: 7,
+      enabled: true,
+      size: 200,
+      aiTouchOnly: true,
+      aiTakeover: true,
+      interactionMode: 'mutual',
+      thinkingAiDelay: 9,
+    }), 'utf8')
+    const view = store.view()
+    expect(view.value.eventTriggers).toEqual(defaultEventTriggers())
+    // 旧字段在结果里没有位置
+    expect((view.value as unknown as Record<string, unknown>).aiTakeover).toBeUndefined()
+    expect((view.value as unknown as Record<string, unknown>).interactionMode).toBeUndefined()
+    expect((view.value as unknown as Record<string, unknown>).thinkingAiDelay).toBeUndefined()
+  })
+
+  it('v8 文件的 eventTriggers 部分开关原样保留', () => {
+    const store = new SettingsStore(BASE)
+    store.applyOps([{ op: 'set', path: ['eventTriggers', 'tool-read'], value: false }])
+    const text = readFileSync(store.path, 'utf8')
+    const raw = JSON.parse(text.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')) as {
+      version: number
+      eventTriggers: Record<string, boolean>
+    }
+    expect(raw.version).toBe(8)
+    expect(raw.eventTriggers['tool-read']).toBe(false)
+    expect(store.view().value.eventTriggers['tool-read']).toBe(false)
   })
 })
 

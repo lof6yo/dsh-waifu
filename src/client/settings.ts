@@ -12,49 +12,36 @@
  * @module dsh-waifu/client/settings
  */
 
-import { Fragment, createElement, useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, ChangeEvent, FocusEvent, MouseEvent, ReactNode, ReactElement } from 'react'
-import type {
-  EventBinding,
-  EventBindings,
-  PetEventKey,
-  TouchBox,
-  TouchPart,
-} from '../models.ts'
+import { createElement, useCallback, useEffect, useRef, useState } from 'react'
+import type { CSSProperties, ChangeEvent, FocusEvent, ReactNode, ReactElement } from 'react'
+import type { TouchBox, TouchPart } from '../models.ts'
 import {
-  DEFAULT_EVENT_BINDINGS,
-  MAX_BOXES_PER_PART,
-  MAX_LINE_LENGTH,
-  MAX_LINES_PER_PART,
-  MAX_LINES_PER_POOL,
-  PET_EVENTS,
   ACTIVITY_EVENTS,
-  EXPRESSIONS,
-  expressionLabel,
-  isExpressionId,
-  motionLabel,
-  normalizeMotionSelection,
-  splitMotionSelection,
-  mergeEventBindings,
-  normalizeEventBindings,
+  ANIMATION_SLOTS,
+  MAX_BOXES_PER_PART,
 } from '../models.ts'
-import { DEFAULT_LONG_AI } from '../models.ts'
 import {
+  ACTIVITY_WINDOW_LIMITS,
   AI_HISTORY_LIMITS,
+  AI_MEMORY_LIMITS,
+  AI_MIN_INTERVAL_LIMITS,
+  BAR_OFFSET_LIMITS,
   DEFAULT_AI_HISTORY,
+  DEFAULT_AI_MEMORY,
   DEFAULT_MODEL_ID,
   DEFAULT_SETTINGS,
-  LIPSYNC_GAIN_LIMITS,
   FOCUS_RANGE_LIMITS,
+  IDLE_TIMEOUT_LIMITS,
+  LIPSYNC_GAIN_LIMITS,
+  TTS_MODELS,
+  normalizeEventTriggers,
   normalizeFocusRange,
   normalizeHistoryCount,
   normalizeLipsyncGain,
-  BAR_OFFSET_LIMITS,
-  TTS_MODELS,
+  normalizeMemoryCount,
   ttsDefaultVoice,
   ttsModelOption,
   type BarPosition,
-  type InteractionMode,
 } from '../defaults.ts'
 import { clientLog } from './client-log.ts'
 import { emitCaptureHome, emitRecenter } from './pet-commands.ts'
@@ -96,25 +83,32 @@ export interface PetSettingsValue {
   debug: boolean
   /** 显示触摸部位色块（开发者选项，spec §2/§4）。 */
   showTapZones: boolean
-  /** AI 回复总开关（ADR-025）。 */
+  /** AI 驱动总开关（ADR-037）：关闭后角色完全静默（无固定台词可回落）。 */
   aiEnabled: boolean
-  /** 仅触摸：状态变化只走预置台词，AI 只在触摸时发言。 */
-  aiTouchOnly: boolean
-  /** 全 AI 接管（ADR-031）：不显示预置对白；长状态延迟失效、入态即请求模型。 */
-  aiTakeover: boolean
+  /** 待机小动作总开关。 */
   idleMotionEnabled: boolean
-  /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider）。 */
+  /** AI 使用的 provider 路由（DSH 已配置的 LLM provider）。 */
   aiProvider: string
-  /** AI 回复使用的模型 id。 */
+  /** AI 使用的模型 id。 */
   aiModel: string
-  /** 打断优先级（ADR-032）：触摸互动与状态事件谁先占气泡/动作/AI 演绎。 */
-  interactionMode: InteractionMode
-  /** 交互条位置（模型上方 / 下方）。 */
+  /** 交互条位置（模型上方 / 下方 / 隐藏）。 */
   barPosition: BarPosition
   /** 交互条额外偏移（px，正数远离模型）。 */
   barOffset: number
-  /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10，ADR-030）。 */
+  /** 注入到 prompt 的最近对话轮数（0 = 不注入，ADR-030）。 */
   aiHistoryCount: number
+  /** 注入到 prompt 的最近记忆条数（0 = 不注入，ADR-037）。 */
+  aiMemoryCount: number
+  /** 新触发的处理方式（ADR-037）：interrupt = 掐掉上一轮立刻反应，queue = 排队等说完。 */
+  triggerMode: 'interrupt' | 'queue'
+  /** 事件类触发的最小间隔（秒，0 = 不限制；触摸/对话不受限）。 */
+  aiMinIntervalSec: number
+  /** 静默超时（秒，0 = 关闭）：多久没动静就让角色主动说一句。 */
+  idleTimeoutSec: number
+  /** 同类事件的触发窗口（秒）：窗口内同类事件只触发一次。 */
+  activityWindowSec: number
+  /** 按 DSH 事件类型的触发开关（触摸/对话始终可触发）。 */
+  eventTriggers: Record<string, boolean>
   /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
   ttsEnabled: boolean
   /** 语音模型 slug（OpenRouter speech 模型）。 */
@@ -127,14 +121,6 @@ export interface PetSettingsValue {
   lipsyncGain: number
   /** 鼠标跟随范围（% 模型尺寸；0 = 只在模型框内跟随）。 */
   focusRange: number
-  /** 长状态「思考」AI 演绎节奏：入态延迟（秒）/ 间隔（秒）/ 每次入态上限（ADR-026）。 */
-  thinkingAiDelay: number
-  thinkingAiInterval: number
-  thinkingAiMax: number
-  /** 长状态「等确认」AI 演绎节奏。 */
-  waitingAiDelay: number
-  waitingAiInterval: number
-  waitingAiMax: number
 }
 
 /** GET /api/dsh-waifu/settings 视图（settings.jsonc 读取结果）。 */
@@ -161,101 +147,34 @@ interface SettingsState {
   error?: string | null
 }
 
-/** 设置项兜底值：标量统一取自 defaults.ts（单一来源），只有模型 id 与长状态节奏就地取默认。 */
+/** 设置项兜底值：标量统一取自 defaults.ts（单一来源），模型 id 单独取默认。 */
 const DEFAULT_VALUE: PetSettingsValue = {
   ...DEFAULT_SETTINGS,
   model: DEFAULT_MODEL_ID,
-  thinkingAiDelay: DEFAULT_LONG_AI.thinking.delay,
-  thinkingAiInterval: DEFAULT_LONG_AI.thinking.interval,
-  thinkingAiMax: DEFAULT_LONG_AI.thinking.max,
-  waitingAiDelay: DEFAULT_LONG_AI.waiting.delay,
-  waitingAiInterval: DEFAULT_LONG_AI.waiting.interval,
-  waitingAiMax: DEFAULT_LONG_AI.waiting.max,
 }
 
-/** 事件卡片展示顺序（空闲/思考中/出错/完成/交付/等审批）。 */
-const EVENT_ORDER: readonly PetEventKey[] = [
-  'idle', 'thinking', 'error', 'done', 'delivered', 'waiting',
-  ...ACTIVITY_EVENTS,
-]
-
-/** 事件中文名（事件绑定卡片标题）。 */
-const EVENT_LABELS: Record<PetEventKey, string> = {
-  idle: '空闲',
+/** 触发场景中文名（触发开关列表）。 */
+const TRIGGER_EVENT_LABELS: Record<string, string> = {
   thinking: '思考中',
   error: '出错',
   done: '完成',
-  delivered: '交付',
-  waiting: '等审批',
-  // 活动事件（ADR-036）：状态机之外的一次性动作/台词
-  'tool-read': '看文件时',
-  'tool-write': '写文件时',
-  'tool-run': '跑命令时',
-  'tool-agent': '派子代理时',
-  'tool-other': '用其它工具时',
-  'approval-granted': '审批通过',
-  'approval-denied': '审批被拒',
-  'session-open': '新会话',
-  'session-close': '会话结束',
-  'subagent-start': '子代理开始',
-  'subagent-end': '子代理结束',
+  delivered: '交付成果',
+  waiting: '等确认',
+  'tool-read': '工具·读取',
+  'tool-write': '工具·写入',
+  'tool-run': '工具·执行命令',
+  'tool-agent': '工具·派出子代理',
+  'tool-other': '工具·其他',
+  'approval-granted': '审批·通过',
+  'approval-denied': '审批·拒绝',
+  'session-open': '会话·开启',
+  'session-close': '会话·结束',
+  'subagent-start': '子代理·出发',
+  'subagent-end': '子代理·归来',
 }
 
-/** 事件台词池只有「入态」一组（ADR-026：多阶段固定台词已取消，长状态交给 AI 演绎）。 */
-function eventStageLabels(_event: PetEventKey): string[] {
-  return ['入态']
-}
-
-/** 深拷贝事件绑定（避免草稿与 API 对象 / 默认常量互相污染）。 */
-function cloneEventBindings(bindings: EventBindings): EventBindings {
-  const out = {} as EventBindings
-  for (const event of PET_EVENTS) {
-    const binding = bindings[event]
-    out[event] = {
-      motions: [...binding.motions],
-      lines: binding.lines.map((pool) => [...pool]),
-    }
-  }
-  return out
-}
-
-/** 把某事件绑定裁剪到「入态」一组（ADR-026）。 */
-function normalizeEventDraft(binding: EventBinding, event: PetEventKey): EventBinding {
-  const stageCount = eventStageLabels(event).length
-  const lines = Array.from({ length: stageCount }, (_, stage) => [...(binding.lines[stage] ?? [])])
-  return { motions: [...binding.motions], lines }
-}
-
-/** GET /state 的事件绑定（完整表）→ 可编辑草稿（补齐阶段数）。 */
-function eventBindingsFromApi(raw: unknown): EventBindings {
-  const merged = mergeEventBindings(DEFAULT_EVENT_BINDINGS, normalizeEventBindings(raw))
-  const out = {} as EventBindings
-  for (const event of PET_EVENTS) out[event] = normalizeEventDraft(merged[event], event)
-  return out
-}
-
-/** 解析事件台词池 textarea：一行一条 → trim/去空/截断 120 字/去重/最多 20 条。 */
-function parseEventLines(raw: string): string[] {
-  const cleaned = raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => line.slice(0, MAX_LINE_LENGTH))
-    .slice(0, MAX_LINES_PER_POOL)
-  return [...new Set(cleaned)]
-}
-
-/** 从 .model3.json 解析动作组名列表（FileReferences.Motions 或顶层 Motions）。 */
-async function fetchMotionGroups(url: string): Promise<string[]> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const data = await res.json() as {
-    FileReferences?: { Motions?: Record<string, unknown> }
-    Motions?: Record<string, unknown>
-  }
-  const motions = data?.FileReferences?.Motions ?? data?.Motions ?? {}
-  return Object.keys(motions)
-}
+/** 触发场景开关顺序（ANIMATION_SLOTS 去掉 idle + ACTIVITY_EVENTS）。 */
+const TRIGGER_ORDER: readonly string[] = [...ANIMATION_SLOTS.slice(1), ...ACTIVITY_EVENTS]
 
 /** 深拷贝部位草稿（避免设置页草稿与共享对象 / 事件 detail 互相污染）。 */
 function cloneTouchParts(parts: readonly TouchPart[]): TouchPart[] {
@@ -263,20 +182,7 @@ function cloneTouchParts(parts: readonly TouchPart[]): TouchPart[] {
     id: part.id,
     name: part.name,
     boxes: part.boxes.map((box) => ({ ...box })),
-    motions: [...part.motions],
-    ...(part.lines && part.lines.length > 0 ? { lines: [...part.lines] } : {}),
   }))
-}
-
-/** 解析部位台词 textarea：一行一条 → trim/去空/截断 120 字/去重/最多 30 条。 */
-function parsePartLines(raw: string): string[] {
-  const cleaned = raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => line.slice(0, MAX_LINE_LENGTH))
-    .slice(0, MAX_LINES_PER_PART)
-  return [...new Set(cleaned)]
 }
 
 /** 0–1 → 百分比整数（设置页输入框按 0–100 显示）。 */
@@ -347,8 +253,6 @@ interface TouchPartsView {
   model: string
   parts: TouchPart[]
   saved: boolean
-  /** 当前模型生效的事件绑定（含用户覆盖；「事件绑定」分组初始化用）。 */
-  events?: EventBindings | null
   error: string | null
   path: string
 }
@@ -365,23 +269,17 @@ async function loadTouchParts(): Promise<TouchPartsView | null> {
 }
 
 /**
- * 保存当前模型的部位草稿 + 可选事件绑定覆盖层（POST；Host 不可达返回 null）。
- * events 为 undefined 时**不写**该字段（保留已有覆盖）；传对象时整表写入。
+ * 保存当前模型的部位草稿（POST；Host 不可达返回 null）。
  */
 async function saveTouchPartsToHost(
   model: string,
   parts: TouchPart[],
-  events?: EventBindings,
 ): Promise<{ ok: boolean; error: string | null } | null> {
   try {
     const response = await fetch(TOUCH_PARTS_API, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        parts,
-        ...(events !== undefined ? { events } : {}),
-      }),
+      body: JSON.stringify({ model, parts }),
     })
     if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
     const data = await response.json() as { ok?: boolean; error?: string | null }
@@ -391,43 +289,12 @@ async function saveTouchPartsToHost(
   }
 }
 
-/** GET /state 的当前生效事件绑定（GET 的 events 缺失时兜底）。 */
-async function loadStateEvents(): Promise<EventBindings> {
-  try {
-    const response = await fetch(STATE_API)
-    if (!response.ok) return cloneEventBindings(DEFAULT_EVENT_BINDINGS)
-    const view = await response.json() as { config?: { events?: unknown } }
-    return eventBindingsFromApi(view?.config?.events)
-  } catch {
-    return cloneEventBindings(DEFAULT_EVENT_BINDINGS)
-  }
-}
-
-/**
- * 当前模型 → 可 fetch 的 .model3.json URL（仅内置「简」）：从 /state 的
- * config.modelUrl 取；不可达/尚未同步时返回 null（动作组多选降级为空）。
- */
-async function resolveSelectedModelUrl(model: string): Promise<string | null> {
-  try {
-    const response = await fetch(STATE_API)
-    if (!response.ok) return null
-    const view = await response.json() as { config?: { model?: string; modelUrl?: string | null } }
-    const config = view?.config
-    if (config?.model === model && typeof config.modelUrl === 'string' && config.modelUrl) {
-      return config.modelUrl
-    }
-  } catch {
-    // ignore
-  }
-  return null
-}
-
 const SETTINGS_API = '/api/dsh-waifu/settings'
-const STATE_API = '/api/dsh-waifu/state'
 const TOUCH_PARTS_API = '/api/dsh-waifu/touch-parts'
 const AI_OPTIONS_API = '/api/dsh-waifu/ai-options'
 const AI_CHECK_API = '/api/dsh-waifu/ai-check'
 const PERSONA_API = '/api/dsh-waifu/persona'
+const MEMORY_API = '/api/dsh-waifu/memory'
 
 /* ---- 设计 token（DSH Theme 变量；深/浅色自动适配） ---- */
 const C = {
@@ -539,37 +406,6 @@ const cardHeaderRowStyle: CSSProperties = {
   padding: '12px 14px',
   minHeight: 44,
   boxSizing: 'border-box',
-}
-const cardHeaderButtonStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: GAP.sm,
-  flex: 1,
-  minWidth: 0,
-  margin: 0,
-  padding: 0,
-  border: 'none',
-  background: 'transparent',
-  color: 'inherit',
-  fontFamily: 'inherit',
-  textAlign: 'left',
-  cursor: 'pointer',
-  outline: 'none',
-}
-const cardHeaderActionsStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  gap: 6,
-  flexShrink: 0,
-}
-const cardTitleStyle: CSSProperties = { fontSize: 13, fontWeight: 600, color: C.textPrimary }
-const cardSummaryStyle: CSSProperties = {
-  fontSize: 12,
-  color: C.textSecondary,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
 }
 const cardBodyStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: GAP.sm, padding: '0 14px 12px' }
 const chevronStyle: CSSProperties = {
@@ -688,7 +524,6 @@ const formRowStyle: CSSProperties = {
 }
 const formRowStartStyle: CSSProperties = { ...formRowStyle, alignItems: 'start' }
 const formLabelStyle: CSSProperties = { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 }
-const formLabelStartStyle: CSSProperties = { ...formLabelStyle, paddingTop: 6 }
 const formControlStyle: CSSProperties = { minWidth: 0, display: 'flex', alignItems: 'center', gap: GAP.sm }
 /**
  * 单行表单行：label 占满左侧剩余空间（不换行、不被挤扁），控件靠右固定宽度。
@@ -787,49 +622,6 @@ const MAX_FPS_OPTIONS: ThemeSelectOption[] = [
 function normalizeMaxFps(raw: unknown): number {
   if (raw === 60 || raw === 0) return raw
   return 30
-}
-
-/**
- * 「动作 / 表情」混选选项（ADR-023 / ADR-024）：动作组与表情各成一组。
- * 动作组组内互斥；表情只在模型定义的互斥组（眼部 / 皮肤）内互斥，其余可叠加。
- * current 里可能出现模型没解析到的旧动作组名字（保证 tag 能显示）。
- */
-function motionSelectionOptions(motionGroups: readonly string[], current: readonly string[] = []): ThemeSelectOption[] {
-  // id 全局去重：表情 id 绝不能再以「动作」身份出现一次，否则列表里会出现两行同名项
-  // （一行英文、一行中文），且 tag 取到英文那行——表现为「选中后显示 blush、重开多一个选中项」。
-  const options: ThemeSelectOption[] = []
-  const taken = new Set<string>()
-  for (const raw of [...motionGroups, ...current]) {
-    const id = typeof raw === 'string' ? raw.trim() : ''
-    if (!id || taken.has(id) || isExpressionId(id)) continue
-    taken.add(id)
-    options.push({ id, name: motionLabel(id), group: '动作', exclusive: 'motion' })
-  }
-  for (const expression of EXPRESSIONS) {
-    if (expression.id === 'none' || taken.has(expression.id)) continue
-    taken.add(expression.id)
-    options.push({
-      id: expression.id,
-      name: expression.name,
-      group: '表情',
-      exclusive: expression.exclusive,
-    })
-  }
-  return options
-}
-
-/** 混选里的单项显示名：表情走表情表、其余当动作组（未知 id 回退原名）。 */
-function selectionOptionLabel(id: string): string {
-  return isExpressionId(id) ? expressionLabel(id) : motionLabel(id)
-}
-
-/** 混选标签文案（卡片摘要用）：动作组 + 表情（可多个）。 */
-function motionSelectionLabel(selection: readonly string[]): string {
-  const { motion, expressions } = splitMotionSelection(selection)
-  const parts: string[] = []
-  if (motion) parts.push(motionLabel(motion))
-  for (const expression of expressions) parts.push(expressionLabel(expression))
-  return parts.join(' + ')
 }
 
 /** 画布留白（%）：clamp 到 0–300 的整数；非法值回落 fallback。 */
@@ -1031,195 +823,6 @@ function ThemeSwitch(props: ThemeSwitchProps): ReactElement {
   )
 }
 
-interface ThemeMultiSelectProps {
-  value: string[]
-  options: ThemeSelectOption[]
-  disabled?: boolean
-  placeholder?: string
-  /** 互斥：同 `exclusive` 键的选项只能选一个（动作组共用 `motion`；表情按模型互斥组）。 */
-  exclusive?: boolean
-  onChange: (next: string[]) => void
-}
-
-/** 多选下拉：选中项以 tag 展示在主按钮内；点击下拉项切换选中，保持打开以支持连续多选。 */
-function ThemeMultiSelect(props: ThemeMultiSelectProps): ReactElement {
-  const { value, options, disabled, placeholder, exclusive, onChange } = props
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const listRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: Event) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('pointerdown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  // 打开时把已选项滚进可视区：否则再打开列表总停在顶部，已选项藏在下面像「勾错/丢选项」
-  useEffect(() => {
-    if (!open) return
-    const list = listRef.current
-    const item = list?.querySelector<HTMLElement>('[aria-selected="true"]')
-    if (!list || !item) return
-    const top = item.offsetTop - 8
-    const bottom = top + item.offsetHeight + 8
-    if (top < list.scrollTop) list.scrollTop = top
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
-  }, [open])
-
-  /** 按 group 首次出现顺序切块；无 group 的选项归到空标题组（不渲染标题）。 */
-  const blocks: { label: string; items: ThemeSelectOption[] }[] = []
-  for (const option of options) {
-    const label = option.group ?? ''
-    const last = blocks[blocks.length - 1]
-    if (last && last.label === label) last.items.push(option)
-    else blocks.push({ label, items: [option] })
-  }
-  const toggle = (option: ThemeSelectOption): void => {
-    const selected = value.includes(option.id)
-    if (selected) {
-      onChange(value.filter((id) => id !== option.id))
-      return
-    }
-    if (!exclusive || !option.exclusive) {
-      onChange([...value, option.id])
-      return
-    }
-    // 互斥：先剔除同互斥键的旧选项，再追加当前项（动作组 / 眼部 / 皮肤各留一个）
-    const keep = value.filter((id) => {
-      const other = options.find((item) => item.id === id)
-      return other?.exclusive !== option.exclusive
-    })
-    onChange([...keep, option.id])
-  }
-
-  return createElement('div', {
-    ref: rootRef,
-    style: { position: 'relative', flex: 1, minWidth: 0 },
-  },
-    createElement('button', {
-      type: 'button',
-      disabled: !!disabled,
-      'aria-haspopup': 'listbox',
-      'aria-expanded': open,
-      onClick: () => { if (!disabled) setOpen((v) => !v) },
-      style: {
-        ...inputStyle,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 8,
-        width: '100%',
-        minHeight: 28,
-        textAlign: 'left',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        background: C.bgLayer2,
-        outline: 'none',
-        boxShadow: 'none',
-        opacity: disabled ? 0.55 : 1,
-      },
-    },
-      createElement('span', {
-        style: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', flex: 1, minWidth: 0 },
-      },
-        value.length === 0
-          ? createElement('span', { style: { color: C.textSecondary } }, placeholder ?? '选择动作组')
-          : [...new Set(value)].map((id) => createElement('span', {
-            key: id,
-            style: {
-              height: 20,
-              padding: '0 8px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              borderRadius: 999,
-              background: C.bgLayer2,
-              color: C.textPrimary,
-              fontSize: 12,
-              whiteSpace: 'nowrap',
-            },
-          }, selectionOptionLabel(id))),
-      ),
-      createElement('span', { style: { color: C.textSecondary, fontSize: 10, flexShrink: 0 } }, open ? '▴' : '▾'),
-    ),
-    open && createElement('div', {
-      ref: listRef,
-      role: 'listbox',
-      'aria-multiselectable': true,
-      style: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 'calc(100% + 4px)',
-        zIndex: 20,
-        margin: 0,
-        padding: 4,
-        borderRadius: 8,
-        border: `1px solid ${C.borderL1}`,
-        background: C.bgOverlay,
-        color: C.textPrimary,
-        boxShadow: '0 8px 24px rgba(0,0,0,.45)',
-        maxHeight: 240,
-        overflowY: 'auto',
-      },
-    },
-      blocks.map((block, blockIndex) => createElement(Fragment, { key: `block-${blockIndex}` },
-        block.label
-          ? createElement('div', {
-            style: {
-              padding: '6px 10px 2px',
-              fontSize: 11,
-              letterSpacing: '.08em',
-              color: C.textSecondary,
-            },
-          }, block.label)
-          : null,
-        block.items.map((o) => {
-        const selected = value.includes(o.id)
-        return createElement('button', {
-          key: o.id,
-          type: 'button',
-          role: 'option',
-          'aria-selected': selected,
-          onClick: () => toggle(o),
-          style: {
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            width: '100%',
-            margin: 0,
-            padding: '6px 10px',
-            border: 'none',
-            borderRadius: 6,
-            textAlign: 'left',
-            cursor: 'pointer',
-            fontSize: 13,
-            color: C.textPrimary,
-            background: selected ? C.bgLayer2 : 'transparent',
-            outline: 'none',
-          },
-          onMouseEnter: (e: MouseEvent<HTMLButtonElement>) => {
-            if (!selected) e.currentTarget.style.background = C.bgLayer2
-          },
-          onMouseLeave: (e: MouseEvent<HTMLButtonElement>) => {
-            e.currentTarget.style.background = selected ? C.bgLayer2 : 'transparent'
-          },
-        },
-          createElement('span', { style: { width: 14, flexShrink: 0, textAlign: 'center' } }, selected ? '☑' : '☐'),
-          o.name,
-        )
-      }),
-      )),
-    ),
-  )
-}
-
 /** 设置路径 op（与 Host settings.mutate 对齐）。 */
 type SettingsOp = { op: 'set' | 'unset'; path: string[]; value?: unknown }
 
@@ -1396,11 +999,41 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       .catch(() => setPersonaStatus('保存失败'))
       .finally(() => setPersonaSaving(false))
   }
+  // 记忆（ADR-037）：memory.md 查看编辑；AI 输出 [记] 行时 Host 会往里追加
+  const [memoryDraft, setMemoryDraft] = useState<string | null>(null)
+  const [memoryStatus, setMemoryStatus] = useState<string | null>(null)
+  const [memorySaving, setMemorySaving] = useState(false)
+  useEffect(() => {
+    if (!aiEnabled) return
+    let cancelled = false
+    void fetch(`${MEMORY_API}`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ text?: string }>) : null))
+      .then((view) => {
+        if (cancelled || typeof view?.text !== 'string') return
+        setMemoryDraft(view.text)
+      })
+      .catch(() => setMemoryStatus('记忆读取失败'))
+    return () => { cancelled = true }
+  }, [aiEnabled])
+  const saveMemory = (): void => {
+    if (memoryDraft === null || memorySaving) return
+    setMemorySaving(true)
+    setMemoryStatus(null)
+    void fetch(`${MEMORY_API}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: memoryDraft }),
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<{ path?: string }>) : null))
+      .then((view) => {
+        setMemoryStatus(view === null ? '保存失败' : '已保存，下一次反应生效')
+      })
+      .catch(() => setMemoryStatus('保存失败'))
+      .finally(() => setMemorySaving(false))
+  }
   const modelDraftRef = useRef('')
   const [touchDraft, setTouchDraft] = useState<TouchPart[]>([])
   const touchDraftRef = useRef<TouchPart[]>([])
-  const [eventBindings, setEventBindings] = useState<EventBindings>(() => cloneEventBindings(DEFAULT_EVENT_BINDINGS))
-  const eventBindingsRef = useRef<EventBindings>(eventBindings)
   const [partStatus, setPartStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [touchEditing, setTouchEditing] = useState(false)
@@ -1412,32 +1045,20 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const dirtyPartIdsRef = useRef<Set<string>>(new Set())
   const [structureDirty, setStructureDirty] = useState(false)
   const structureDirtyRef = useRef(false)
-  /** 事件粒度 dirty（event key 集合）。 */
-  const [dirtyEventKeys, setDirtyEventKeys] = useState<Set<PetEventKey>>(() => new Set())
-  const dirtyEventKeysRef = useRef<Set<PetEventKey>>(new Set())
-  const eventsDirty = dirtyEventKeys.size > 0
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
   /** 触摸部位分组级「已保存」提示（结构变更保存时，约 3 秒）。 */
   const [touchSavedFlash, setTouchSavedFlash] = useState<string | null>(null)
   /** 部位卡片就地「已保存 HH:MM:SS」提示（仅触发保存的那张卡片，约 3 秒）。 */
   const [savedPartFlash, setSavedPartFlash] = useState<{ partId: string; time: string } | null>(null)
   const savedPartTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** 事件卡片就地「已保存 HH:MM:SS」提示（仅触发保存的那张卡片，约 3 秒）。 */
-  const [savedEventFlash, setSavedEventFlash] = useState<{ event: PetEventKey; time: string } | null>(null)
-  const savedEventTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 本次保存的来源（部位卡 / 结构行 / 事件卡），用于决定「已保存」提示落在哪里。 */
   const saveSourceRef = useRef<
     { type: 'part'; id: string }
     | { type: 'structure' }
-    | { type: 'event-card'; event: PetEventKey }
     | null
   >(null)
   const flashTimers = useRef<{ touch?: ReturnType<typeof setTimeout> }>({})
-  /** 事件卡片展开状态（默认全部折叠；切换模型时重置）。 */
-  const [expandedEventKeys, setExpandedEventKeys] = useState<Set<PetEventKey>>(() => new Set())
   const partsDirty = dirtyPartIds.size > 0 || structureDirty
-  const [motionGroups, setMotionGroups] = useState<string[]>([])
-  const [motionGroupsStatus, setMotionGroupsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   /** 写入串行化：避免并发 POST 在 Host 端出现读改写丢失。 */
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
   /** 草稿编辑版本号：保存响应回来时据此判断是否还有更新改动未保存。 */
@@ -1445,12 +1066,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const saveSeq = useRef(0)
   const loadSeq = useRef(0)
   const [reloadKey, setReloadKey] = useState(0)
-  /** 动作组解析重试。 */
-  const [motionReloadKey, setMotionReloadKey] = useState(0)
-  /** 部位台词 textarea 原始输入缓冲（按部位 id）：保留换行/空行，落盘前再清洗。 */
-  const [partLineDrafts, setPartLineDrafts] = useState<Record<string, string>>({})
-  /** 事件台词 textarea 原始输入缓冲（按 `${event}:${stage}`）：同上。 */
-  const [eventLineDrafts, setEventLineDrafts] = useState<Record<string, string>>({})
 
   const readOnly = !writable || partStatus !== 'ready'
 
@@ -1472,13 +1087,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const existing = flashTimers.current.touch
     if (existing !== undefined) clearTimeout(existing)
     flashTimers.current.touch = setTimeout(() => setTouchSavedFlash(null), 3000)
-  }
-
-  /** 事件卡片就地「已保存 HH:MM:SS」（约 3 秒）。 */
-  const flashSavedEvent = (event: PetEventKey, time: string): void => {
-    setSavedEventFlash({ event, time })
-    if (savedEventTimer.current !== null) clearTimeout(savedEventTimer.current)
-    savedEventTimer.current = setTimeout(() => setSavedEventFlash(null), 3000)
   }
 
   /** 部位卡片就地「已保存 HH:MM:SS」（约 3 秒，与脏提示同位置替换）。 */
@@ -1505,51 +1113,34 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     setStructureDirty(true)
   }
 
-  /** 事件卡片字段变化：只把该事件标记为 dirty。 */
-  const markEventDirty = (event: PetEventKey): void => {
-    if (dirtyEventKeysRef.current.has(event)) return
-    const next = new Set(dirtyEventKeysRef.current)
-    next.add(event)
-    dirtyEventKeysRef.current = next
-    setDirtyEventKeys(next)
-  }
-
-  /** 保存成功：清空全部部位/结构/事件 dirty。 */
+  /** 保存成功：清空全部部位/结构 dirty。 */
   const clearAllDirty = (): void => {
     dirtyPartIdsRef.current = new Set()
     structureDirtyRef.current = false
-    dirtyEventKeysRef.current = new Set()
     setDirtyPartIds(new Set())
     setStructureDirty(false)
-    setDirtyEventKeys(new Set())
   }
 
   /** 是否存在未保存的部位字段/结构改动。 */
   const hasPendingParts = (): boolean => dirtyPartIdsRef.current.size > 0 || structureDirtyRef.current
 
-  /** 保存 payload 中的事件绑定：仅用户实际改过时携带（否则 undefined = 不写覆盖层）。 */
-  const eventsForSave = (): EventBindings | undefined => (
-    dirtyEventKeysRef.current.size > 0 ? cloneEventBindings(eventBindingsRef.current) : undefined
-  )
-
   /**
-   * 串行写回草稿（{model, parts, events?}）；响应只更新保存状态，不 refetch 覆盖草稿。
+   * 串行写回草稿（{model, parts}）；响应只更新保存状态，不 refetch 覆盖草稿。
    * quiet=true 用于切模型/卸载的防丢补存：只发请求 + clientLog，不改页面状态栏。
    */
   const persistDraft = (
     model: string,
     parts: TouchPart[],
-    events: EventBindings | undefined,
     editVersion: number,
     quiet = false,
   ): void => {
-    const summary = `model=${model} parts=${parts.length} events=${events !== undefined ? 'yes' : 'no'}`
+    const summary = `model=${model} parts=${parts.length}`
     saveQueue.current = saveQueue.current.then(async () => {
       const seq = ++saveSeq.current
       if (!quiet) {
         setSaveState('saving')
       }
-      const result = await saveTouchPartsToHost(model, parts, events)
+      const result = await saveTouchPartsToHost(model, parts)
       // 过期响应（已有更新请求/已切模型）只记录日志，不把旧模型状态显示到新模型上
       const isCurrent = seq === saveSeq.current && model === modelDraftRef.current
       if (result === null) {
@@ -1581,23 +1172,20 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       } else if (source?.type === 'structure') {
         // 结构变更保存：分组顶部短暂提示
         showTouchSavedFlash(savedTime)
-      } else if (source?.type === 'event-card') {
-        // 事件卡片触发的保存：就地显示在该卡片头部
-        flashSavedEvent(source.event, savedTime)
       }
       setSaveState('idle')
     })
   }
 
-  /** 保存动作（部位卡片「保存」/结构行/事件保存行共用）：显式写回当前完整草稿。 */
+  /** 保存动作（部位卡片「保存」/结构行共用）：显式写回当前完整草稿。 */
   const saveNow = (): void => {
-    if (readOnly || (!hasPendingParts() && dirtyEventKeysRef.current.size === 0)) {
+    if (readOnly || !hasPendingParts()) {
       saveSourceRef.current = null
       return
     }
     const model = modelDraftRef.current
     if (!model) return
-    persistDraft(model, cloneTouchParts(touchDraftRef.current), eventsForSave(), editVersionRef.current)
+    persistDraft(model, cloneTouchParts(touchDraftRef.current), editVersionRef.current)
   }
 
   /** 部位卡片头部「保存」：成功后「已保存 HH:MM:SS」就地显示在该卡片。 */
@@ -1609,12 +1197,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   /** 结构变更行「保存」：成功后允许分组级短暂「已保存」提示。 */
   const saveStructureNow = (): void => {
     saveSourceRef.current = { type: 'structure' }
-    saveNow()
-  }
-
-  /** 事件卡片头部「保存」：成功后「已保存 HH:MM:SS」就地显示在该卡片。 */
-  const saveEventCardNow = (event: PetEventKey): void => {
-    saveSourceRef.current = { type: 'event-card', event }
     saveNow()
   }
 
@@ -1631,23 +1213,13 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     emitTouchDraft(touchEditingRef.current, next, highlightId)
   }
 
-  /** 事件绑定草稿变更：更新 ref/state，只把对应事件标脏（不自动保存）。 */
-  const commitEventBindings = (next: EventBindings, dirtyEvent?: PetEventKey): void => {
-    eventBindingsRef.current = next
-    setEventBindings(next)
-    if (dirtyEvent) markEventDirty(dirtyEvent)
-    editVersionRef.current += 1
-    setSaveState('idle')
-  }
-
-  // 切换选中模型：若有未保存改动先补存（防丢），退出预览，再重新 GET 新模型部位 + 事件绑定
+  // 切换选中模型：若有未保存改动先补存（防丢），退出预览，再重新 GET 新模型部位
   useEffect(() => {
     if (state.status !== 'ready' || !selectedModel) return
     const previousModel = modelDraftRef.current
-    const hadUnsaved = hasPendingParts() || dirtyEventKeysRef.current.size > 0
-    if (previousModel && previousModel !== selectedModel && hadUnsaved) {
+    if (previousModel && previousModel !== selectedModel && hasPendingParts()) {
       // 防丢：自动补存旧模型草稿（静默，不覆盖新模型的状态栏；clientLog 在 persistDraft 内记录）
-      persistDraft(previousModel, cloneTouchParts(touchDraftRef.current), eventsForSave(), editVersionRef.current, true)
+      persistDraft(previousModel, cloneTouchParts(touchDraftRef.current), editVersionRef.current, true)
     }
     if (touchEditingRef.current) {
       touchEditingRef.current = false
@@ -1662,9 +1234,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     clearAllDirty()
     setTouchSavedFlash(null)
     setSavedPartFlash(null)
-    setSavedEventFlash(null)
     saveSourceRef.current = null
-    setExpandedEventKeys(new Set())
     if (flashTimers.current.touch !== undefined) {
       clearTimeout(flashTimers.current.touch)
       flashTimers.current.touch = undefined
@@ -1673,17 +1243,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       clearTimeout(savedPartTimer.current)
       savedPartTimer.current = null
     }
-    if (savedEventTimer.current !== null) {
-      clearTimeout(savedEventTimer.current)
-      savedEventTimer.current = null
-    }
     // 先清空旧模型草稿，避免读取失败时把上一个模型的配置显示成当前模型
     touchDraftRef.current = []
     setTouchDraft([])
-    eventBindingsRef.current = cloneEventBindings(DEFAULT_EVENT_BINDINGS)
-    setEventBindings(eventBindingsRef.current)
-    setPartLineDrafts({})
-    setEventLineDrafts({})
     let alive = true
     loadTouchParts().then((view) => {
       if (!alive || seq !== loadSeq.current) return
@@ -1696,89 +1258,25 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       const parts = cloneTouchParts(Array.isArray(view.parts) ? view.parts : [])
       touchDraftRef.current = parts
       setTouchDraft(parts)
-      // 事件绑定：GET 已返回当前生效值；缺失时回退 /state 的 config.events
-      if (view.events) {
-        const draft = eventBindingsFromApi(view.events)
-        eventBindingsRef.current = draft
-        setEventBindings(draft)
-      } else {
-        void loadStateEvents().then((draft) => {
-          if (!alive || seq !== loadSeq.current) return
-          eventBindingsRef.current = draft
-          setEventBindings(draft)
-        })
-      }
       setPartStatus('ready')
       setLoadError(view.error ?? null)
     })
     return () => { alive = false }
   }, [selectedModel, state.status, reloadKey])
 
-  // 解析当前模型的 .model3.json 动作组名（事件绑定 / 触摸部位共用）
-  useEffect(() => {
-    if (state.status !== 'ready' || !selectedModel) return
-    let alive = true
-    setMotionGroupsStatus('loading')
-    void resolveSelectedModelUrl(selectedModel).then((url) => {
-      if (!alive) return
-      if (!url) {
-        setMotionGroups([])
-        setMotionGroupsStatus('error')
-        return
-      }
-      return fetchMotionGroups(url).then((groups) => {
-        if (!alive) return
-        setMotionGroups(groups)
-        setMotionGroupsStatus('ready')
-      }).catch(() => {
-        if (!alive) return
-        setMotionGroups([])
-        setMotionGroupsStatus('error')
-      })
-    })
-    return () => { alive = false }
-  }, [selectedModel, state.status, motionReloadKey])
-
   // 卸载：若有未保存改动则自动补存（防丢），并通知宠物退出 box 预览
   useEffect(() => () => {
     const model = modelDraftRef.current
     if (!model) return
-    if (hasPendingParts() || dirtyEventKeysRef.current.size > 0) {
+    if (hasPendingParts()) {
       // 防丢：关闭设置页时自动补存（静默；clientLog 在 persistDraft 内记录）
-      persistDraft(model, cloneTouchParts(touchDraftRef.current), eventsForSave(), editVersionRef.current, true)
+      persistDraft(model, cloneTouchParts(touchDraftRef.current), editVersionRef.current, true)
     }
     if (flashTimers.current.touch !== undefined) clearTimeout(flashTimers.current.touch)
     if (savedPartTimer.current !== null) clearTimeout(savedPartTimer.current)
-    if (savedEventTimer.current !== null) clearTimeout(savedEventTimer.current)
     if (resetNoticeTimer.current !== null) clearTimeout(resetNoticeTimer.current)
     emitTouchEdit({ active: false, model, parts: cloneTouchParts(touchDraftRef.current) })
   }, [])
-
-  // ---- 事件绑定操作 ----
-  const setEventBinding = (event: PetEventKey, binding: EventBinding): void => {
-    commitEventBindings({ ...eventBindingsRef.current, [event]: binding }, event)
-  }
-
-  const setEventLinePool = (event: PetEventKey, stage: number, raw: string): void => {
-    const current = eventBindingsRef.current[event]
-    const pool = parseEventLines(raw)
-    const lines = current.lines.map((existing, index) => (index === stage ? pool : existing))
-    setEventBinding(event, { ...current, lines })
-  }
-
-  /** 恢复某个事件为 DEFAULT_EVENT_BINDINGS 的动作组 + 台词池。 */
-  const resetEventBinding = (event: PetEventKey): void => {
-    if (readOnly) return
-    const draft = normalizeEventDraft(DEFAULT_EVENT_BINDINGS[event], event)
-    commitEventBindings({ ...eventBindingsRef.current, [event]: draft }, event)
-    setEventLineDrafts((prev) => {
-      const next = { ...prev }
-      for (const key of Object.keys(next)) {
-        if (key.startsWith(`${event}:`)) delete next[key]
-      }
-      return next
-    })
-  }
 
   // ---- 触摸部位操作 ----
   const toggleTouchEditing = (): void => {
@@ -1797,7 +1295,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   }
 
   const addTouchPart = (): void => {
-    const part: TouchPart = { id: nextTouchPartId(touchDraftRef.current), name: '新部位', boxes: [], motions: [] }
+    const part: TouchPart = { id: nextTouchPartId(touchDraftRef.current), name: '新部位', boxes: [] }
     // 新部位插到数组最前面 = 最上层（parts 数组顺序即图层顺序，第 0 项最上层）
     markStructureDirty()
     commitTouchDraft([part, ...touchDraftRef.current], part.id)
@@ -1805,12 +1303,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
 
   const removeTouchPart = (id: string): void => {
     const next = touchDraftRef.current.filter((part) => part.id !== id)
-    setPartLineDrafts((prev) => {
-      if (!(id in prev)) return prev
-      const cleared = { ...prev }
-      delete cleared[id]
-      return cleared
-    })
     markStructureDirty()
     commitTouchDraft(next, expandedPartRef.current === id ? null : expandedPartRef.current)
   }
@@ -1849,124 +1341,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     updateTouchPart(partId, (part) => ({ ...part, boxes: part.boxes.filter((_box, index) => index !== boxIndex) }))
   }
 
-  /** 部位「动作 / 表情」混选（最多各 1 项，见 ADR-023）。 */
-  const setPartMotions = (partId: string, next: string[]): void => {
-    updateTouchPart(partId, (part) => ({ ...part, motions: normalizeMotionSelection(next) }))
-  }
-
-  /** 部位台词变更：一行一条；全空时删除 lines 字段（回退全局默认台词）。 */
-  const setPartLines = (partId: string, raw: string): void => {
-    const lines = parsePartLines(raw)
-    updateTouchPart(partId, (part) => {
-      const next = { ...part }
-      if (lines.length > 0) next.lines = lines
-      else delete next.lines
-      return next
-    })
-  }
-
   const reloadAll = (): void => { setReloadKey((key) => key + 1) }
-  const retryMotionGroups = (): void => { setMotionReloadKey((key) => key + 1) }
-
-  /** 事件绑定卡片：header = [chevron][事件名][摘要][右侧操作组：脏提示/保存/恢复默认]。 */
-  const renderEventCard = (event: PetEventKey): ReactElement => {
-    const binding = eventBindings[event]
-    const stages = eventStageLabels(event)
-    const expanded = expandedEventKeys.has(event)
-    const dirty = dirtyEventKeys.has(event)
-    const summary = `${motionSelectionLabel(binding.motions) || '不触发'} · ${binding.lines[0]?.length ?? 0} 条台词`
-    const options = motionSelectionOptions(motionGroups, binding.motions)
-    const toggleExpanded = (): void => {
-      setExpandedEventKeys((prev) => {
-        const next = new Set(prev)
-        if (next.has(event)) next.delete(event)
-        else next.add(event)
-        return next
-      })
-    }
-    return createElement('div', { key: event, style: cardStyle },
-      createElement('div', { className: 'dsh-card-header-row', style: cardHeaderRowStyle },
-        createElement('button', {
-          type: 'button',
-          'aria-expanded': expanded,
-          onClick: toggleExpanded,
-          className: 'dsh-card-header',
-          style: cardHeaderButtonStyle,
-        },
-          createElement('span', { style: { ...chevronStyle, transform: expanded ? 'rotate(90deg)' : 'none' } }, '▸'),
-          createElement('span', { style: cardTitleStyle }, EVENT_LABELS[event]),
-          createElement('span', { style: { ...cardSummaryStyle, flex: 1, minWidth: 0 } }, summary),
-        ),
-        createElement('div', { style: cardHeaderActionsStyle },
-          dirty
-            ? createElement('span', { style: { ...statusTextStyle, color: C.warn } }, '● 未保存改动')
-            : savedEventFlash?.event === event
-              ? createElement('span', { style: { ...statusTextStyle, color: C.success } }, `已保存 ${savedEventFlash.time}`)
-              : null,
-          dirty
-            ? createElement('button', {
-              type: 'button',
-              className: 'dsh-btn dsh-btn-primary',
-              style: buttonPrimaryStyle,
-              disabled: saveState === 'saving' || readOnly,
-              onClick: () => saveEventCardNow(event),
-            }, '保存')
-            : null,
-          createElement('button', {
-            type: 'button',
-            className: 'dsh-btn dsh-btn-secondary',
-            style: buttonSecondaryStyle,
-            disabled: readOnly,
-            onClick: () => resetEventBinding(event),
-          }, '恢复默认'),
-        ),
-      ),
-      expanded && createElement('div', { style: cardBodyStyle },
-        createElement('div', { style: formRowStyle },
-          createElement('span', { style: formLabelStyle }, '动作 / 表情'),
-          createElement(ThemeMultiSelect, {
-            value: binding.motions,
-            options,
-            exclusive: true,
-            disabled: readOnly,
-            placeholder: '不选 = 只出气泡',
-            onChange: (next) => {
-              const current = eventBindingsRef.current[event]
-              setEventBinding(event, { ...current, motions: normalizeMotionSelection(next) })
-            },
-          }),
-        ),
-        motionGroupsStatus !== 'ready' && createElement('div', {
-          style: { fontSize: 12, color: motionGroupsStatus === 'error' ? C.error : C.textSecondary },
-        }, motionGroupsStatus === 'loading' ? '正在解析动作列表…（表情现在就能选）' : '无法解析动作列表（表情仍可选）'),
-        ...stages.map((stageLabel, stage) => {
-          const draftKey = `${event}:${stage}`
-          const pool = binding.lines[stage] ?? []
-          return createElement('div', { key: `stage-${stage}`, style: formRowStartStyle },
-            createElement('span', { style: formLabelStartStyle }, `台词池 · ${stageLabel}`),
-            createElement('textarea', {
-              style: textareaStyle,
-              value: eventLineDrafts[draftKey] ?? pool.join('\n'),
-              placeholder: '一行一条；留空 = 该阶段不显示气泡',
-              disabled: readOnly,
-              onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
-                const raw = e.target.value
-                // 保留原始输入（否则空行/末尾换行被清洗掉，无法继续输入下一行）
-                setEventLineDrafts((prev) => ({ ...prev, [draftKey]: raw }))
-                setEventLinePool(event, stage, raw)
-              },
-              onBlur: () => setEventLineDrafts((prev) => {
-                if (!(draftKey in prev)) return prev
-                const next = { ...prev }
-                delete next[draftKey]
-                return next
-              }),
-            }),
-          )
-        }),
-      ),
-    )
-  }
 
   /** 部位卡片：header = [chevron][层号 chip][名称][↑][↓][删除部位]，统一 28 高垂直居中。 */
   const renderTouchPartCard = (part: TouchPart, index: number): ReactElement => {
@@ -1974,11 +1349,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     const isTopLayer = index === 0
     const isBottomLayer = index === touchDraft.length - 1
     const layerLabel = `#${index + 1}`
-    // 这里只补「模型里没有的旧动作组名」；表情 id 不能混进来当动作（否则列表出现英文重名行）
-    const groups = [
-      ...motionGroups,
-      ...part.motions.filter((motion) => !motionGroups.includes(motion) && !isExpressionId(motion)),
-    ]
     const dirty = dirtyPartIds.has(part.id)
     const toggleExpanded = (): void => {
       const next = expanded ? null : part.id
@@ -2103,60 +1473,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           disabled: readOnly || part.boxes.length >= MAX_BOXES_PER_PART,
           onClick: () => addBox(part.id),
         }, part.boxes.length >= MAX_BOXES_PER_PART ? `box 已达上限（${MAX_BOXES_PER_PART}）` : '+ 添加 box'),
-        createElement('div', { key: 'part-lines', style: formRowStartStyle },
-          createElement('span', { style: formLabelStartStyle }, '台词'),
-          createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs, minWidth: 0 } },
-            createElement('div', { style: hintStyle }, '一行一条；留空 = 使用全局默认台词池'),
-            createElement('textarea', {
-              style: textareaStyle,
-              value: partLineDrafts[part.id] ?? (part.lines ?? []).join('\n'),
-              placeholder: '留空 = 使用全局默认台词池；一行一条',
-              disabled: readOnly,
-              onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
-                const raw = e.target.value
-                // 原始输入保留在缓冲里（否则空行/末尾换行被清洗掉，没法继续输入下一行）
-                setPartLineDrafts((prev) => ({ ...prev, [part.id]: raw }))
-                setPartLines(part.id, raw)
-              },
-              onBlur: () => setPartLineDrafts((prev) => {
-                if (!(part.id in prev)) return prev
-                const next = { ...prev }
-                delete next[part.id]
-                return next
-              }),
-            }),
-            createElement('div', { style: { fontSize: 12, color: C.textSecondary } },
-              part.lines && part.lines.length > 0
-                ? `${part.lines.length} 条（随机选一条）`
-                : `最多 ${MAX_LINES_PER_PART} 条 × ${MAX_LINE_LENGTH} 字`),
-          ),
-        ),
-        createElement('div', { key: 'part-motions', style: formRowStyle },
-          createElement('span', { style: formLabelStyle }, '动作 / 表情'),
-          createElement(ThemeMultiSelect, {
-            value: part.motions,
-            options: motionSelectionOptions(groups, part.motions),
-            exclusive: true,
-            disabled: readOnly,
-            placeholder: '不选 = 只出气泡',
-            onChange: (next: string[]) => setPartMotions(part.id, next),
-          }),
-        ),
-        motionGroupsStatus !== 'ready' && createElement('div', { style: { fontSize: 12, color: motionGroupsStatus === 'error' ? C.error : C.textSecondary } },
-          motionGroupsStatus === 'loading' ? '正在解析动作列表…（表情现在就能选）' : '无法解析动作列表（表情仍可选，部位照常保存）'),
       ),
     )
   }
 
   // ---- 组装页面 ----
-  const hasChanges = partsDirty || eventsDirty
-  const motionGroupsHint = motionGroupsStatus === 'loading'
-    ? '正在解析模型动画列表…'
-    : motionGroupsStatus === 'error'
-      ? '无法解析动画列表（动作组可留空，配置仍会保存）'
-      : motionGroupsStatus === 'ready'
-        ? `已解析到 ${motionGroups.length} 个动作组`
-        : null
+  const hasChanges = partsDirty
 
   /** 组内 sticky 保存行：左侧状态文本（warn/error/success 语义色）+ 右侧 primary 保存按钮。 */
   const saveRow = (
@@ -2186,7 +1508,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const children: ReactNode[] = [
     createElement('h3', { key: 'title', style: { margin: '0 0 4px', fontSize: 16, fontWeight: 600, color: C.textPrimary } }, 'Waifu 设置'),
     createElement('p', { key: 'sub', style: { ...sectionDescStyle, margin: '0 0 16px' } },
-      '设置立即生效；动画与台词按「事件」绑定，触摸部位可单独覆盖触摸时的表现。修改后点击分组内「保存」写入。'),
+      '设置立即生效；角色的台词、动作、表情由 AI 按人设与场景即兴决定。触摸部位分组修改后点「保存」写入。'),
   ]
 
   if (state.status !== 'ready') {
@@ -2530,25 +1852,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      // 打断优先级（ADR-032）：触摸互动与状态事件抢同一条「气泡 + 动作 + AI 演绎」通道
-      createElement('div', { key: 'interaction-mode', style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '打断优先级'),
-        createElement('div', { style: formControlInlineStyle },
-          createElement('select', {
-            style: selectStyle,
-            value: value.interactionMode,
-            disabled: !writable,
-            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-              const next = e.target.value as InteractionMode
-              enqueueWrite(() => [{ op: 'set', path: ['interactionMode'], value: next }])
-            },
-          },
-            createElement('option', { value: 'touch-first' }, '触摸优先'),
-            createElement('option', { value: 'mutual' }, '互相打断'),
-            createElement('option', { value: 'event-first' }, '事件优先'),
-          ),
-        ),
-      ),
       // 交互条：模型上下的「静音 + 对话输入」条（贴哪一侧 + 额外偏移都在这里）
       createElement('div', { key: 'bar-position', style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '交互条'),
@@ -2595,26 +1898,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     ),
   ))
 
-  // 4. 事件绑定（当前模型）：6 事件的「动作 / 表情」+ 入态台词池
-  children.push(createElement('div', { key: 'event-bindings', style: sectionStyle },
-    createElement(SectionHeader, {
-      title: '事件绑定（当前模型）',
-      description: createElement('div', null,
-        '每个事件 = 动作 / 表情 + 入态台词；长状态（思考/等确认）之后交给 AI 演绎。改完点卡片内的「保存」。',
-        motionGroupsStatus === 'error'
-          ? createElement('div', { style: { ...noticeErrorStyle, marginTop: 8, marginBottom: 0 } },
-            '无法解析当前模型的动作组，动作多选暂不可用（可稍后重试）。',
-            createElement('button', { className: 'dsh-btn dsh-btn-secondary', style: { ...buttonSecondaryStyle, marginLeft: 8 }, onClick: retryMotionGroups }, '重试'),
-          )
-          : null,
-      ),
-      action: motionGroupsHint
-        ? createElement('span', { style: statusTextStyle, color: C.textSecondary }, motionGroupsHint)
-        : undefined,
-    }),
-    ...EVENT_ORDER.map((event) => renderEventCard(event)),
-  ))
-
   // 5. 触摸部位（当前模型）：所有输入始终可编辑；预览开关只控制宠物上的 box 叠加
   children.push(createElement('div', { key: 'touch-parts', style: sectionStyle },
     createElement(SectionHeader, {
@@ -2652,7 +1935,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       : null,
     partStatus === 'ready' && touchDraft.length === 0
       ? createElement('div', { key: 'touch-empty', style: noticeMutedStyle },
-        '这个模型还没有触摸部位：新建部位后画 box、勾选动作，角色被摸到相应区域时就会有反应。')
+        '这个模型还没有触摸部位：新建部位后画 box，角色被摸到相应区域时就会触发反应。')
       : null,
     ...touchDraft.map((part, index) => renderTouchPartCard(part, index)),
     createElement('button', {
@@ -2698,11 +1981,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     }
   }
 
-  // 6. AI 回复（ADR-025）：复用 DSH 已配置的 provider/model；人设读 $DSH_HOME/waifu/persona.md
+  // 6. AI 驱动（ADR-037）：复用 DSH 已配置的 provider/model；台词/动作/表情/记忆全由模型决定
   children.push(createElement('div', { key: 'ai-reply', style: sectionStyle },
     createElement(SectionHeader, {
-      title: 'AI 回复',
-      description: '开启后触摸与状态变化改由 DSH 已配置的模型生成一句台词（失败自动回落下面的预置台词）。',
+      title: 'AI 驱动',
+      description: '角色的台词、动作、表情全部由模型按人设 + 场景 + 历史 + 记忆即兴决定；关闭后角色完全静默。',
       action: createElement(ThemeSwitch, {
         checked: !!value.aiEnabled,
         disabled: !writable,
@@ -2712,85 +1995,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       }),
     }),
     !!value.aiEnabled && createElement('div', null,
-      createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, {
-          title: '仅触摸',
-          hint: value.aiTouchOnly
-            ? '状态变化只用预置台词（状态切换太快，AI 来不及说完）'
-            : '状态变化也会请 AI 说一句',
-        }),
-        createElement('div', { style: formControlInlineStyle },
-          createElement(ThemeSwitch, {
-            checked: !!value.aiTouchOnly,
-            disabled: !writable,
-            onChange: (next) => {
-              enqueueWrite(() => [{ op: 'set', path: ['aiTouchOnly'], value: next }])
-            },
-          }),
-        ),
-      ),
-      // 全 AI 接管（ADR-031）：固定对白一律不出，气泡全靠模型；长状态的「延迟」随之失效
-      createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, {
-          title: '全 AI 接管',
-          hint: value.aiTakeover
-            ? '不显示固定对白，气泡只等模型（人设 + 场景 + 历史）；长状态入态即请求，延迟失效'
-            : '固定对白先出、AI 台词到了再替换',
-        }),
-        createElement('div', { style: formControlInlineStyle },
-          createElement(ThemeSwitch, {
-            checked: !!value.aiTakeover,
-            disabled: !writable,
-            onChange: (next) => {
-              enqueueWrite(() => [{ op: 'set', path: ['aiTakeover'], value: next }])
-            },
-          }),
-        ),
-      ),
-      // 长状态 AI 演绎节奏（ADR-026）：思考/等确认各自一套「延迟 / 间隔 / 次数」
-      ...(['thinking', 'waiting'] as const).map((state) => {
-        const keys = state === 'thinking'
-          ? { delay: 'thinkingAiDelay', interval: 'thinkingAiInterval', max: 'thinkingAiMax' }
-          : { delay: 'waitingAiDelay', interval: 'waitingAiInterval', max: 'waitingAiMax' }
-        const title = state === 'thinking' ? '思考' : '等确认'
-        const takeoverDelayDisabled = !!value.aiTakeover
-        const commit = (key: keyof PetSettingsValue, raw: string, min: number, max: number): void => {
-          const parsed = Number(raw)
-          if (!Number.isFinite(parsed)) return
-          const next = Math.round(Math.min(max, Math.max(min, parsed)))
-          if (next === value[key]) return
-          enqueueWrite(() => [{ op: 'set', path: [key], value: next }])
-        }
-        const numberInput = (
-          key: keyof PetSettingsValue,
-          label: string,
-          unit: string,
-          min: number,
-          max: number,
-        ): ReactElement => createElement('label', { key: `${key}`, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, label),
-          createElement('input', {
-            type: 'number',
-            min,
-            max,
-            step: 1,
-            defaultValue: value[key] as number,
-            style: { ...inputStyle, width: 64, padding: '4px 6px', opacity: takeoverDelayDisabled ? 0.5 : 1 },
-            // 全 AI 接管下「延迟」不再生效（入态立刻请求），置灰避免误以为还能调
-            disabled: !writable || (takeoverDelayDisabled && key === keys.delay),
-            onBlur: (e: FocusEvent<HTMLInputElement>) => commit(key, e.target.value, min, max),
-          }),
-          createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, unit),
-        )
-        return createElement('div', { key: `long-ai-${state}`, style: formRowStyle },
-          createElement('label', { style: formLabelStyle }, `${title}节奏`),
-          createElement('div', { style: { ...formControlStyle, gap: 12, flexWrap: 'wrap' } },
-            numberInput(keys.delay as keyof PetSettingsValue, '延迟', '秒', 0, 120),
-            numberInput(keys.interval as keyof PetSettingsValue, '间隔', '秒', 5, 600),
-            numberInput(keys.max as keyof PetSettingsValue, '上限', '次', 1, 10),
-          ),
-        )
-      }),
       createElement('div', { style: formRowStyle },
         createElement('label', { style: formLabelStyle }, 'Provider'),
         createElement('div', { style: formControlStyle },
@@ -2856,7 +2060,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '注入对话历史（轮）'),
+        createElement(FormLabel, { title: '注入对话历史（轮）', hint: '把最近几轮互动（场景 + 台词 + 动作表情）带进 prompt' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2870,6 +2074,130 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
               const next = normalizeHistoryCount(e.target.value, DEFAULT_AI_HISTORY)
               enqueueWrite(() => [{ op: 'set', path: ['aiHistoryCount'], value: next }])
             },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, { title: '注入记忆（条）', hint: '把 memory.md 里最近的记忆条目带进 prompt；AI 也会自己往里写' }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'number',
+            min: AI_MEMORY_LIMITS.min,
+            max: AI_MEMORY_LIMITS.max,
+            step: 1,
+            value: value.aiMemoryCount,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const next = normalizeMemoryCount(e.target.value, DEFAULT_AI_MEMORY)
+              enqueueWrite(() => [{ op: 'set', path: ['aiMemoryCount'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStyle },
+        createElement(FormLabel, {
+          title: '触发方式',
+          hint: value.triggerMode === 'interrupt'
+            ? '新事件立刻掐掉上一轮反应，马上开始新的一轮（反应更跟手，话可能说一半）'
+            : '等上一轮台词说完（气泡出完/语音念完）才开始新一轮（不抢话，攒着的事件合并触发）',
+        }),
+        createElement('div', { style: formControlStyle },
+          createElement('select', {
+            value: value.triggerMode,
+            disabled: !writable,
+            style: { ...selectStyle, width: 200 },
+            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+              const next = e.target.value === 'queue' ? 'queue' : 'interrupt'
+              if (next !== value.triggerMode) enqueueWrite(() => [{ op: 'set', path: ['triggerMode'], value: next }])
+            },
+          },
+            createElement('option', { value: 'interrupt' }, '截断抢占'),
+            createElement('option', { value: 'queue' }, '排队等说完'),
+          ),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, { title: '最小间隔（秒）', hint: '事件类触发的冷却：间隔内的 DSH 事件不再触发（0 = 不限）' }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'number',
+            min: AI_MIN_INTERVAL_LIMITS.min,
+            max: AI_MIN_INTERVAL_LIMITS.max,
+            step: 1,
+            value: value.aiMinIntervalSec,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const parsed = Number(e.target.value)
+              if (!Number.isFinite(parsed)) return
+              const next = Math.round(Math.min(AI_MIN_INTERVAL_LIMITS.max, Math.max(AI_MIN_INTERVAL_LIMITS.min, parsed)))
+              if (next !== value.aiMinIntervalSec) enqueueWrite(() => [{ op: 'set', path: ['aiMinIntervalSec'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, { title: '静默超时（分钟）', hint: '多久没有任何事件/互动就主动说一句（0 = 关闭）' }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'number',
+            min: 0,
+            max: Math.floor(IDLE_TIMEOUT_LIMITS.max / 60),
+            step: 1,
+            value: Math.round(value.idleTimeoutSec / 60),
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const parsed = Number(e.target.value)
+              if (!Number.isFinite(parsed)) return
+              const minutes = Math.round(Math.min(Math.floor(IDLE_TIMEOUT_LIMITS.max / 60), Math.max(0, parsed)))
+              const next = minutes * 60
+              if (next !== value.idleTimeoutSec) enqueueWrite(() => [{ op: 'set', path: ['idleTimeoutSec'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, { title: '同类事件窗口（秒）', hint: '窗口内同类 DSH 事件只触发一次（如连续读文件）；Host 侧同样有这层节流' }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('input', {
+            type: 'number',
+            min: ACTIVITY_WINDOW_LIMITS.min,
+            max: ACTIVITY_WINDOW_LIMITS.max,
+            step: 1,
+            value: value.activityWindowSec,
+            disabled: !writable,
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              const parsed = Number(e.target.value)
+              if (!Number.isFinite(parsed)) return
+              const next = Math.round(Math.min(ACTIVITY_WINDOW_LIMITS.max, Math.max(ACTIVITY_WINDOW_LIMITS.min, parsed)))
+              if (next !== value.activityWindowSec) enqueueWrite(() => [{ op: 'set', path: ['activityWindowSec'], value: next }])
+            },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowStartStyle },
+        createElement(FormLabel, { title: '触发场景', hint: '打开的事件才会让角色反应；触摸与对话始终可触发，不用开关' }),
+        createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: '6px 10px' } },
+          TRIGGER_ORDER.map((event) => {
+            const enabled = normalizeEventTriggers(value.eventTriggers)[event] !== false
+            return createElement('label', {
+              key: `trigger-${event}`,
+              style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap' },
+            },
+              createElement('input', {
+                type: 'checkbox',
+                checked: enabled,
+                disabled: !writable,
+                onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                  const next = e.target.checked
+                  enqueueWrite(() => [{ op: 'set', path: ['eventTriggers', event], value: next }])
+                },
+              }),
+              TRIGGER_EVENT_LABELS[event] ?? event,
+            )
           }),
         ),
       ),
@@ -2908,6 +2236,32 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             }, personaSaving ? '保存中…' : '保存人设'),
             personaStatus
               ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, personaStatus)
+              : null,
+          ),
+        ),
+      ),
+      // 记忆（ADR-037）：AI 自己写进来的长期记忆；可查看/编辑/保存
+      createElement('div', { style: formRowStartStyle },
+        createElement(FormLabel, { title: '记忆', hint: 'AI 觉得值得记的事会带时间戳写进来；编辑保存后下一次反应生效' }),
+        createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
+          createElement('textarea', {
+            key: 'ai-memory',
+            rows: 8,
+            value: memoryDraft ?? '',
+            style: { ...textareaStyle, height: 148, minHeight: 148, maxHeight: 148, lineHeight: 1.5, flex: 'none', width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 },
+            disabled: !writable || memoryDraft === null,
+            placeholder: memoryDraft === null ? '读取中…' : '- [11-06 14:30] 主人喜欢…\n（一行一条，带时间戳）',
+            onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setMemoryDraft(e.target.value),
+          }),
+          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm, marginTop: 8 } },
+            createElement('button', {
+              type: 'button',
+              style: { ...buttonPrimaryStyle, opacity: memorySaving ? 0.6 : 1 },
+              disabled: !writable || memorySaving || memoryDraft === null,
+              onClick: () => saveMemory(),
+            }, memorySaving ? '保存中…' : '保存记忆'),
+            memoryStatus
+              ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, memoryStatus)
               : null,
           ),
         ),

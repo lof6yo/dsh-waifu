@@ -10,7 +10,7 @@ async function* fromChunks(chunks: ReplyChunk[]): AsyncGenerator<ReplyChunk> {
   }
 }
 
-function collector(): { events: { event: string; data: unknown }[]; emit: (event: 'text' | 'clause' | 'audio' | 'emotion' | 'done' | 'error', data: unknown) => void } {
+function collector(): { events: { event: string; data: unknown }[]; emit: (event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error', data: unknown) => void } {
   const events: { event: string; data: unknown }[] = []
   return { events, emit: (event, data) => { events.push({ event, data }) } }
 }
@@ -18,19 +18,22 @@ function collector(): { events: { event: string; data: unknown }[]; emit: (event
 const audioOf = (text: string) => ({ mime: 'audio/mpeg', audio: Buffer.from(text), cached: false })
 
 describe('runSpeakPipeline', () => {
-  it('情绪标签透传为 emotion 事件，且不进气泡文本', async () => {
+  it('标签与记忆行透传为 tags/memory 事件，且不进气泡文本（ADR-037）', async () => {
     const { events, emit } = collector()
     const result = await runSpeakPipeline({
       chunks: fromChunks([
-        { type: 'emotion', emotion: 'shy' },
+        { type: 'tags', expressions: ['blush'], motions: ['Tilt'] },
         { type: 'delta', text: '别、别看了啦。' },
+        { type: 'memory', note: '主人爱看我' },
         { type: 'done', text: '别、别看了啦。' },
       ]),
       synthesize: async (text) => audioOf(text),
       emit,
     })
-    expect(events[0]).toEqual({ event: 'emotion', data: { emotion: 'shy' } })
+    expect(events[0]).toEqual({ event: 'tags', data: { expressions: ['blush'], motions: ['Tilt'] } })
     expect(result.text).toBe('别、别看了啦。')
+    expect(result.memory).toBe('主人爱看我')
+    expect(events.some((item) => item.event === 'memory')).toBe(true)
   })
 
   it('按句读切段，并先发 clause 再发 audio', async () => {

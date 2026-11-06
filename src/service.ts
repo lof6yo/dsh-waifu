@@ -13,9 +13,8 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-tool-present/types'
 import type {} from '@deepseek-ai/dsh-user-approval'
-import type { EventBindings, TouchPart } from './models.ts'
-import { DEFAULT_EVENT_BINDINGS, PET_EVENTS, mergeEventBindings } from './models.ts'
-import { resolveModelUrl, resolveMotionMap, resolveDefaultTouchParts } from './models-host.ts'
+import type { TouchPart } from './models.ts'
+import { resolveModelUrl, resolveDefaultTouchParts } from './models-host.ts'
 import {
   loadPetPersistDetailed,
   savePetPersist,
@@ -81,28 +80,30 @@ export interface PetStateView {
     /** 气泡最长连续可见秒数（0 = 不限）。 */
     bubbleMaxSeconds: number
     bubbleTextColor: string
-    /** AI 回复开关（ADR-025）。 */
+    /** AI 驱动总开关（ADR-037：关掉 = 角色完全静默，只剩物理反应）。 */
     aiEnabled: boolean
-    aiTouchOnly: boolean
-    aiTakeover: boolean
     idleMotionEnabled: boolean
-    interactionMode: string
-    /** 交互条位置：`top` | `bottom`。 */
+    /** 交互条位置：`top` | `bottom` | `hidden`。 */
     barPosition: string
     /** 交互条额外偏移（px，正数远离模型）。 */
     barOffset: number
-    /** AI 回复用的 provider 路由与模型 id（设置页下拉选中的值，快照透传给宠物半边）。 */
+    /** AI 用的 provider 路由与模型 id（快照透传给宠物半边）。 */
     aiProvider: string
     aiModel: string
-    /** 注入到 prompt 的最近对话条数（0 = 不注入，ADR-030）。 */
+    /** 注入的最近对话轮数（0 = 不注入）。 */
     aiHistoryCount: number
-    /** 长状态 AI 演绎节奏（秒/秒/次，ADR-026）。 */
-    thinkingAiDelay: number
-    thinkingAiInterval: number
-    thinkingAiMax: number
-    waitingAiDelay: number
-    waitingAiInterval: number
-    waitingAiMax: number
+    /** 注入的最近记忆条数（0 = 不注入；ADR-037）。 */
+    aiMemoryCount: number
+    /** 触发频率策略：interrupt = 掐掉上一轮立刻反应，queue = 等上一轮说完。 */
+    triggerMode: string
+    /** 事件类触发的最小间隔（秒；触摸/对话不受限）。 */
+    aiMinIntervalSec: number
+    /** 静默超时（秒；0 = 关闭）。 */
+    idleTimeoutSec: number
+    /** 同类事件触发窗口（秒）。 */
+    activityWindowSec: number
+    /** 按 DSH 事件类型粒度的触发开关。 */
+    eventTriggers: Record<string, boolean>
     /** 语音合成与口型（ADR-033）。 */
     ttsEnabled: boolean
     ttsModel: string
@@ -110,8 +111,6 @@ export interface PetStateView {
     lipsyncEnabled: boolean
     lipsyncGain: number
     focusRange: number
-    /** 六个事件的绑定（动画组候选 + 台词池；内置/自定义默认 → 用户覆盖）。 */
-    events: EventBindings
     /** 当前模型生效的触摸部位（用户自定义优先，其次内置默认；spec §4）。 */
     touchParts: TouchPart[]
   }
@@ -129,6 +128,7 @@ const DONE_HOLD_MS = 3500
 /**
  * 同类活动的最小间隔（ms）：读文件/跑命令一秒好几次，全播会像抽筋、也像话痨（ADR-036）。
  * 只对「同类」节流 —— 否则派子代理时 `tool-agent` 会把紧随其后的 `subagent-start` 吞掉。
+ * 窗口时长来自设置项 activityWindowSec（ADR-037），默认 3 秒。
  */
 const ACTIVITY_THROTTLE_MS = 3000
 
@@ -324,24 +324,6 @@ export class PetService {
     return resolveDefaultTouchParts(model)
   }
 
-  /**
-   * 当前模型生效的事件绑定：内置默认台词 + 模型动作组（preset/自定义 animationMap），
-   * 再叠加用户在该模型上的覆盖（touch-parts.jsonc 的 events；整事件替换）。
-   */
-  effectiveEvents(model: string): EventBindings {
-    const resolvedMotions = resolveMotionMap(model)
-    const base = {} as EventBindings
-    for (const event of PET_EVENTS) {
-      const fallback = DEFAULT_EVENT_BINDINGS[event]
-      base[event] = {
-        motions: resolvedMotions[event] ?? fallback.motions,
-        lines: fallback.lines,
-      }
-    }
-    const override = this.touchPartsStore?.load().models[model]?.events
-    return mergeEventBindings(base, override)
-  }
-
   /** 浏览器轮询用的状态快照（配置实时读取设置文件快照，spec §2）。 */
   snapshot(): PetStateView {
     const settings = this.getSettings()
@@ -368,28 +350,24 @@ export class PetService {
         bubbleMaxSeconds: settings.bubbleMaxSeconds,
         bubbleTextColor: settings.bubbleTextColor,
         aiEnabled: settings.aiEnabled,
-        aiTouchOnly: settings.aiTouchOnly,
-        aiTakeover: settings.aiTakeover,
         idleMotionEnabled: settings.idleMotionEnabled,
-        interactionMode: settings.interactionMode,
         barPosition: settings.barPosition,
         barOffset: settings.barOffset,
         aiProvider: settings.aiProvider,
         aiModel: settings.aiModel,
         aiHistoryCount: settings.aiHistoryCount,
-        thinkingAiDelay: settings.thinkingAiDelay,
-        thinkingAiInterval: settings.thinkingAiInterval,
-        thinkingAiMax: settings.thinkingAiMax,
-        waitingAiDelay: settings.waitingAiDelay,
-        waitingAiInterval: settings.waitingAiInterval,
-        waitingAiMax: settings.waitingAiMax,
+        aiMemoryCount: settings.aiMemoryCount,
+        triggerMode: settings.triggerMode,
+        aiMinIntervalSec: settings.aiMinIntervalSec,
+        idleTimeoutSec: settings.idleTimeoutSec,
+        activityWindowSec: settings.activityWindowSec,
+        eventTriggers: settings.eventTriggers,
         ttsEnabled: settings.ttsEnabled,
         ttsModel: settings.ttsModel,
         ttsVoice: settings.ttsVoice,
         lipsyncEnabled: settings.lipsyncEnabled,
         lipsyncGain: settings.lipsyncGain,
         focusRange: settings.focusRange,
-        events: this.effectiveEvents(settings.model),
         touchParts: this.touchPartsFor(settings.model),
       },
       display: { ...this.display },
@@ -403,13 +381,9 @@ export class PetService {
     return this.touchPartsStore?.load() ?? { models: {}, error: null, path: '' }
   }
 
-  /** 写回某个模型的触摸部位（+ 可选事件绑定覆盖）并推送（设置页保存后调用；spec §4）。 */
-  saveTouchParts(
-    model: string,
-    parts: readonly TouchPart[],
-    events?: Partial<EventBindings>,
-  ): TouchPartsFileView {
-    const view = this.touchPartsStore?.save(model, parts, events) ?? { models: {}, error: null, path: '' }
+  /** 写回某个模型的触摸部位并推送（设置页保存后调用；spec §4）。 */
+  saveTouchParts(model: string, parts: readonly TouchPart[]): TouchPartsFileView {
+    const view = this.touchPartsStore?.save(model, parts) ?? { models: {}, error: null, path: '' }
     this.version += 1
     this.emitChange()
     return view

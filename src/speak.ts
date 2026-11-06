@@ -1,5 +1,5 @@
 /**
- * 流式演绎管线（ADR-033）：LLM 文本增量 → 句读切分 → 逐段合成 → 按序下发。
+ * 流式演绎管线（ADR-033 / ADR-037）：LLM 文本增量 → 句读切分 → 逐段合成 → 按序下发。
  *
  * 为什么按「句读」而不是按字流式：
  * - 一句台词只有十几个字，按标点切开后每段 4–24 字，第一段合成完就能出声；
@@ -8,6 +8,9 @@
  *
  * 事件顺序保证：`clause(i)` 一定先于 `audio(i)`；`audio(0..n)` 严格按序下发，
  * 即使后段合成先返回也会排队等前段（否则口型会对错嘴）。
+ *
+ * ADR-037：chunk 里不再是 `emotion`，而是 `tags`（表情/动作目录 id）与收尾的
+ * `memory`（AI 的 [记] 行）——都原样透传给客户端。
  * @module dsh-waifu/speak
  */
 
@@ -18,7 +21,7 @@ import type { ReplyChunk } from './ai.ts'
 export const SPEAK_MAX_CHARS = 400
 
 /** 事件下发函数（由路由层转成 SSE 帧）。 */
-export type SpeakEmit = (event: 'text' | 'clause' | 'audio' | 'emotion' | 'done' | 'error', data: unknown) => void
+export type SpeakEmit = (event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error', data: unknown) => void
 
 /** 管线依赖：假实现即可测试（见 speak.test.ts）。 */
 export interface SpeakPipelineOptions {
@@ -32,17 +35,18 @@ export interface SpeakPipelineOptions {
   signal?: AbortSignal
 }
 
-/** 管线结果：最终整句 + 实际下发的段数。 */
+/** 管线结果：最终整句 + 实际下发的段数 + AI 留下的记忆行。 */
 export interface SpeakResult {
   text: string
   clauses: number
   audio: number
+  memory?: string
 }
 
 /**
  * 跑一轮流式演绎。
  * @param options - 文本流、合成函数与事件出口。
- * @returns 最终整句、段数与成功出声的段数。
+ * @returns 最终整句、段数、成功出声的段数与记忆行。
  */
 export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<SpeakResult> {
   const { chunks, synthesize, emit, signal } = options
@@ -53,6 +57,7 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
   let buffer = ''
   let total = ''
   let result = ''
+  let memory: string | undefined
   /**
    * 串行下发链：所有「把音频发出去」的动作都挂在这条链上，
    * 于是同一时刻只会有一个 drain 在跑，不需要 `pumping` 标志位那种
@@ -119,9 +124,15 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       }
       continue
     }
-    if (chunk.type === 'emotion') {
-      // 情绪标签先于台词到达：转给前端驱动表情/身体语言，不进气泡也不进 TTS
-      emit('emotion', { emotion: chunk.emotion })
+    if (chunk.type === 'tags') {
+      // 目录标签先于台词到达：转给前端驱动表情/动作，不进气泡也不进 TTS
+      emit('tags', { expressions: chunk.expressions, motions: chunk.motions })
+      continue
+    }
+    if (chunk.type === 'memory') {
+      // AI 的 [记] 行（ADR-037）：Host 落盘，客户端只做日志
+      memory = chunk.note
+      emit('memory', { note: chunk.note })
       continue
     }
     if (chunk.type === 'done') {
@@ -134,7 +145,7 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       await kick()
       emit('error', { error: chunk.error })
       emit('done', { text: result || total })
-      return { text: result || total, clauses: nextIndex, audio: audioCount }
+      return { text: result || total, clauses: nextIndex, audio: audioCount, memory }
     }
   }
 
@@ -149,5 +160,5 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     await kick()
   }
   emit('done', { text: result || total })
-  return { text: result || total, clauses: nextIndex, audio: audioCount }
+  return { text: result || total, clauses: nextIndex, audio: audioCount, memory }
 }

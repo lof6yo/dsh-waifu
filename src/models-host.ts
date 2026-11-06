@@ -2,6 +2,8 @@
  * Host 侧模型清单读取与解析：内置 presets.jsonc（JSONC 支持注释）由 Node 读取。
  * 本模块不可被 client 打包引入（依赖 node:fs / node:path / node:url）。
  * 共享类型与默认值见 `models.ts`。
+ * ADR-037：animationMap/DEFAULT_MOTION_MAP 已删——状态动画槽位只由 AI 选目录动作驱动；
+ * 这里只保留 preset id → modelUrl / 默认触摸部位两组解析。
  * @module dsh-waifu/models-host
  */
 
@@ -9,9 +11,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  DEFAULT_MOTION_MAP,
   type BuiltinPreset,
-  type MotionMap,
   type TouchPart,
 } from './models.ts'
 
@@ -74,18 +74,9 @@ export function defaultModelId(): string {
 }
 
 /**
- * 按当前模型解析生效状态动画映射：内置 preset 的 animationMap 覆盖默认映射。
- * 只做浅合并：配置过的槽位覆盖，未配置槽位沿用默认。
- */
-export function resolveMotionMap(model: string): MotionMap {
-  const preset = presetsData.presets.find((p) => p.id === model)
-  if (preset?.animationMap) return { ...DEFAULT_MOTION_MAP, ...preset.animationMap }
-  return { ...DEFAULT_MOTION_MAP }
-}
-
-/**
  * 按当前选中模型解析「默认触摸部位」（内置 preset 随包提供的默认值）：
  * 用户保存过自定义部位时由 TouchPartsStore 覆盖，这里只给回退值。
+ * 部位只含 id/name/boxes（ADR-037）。
  */
 export function resolveDefaultTouchParts(model: string): TouchPart[] {
   const preset = presetsData.presets.find((p) => p.id === model)

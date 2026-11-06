@@ -1,19 +1,22 @@
 /**
- * AI 回复（ADR-025）：人设文件 + 情景提示 → DSH LLM（`ctx.llm`）流式接口 → 一句台词。
+ * AI 驱动的一切（ADR-037）：人设 + 场景 + 历史 + 记忆 + 动作/表情目录 → 一次 LLM 流式调用
+ * → 插件解析出「台词 + 表情 + 动作 + 记忆」驱动角色。
  *
  * 设计约束：
  * - 复用 DSH 已配置的 provider/model 与账号凭据，插件不另存 API Key（ADR-025）。
- * - 只在 Host 侧调用；客户端只发「发生了什么」，拿回一句文本填进气泡。
- * - 台词必须短、单行、无旁白：`sanitizeLine` 统一裁剪，超时/失败由调用方回落预置台词池。
+ * - 只在 Host 侧调用；客户端只发「发生了什么」，拿回结构化的反应。
+ * - 输出格式 = 标签流式（用户已拍板）：句首 `[表情][动作]`（中英文都认），
+ *   正文逐句流式（接 TTS），句尾 `[记] 内容` 行不进气泡、不进 TTS、写 memory.md。
+ * - AI 失败 = 完全静默（用户已拍板）：不出气泡、不播动作，只剩物理反应（眨眼/跟随/待机小动作）。
  * @module dsh-waifu/ai
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { AI_HISTORY_LIMITS, normalizeHistoryCount } from './defaults.ts'
-import { stripTimestamps } from './models.ts'
+import { AI_HISTORY_LIMITS, AI_MEMORY_LIMITS, normalizeHistoryCount, normalizeMemoryCount } from './defaults.ts'
+import { AI_MOTIONS, EXPRESSIONS, isExpressionId, isMotionId, stripTimestamps } from './models.ts'
 
-export { AI_HISTORY_LIMITS, normalizeHistoryCount }
+export { AI_HISTORY_LIMITS, AI_MEMORY_LIMITS, normalizeHistoryCount, normalizeMemoryCount }
 
 /** 一句台词的长度上限（UTF-16 单元；气泡宽度有限，spec §4）。 */
 export const MAX_REPLY_CHARS = 60
@@ -77,7 +80,6 @@ export interface WaifuLlmRequest {
   messages: { role: string; content: readonly unknown[] }[]
   temperature?: number
   maxTokens?: number
-  stop?: string[]
   /** 关闭推理链（部分模型开启推理后只产出 reasoning，正文为空）。 */
   reasoningEffort?: string
   signal?: AbortSignal
@@ -86,39 +88,27 @@ export interface WaifuLlmRequest {
 /** `StreamChunk` 的子集：只关心文本增量。 */
 export type WaifuLlmChunk = { type: 'text-delta'; text: string } | { type: string; text?: string }
 
-/** 一次回复请求的描述（客户端上报的「发生了什么」）。 */
+/** 触摸交互类型（轻碰/戳戳/抚摸，按按住时长区分；ADR-037）。 */
+export type TapKind = 'light' | 'poke' | 'stroke'
+
+/** 一次 AI 触发的场景描述（客户端上报的「发生了什么」）。 */
 export interface ReplyContext {
-  /** 触发来源：触摸部位（`tap`）、状态变化（`state`）或用户在交互条里说的话（`chat`）。 */
-  kind: 'tap' | 'state' | 'chat'
+  /** 触发来源：触摸（`tap`）、DSH 事件（`event`）、用户对话（`chat`）或静默超时（`idle`）。 */
+  kind: 'tap' | 'event' | 'chat' | 'idle'
   /** 触摸部位的中文名（`kind: 'tap'`）。 */
   part?: string
+  /** 触摸类型（`kind: 'tap'`；轻碰/戳戳/抚摸）。 */
+  tapKind?: TapKind
+  /** 触摸按住时长（ms，`kind: 'tap'`）。 */
+  durationMs?: number
   /** 用户输入的原话（`kind: 'chat'`，已单行化并截断）。 */
   text?: string
-  /** 当前宠物状态（idle/thinking/...）。 */
-  state?: string
-  /** 该部位/事件原本会说的一句话（作为语气参考，不要求复述）。 */
-  hint?: string
+  /** DSH 事件键（`kind: 'event'`：状态或活动）。 */
+  event?: string
+  /** 上一轮反应开始后，本窗口内被合并进来的事件描述（ADR-037 事件合并）。 */
+  merged?: string[]
   /** 请求方（浏览器）的 IANA 时区，用来把「现在几点」换算到用户所在时区。 */
   tz?: string
-}
-
-/** 设置里填的是「轮」；一轮 = 用户一句 + 桌宠一句。 */
-export const HISTORY_ENTRIES_PER_ROUND = 2
-/** 注入给模型的最近对话条数上限（防止超长历史把 token 预算吃满）。 */
-export const AI_HISTORY_MAX_ENTRIES: number = AI_HISTORY_LIMITS.max * HISTORY_ENTRIES_PER_ROUND
-
-/**
- * 一条对话历史（`user` = 我们发过去的情景描述，`assistant` = 桌宠当时的台词）。
- * assistant 条目额外记住「当时是哪个 provider/model 说的」：pi-ai 适配器重建历史时要读
- * `message.source`，缺了会直接抛 `Cannot read properties of undefined (reading 'replayState')`。
- */
-export interface AiHistoryEntry {
-  role: 'user' | 'assistant'
-  text: string
-  /** 这条对话发生的时间（epoch ms）；注入时作为时间戳前缀，模型靠它判断「多久以前」。 */
-  at: number
-  provider?: string
-  model?: string
 }
 
 const pad2 = (value: number) => String(value).padStart(2, '0')
@@ -221,6 +211,25 @@ export interface HistoryMessage {
 }
 
 /**
+ * 一条对话历史：user = 我们发过去的场景描述，assistant = 桌宠当时的「台词 + 做了什么」。
+ * assistant 条目额外记住「当时是哪个 provider/model 说的」：pi-ai 适配器重建历史时要读
+ * `message.source`，缺了会直接抛 `Cannot read properties of undefined (reading 'replayState')`。
+ */
+export interface AiHistoryEntry {
+  role: 'user' | 'assistant'
+  text: string
+  /** 这条对话发生的时间（epoch ms）；注入时作为时间戳前缀，模型靠它判断「多久以前」。 */
+  at: number
+  provider?: string
+  model?: string
+}
+
+/** 设置里填的是「轮」；一轮 = 用户一句 + 桌宠一句。 */
+export const HISTORY_ENTRIES_PER_ROUND = 2
+/** 注入给模型的最近对话条数上限（防止超长历史把 token 预算吃满）。 */
+export const AI_HISTORY_MAX_ENTRIES: number = AI_HISTORY_LIMITS.max * HISTORY_ENTRIES_PER_ROUND
+
+/**
  * 把历史切成 `messages` 段：取最近 `count` 条，并丢掉开头没有配对提问的 assistant 条目
  * （模型不喜欢以 assistant 开头的上下文）。
  */
@@ -295,16 +304,14 @@ export function loadPersona(homeDir: string): string {
 }
 
 /**
- * 拼「现在发生了什么」的用户消息（模型只看这一句就能接话）。
- *
- * `forHistory: true` 时去掉「你下意识想说的是『…』」这半句（ADR-030 修订）：
- * 历史只该记录真实发生的事——参考台词并没有上屏，留着会让模型把预置台词当成自己说过的话。
+ * DSH 事件键 → 场景描述（ADR-037）：状态 + 活动都只是「发生了什么」的一种。
  */
-/**
- * 活动事件（ADR-036）的场景描述：工具 / 审批 / 会话 / 子代理。
- * 它们和状态事件共用同一条 AI 演绎链路，只是场景文案不同。
- */
-const ACTIVITY_SCENES: Record<string, string> = {
+const EVENT_SCENES: Record<string, string> = {
+  thinking: '主人让你想事情，你正在思考',
+  error: '出错了，气氛有点僵',
+  done: '事情办完了',
+  waiting: '主人正在等你确认什么',
+  delivered: '主人刚交付了成果',
   'tool-read': '主人让你看东西，你正翻着资料',
   'tool-write': '主人让你写/改东西，你刚动完笔',
   'tool-run': '主人让你跑命令，你刚按下回车',
@@ -318,41 +325,47 @@ const ACTIVITY_SCENES: Record<string, string> = {
   'subagent-end': '你的分身干完活回来了',
 }
 
-export function buildSceneMessage(context: ReplyContext, options: { forHistory?: boolean } = {}): string {
-  const state = context.state ?? 'idle'
-  const activityScene = ACTIVITY_SCENES[state]
-  const said = (context.text ?? '').replace(/\s+/g, ' ').trim()
-  const where = context.kind === 'chat'
-    ? `主人刚对你说「${said || '（没说话）'}」`
-    : context.kind === 'tap'
-      ? `主人刚戳了你的「${context.part || '身体'}」`
-      : activityScene
-        ? `眼下${activityScene}`
-        : `当前状态是「${state}」（${
-        state === 'thinking' ? '主人在等你想事情'
-          : state === 'error' ? '出错了，气氛有点僵'
-            : state === 'done' ? '事情办完了'
-              : state === 'waiting' ? '主人正在等你确认'
-                : state === 'delivered' ? '主人刚交付了成果'
-                  : '主人在看着你'
-      }）`
-  // 参考台词只给方向，明确禁止「换一种说法」式的改写：要的是即兴演绎，不是 paraphrasing
-  const hint = !options.forHistory && context.hint
-    ? `你下意识想说的是「${context.hint}」，但别照搬，也不必复述。`
-    : ''
-  // 用户主动说话时不是「演一下现在的反应」，而是「回应这句话」
+/** 触摸类型 → 场景动词。 */
+const TAP_KIND_SCENES: Record<TapKind, string> = {
+  light: '轻轻碰了一下',
+  poke: '戳了戳',
+  stroke: '温柔地抚摸',
+}
+
+/**
+ * 拼「现在发生了什么」的用户消息（模型只看这一句就能接话）。
+ * `merged` 是触发频率窗口内被合并进来的事件描述（ADR-037）。
+ */
+export function buildSceneMessage(context: ReplyContext): string {
+  const now = formatNow(Date.now(), context.tz)
+  let where: string
+  if (context.kind === 'chat') {
+    const said = (context.text ?? '').replace(/\s+/g, ' ').trim()
+    where = `主人刚对你说「${said || '（没说话）'}」`
+  } else if (context.kind === 'tap') {
+    const tapKind = context.tapKind ?? 'poke'
+    const verb = TAP_KIND_SCENES[tapKind]
+    const duration = context.durationMs !== undefined ? `，按了约 ${(context.durationMs / 1000).toFixed(1)} 秒` : ''
+    where = `主人${verb}你的「${context.part || '身体'}」${duration}`
+  } else if (context.kind === 'idle') {
+    where = '有一阵子没人理你，也没发生什么事'
+  } else {
+    const event = context.event ?? 'idle'
+    where = `眼下${EVENT_SCENES[event] ?? `发生了「${event}」这件事`}`
+  }
+  // 事件合并：窗口内被攒下来的事件一起描述（模型自己会挑重点反应）
+  const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
+  const mergedText = merged.length > 0 ? `这期间还发生了：${merged.join('；')}。` : ''
   const ask = context.kind === 'chat'
-    ? '按你的人设回应主人这句话，一句话。'
-    : '按你的人设即兴演一下这一刻的反应，一句话。'
-  return `（现在是 ${formatNow(Date.now(), context.tz)}。${where}。${hint}）${ask}`
+    ? '按你的人设回应主人这句话。'
+    : '按你的人设即兴演一下这一刻的反应。'
+  return `（现在是 ${now}。${where}。${mergedText}）${ask}`
 }
 
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */
 export function sanitizeLine(raw: string): string {
   const firstLine = raw.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? ''
-  // 有的模型会给回复加「[14:57] 哼…」这类时间戳，进气泡前先滤掉
-  const tagged = parseEmotionTag(firstLine)
-  const stripped = stripTimestamps(tagged.rest)
+  const stripped = stripTimestamps(firstLine)
     .replace(/^["'“”‘’「」『』]+/, '')
     .replace(/["'“”‘’「」『』]+$/, '')
     .trim()
@@ -360,12 +373,15 @@ export function sanitizeLine(raw: string): string {
   return `${stripped.slice(0, MAX_REPLY_CHARS - 1)}…`
 }
 
-/** 生成一条台词；超时、无文本或抛错时返回 null（调用方回落预置台词）。 */
 /** 生成结果：`text` 为空时 `error` 给出原因（供路由层回传，便于排查「为什么没台词」）。 */
 export interface ReplyAttempt {
   text: string | null
-  /** 模型标注的情绪（驱动表情/身体语言）；缺省表示没标或标了不认识的。 */
-  emotion?: Emotion | null
+  /** AI 选中的表情目录 id（已过滤到目录内；无则空数组）。 */
+  expressions?: string[]
+  /** AI 选中的动作目录 id（已过滤到目录内；无则空数组）。 */
+  motions?: string[]
+  /** AI 的 [记] 行（无则 undefined）。 */
+  memory?: string
   error?: string
 }
 
@@ -391,116 +407,133 @@ function describeFinish(reason: unknown): string | undefined {
 }
 
 /**
- * 拼 system 提示词：人设 + 输出要求（长度/单行/不旁白/不复述参考台词）。
- * 一次性回复与流式回复共用，保证两条路径的口味一致。
- * @param persona - 人设正文（`$DSH_HOME/waifu/persona.md`）。
- * @returns 完整 system 字符串。
+ * 开头的标签（表情/动作）：`[shy]`、`【害羞】`、`(blush)`，允许 markdown 记号与中英文混合。
+ * 认不出的标签也剥掉——它是写给前端的控制信号，绝不能显示或念出来。
  */
-/** 模型可以标注的情绪（驱动表情 / 口型 / 动作；未知标签按 neutral 处理）。 */
-export const EMOTIONS = ['happy', 'angry', 'sad', 'shy', 'surprised', 'smug', 'neutral'] as const
-export type Emotion = (typeof EMOTIONS)[number]
-
-/**
- * 情绪词表：模型实际会写的各种说法都收进来（英文别名 + 中文同义词）。
- * 标签是给前端的控制信号，宁可多认几个词，也别让它把标签念出来。
- */
-const EMOTION_WORDS: Record<Emotion, readonly string[]> = {
-  happy: ['happy', 'joy', 'joyful', 'glad', 'cheerful', 'delighted', '开心', '高兴', '愉快', '快活', '欢喜', '兴奋', '乐', '笑', '比心', '心动'],
-  angry: ['angry', 'mad', 'annoyed', 'irritated', 'furious', '生气', '愤怒', '恼火', '恼', '不爽', '火大', '暴怒', '凶', '不悦'],
-  sad: ['sad', 'sorrow', 'upset', 'down', 'depressed', '难过', '伤心', '委屈', '失落', '沮丧', '郁闷', '低落', '哭', '悲'],
-  shy: ['shy', 'bashful', 'embarrassed', 'blush', 'flustered', '害羞', '脸红', '羞', '不好意思', '害臊', '窘', '慌乱', '羞涩'],
-  surprised: ['surprised', 'surprise', 'shocked', 'startled', 'astonished', '惊讶', '吃惊', '震惊', '错愕', '愣', '傻眼', '惊', '意外'],
-  smug: ['smug', 'proud', 'confident', 'teasing', '得意', '骄傲', '嚣张', '傲娇', '坏笑', '狡黠', '调侃', '戏谑'],
-  neutral: ['neutral', 'calm', 'plain', 'flat', '平静', '平淡', '无语', '无奈', '淡定', '面无表情', '普通'],
-}
-
-/** 长词优先匹配：`[有点害羞]` 里「害羞」比「羞」更精确。 */
-const EMOTION_LOOKUP: readonly { word: string; emotion: Emotion }[] = (
-  Object.entries(EMOTION_WORDS) as [Emotion, readonly string[]][]
-)
-  .flatMap(([emotion, words]) => words.map((word) => ({ word: word.toLowerCase(), emotion })))
-  .sort((a, b) => b.word.length - a.word.length)
-
-/** 开头的标签：`[shy]`、`【害羞】`、`(shy)`、`〔smug〕`，允许前导 markdown 记号。 */
 const TAG_PATTERN = /^\s*[*_`~]*\s*[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]\s*[*_`~]*\s*/
 const TAG_OPEN_ONLY = /^\s*[*_`~]*\s*[[［【(（〔〖][^\]］】）}〕〗\n]{0,32}$/
 const TAG_ANY = /[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]/g
 
-export function normalizeEmotion(raw: string | undefined | null): Emotion | null {
-  if (!raw) return null
-  const cleaned = raw
-    .replace(/[\s"'“”‘’`*_~·、,，。.!！?？:：=／/|]+/g, '')
-    .toLowerCase()
-    .replace(/^(emotion|mood|feeling|tag|情绪|表情|语气)/, '')
+/** 开头标签的解析结果：表情/动作 id（在目录内才算数）。 */
+export interface LeadingTags {
+  expressions: string[]
+  motions: string[]
+  rest: string
+}
+
+/** 判断一个标签词是不是可执行的表情/动作（目录内才算控制信号）。 */
+function classifyTag(word: string): 'expression' | 'motion' | null {
+  const cleaned = word.trim().toLowerCase().replace(/[\s"'“”‘’`*_~·、,，。.!！?？:：]/g, '')
   if (!cleaned) return null
-  if ((EMOTIONS as readonly string[]).includes(cleaned)) return cleaned as Emotion
-  for (const { word, emotion } of EMOTION_LOOKUP) if (cleaned === word) return emotion
-  // 包含匹配只在「多字词/英文词」上做，避免单字（笑、哭）误伤正常台词
-  for (const { word, emotion } of EMOTION_LOOKUP) {
-    if ((word.length >= 2 || /[a-z]/.test(word)) && cleaned.includes(word)) return emotion
-  }
+  // 目录词表：动作 id / 表情 id / 中文名 / meaning 关键词都不该念出来
+  const motion = AI_MOTIONS.find((m) =>
+    m.id.toLowerCase() === cleaned || m.name === word.trim() || m.meaning.includes(word.trim()),
+  )
+  if (motion) return 'motion'
+  const expression = EXPRESSIONS.find((e) =>
+    e.id.toLowerCase() === cleaned || e.name === word.trim(),
+  )
+  if (expression) return 'expression'
+  if (isMotionId(cleaned)) return 'motion'
+  if (isExpressionId(cleaned)) return 'expression'
   return null
 }
 
-/** 去掉句中那些「能认出来是情绪」的方括号标签（模型偶尔把标签写在句子中间）。 */
-function stripInlineEmotionTags(text: string): string {
-  return text.replace(TAG_ANY, (all, inner: string) => (normalizeEmotion(inner) ? '' : all)).replace(/\s{2,}/g, ' ').trimStart()
-}
-
 /**
- * 拆掉回复开头的情绪标签（最多连剥 3 个）：`[shy] 台词` / `【害羞】台词` / `(shy)台词`。
- * 认不出的标签也剥掉——它一定是写给前端的控制信号，绝不能显示或念出来。
+ * 拆掉回复开头的标签（最多连剥 3 个），收集目录内的表情/动作 id。
+ * 认不出的标签也剥掉（控制信号不能上屏）。
  */
-export function parseEmotionTag(text: string): { emotion: Emotion | null; rest: string } {
+export function parseLeadingTags(text: string): LeadingTags {
   let rest = text
-  let emotion: Emotion | null = null
+  const expressions: string[] = []
+  const motions: string[] = []
   for (let i = 0; i < 3; i += 1) {
     const match = TAG_PATTERN.exec(rest)
     if (!match) break
-    emotion = emotion ?? normalizeEmotion(match[1])
+    const kind = classifyTag(match[1])
+    if (kind === 'expression') expressions.push(match[1].trim().toLowerCase())
+    else if (kind === 'motion') motions.push(match[1].trim())
     rest = rest.slice(match[0].length)
   }
-  return { emotion, rest: stripInlineEmotionTags(rest) }
+  return { expressions, motions, rest: rest.trimStart() }
+}
+
+/** 去掉句中那些「能认出来是表情/动作」的方括号标签（模型偶尔把标签写在句子中间）。 */
+function stripInlineTags(text: string): string {
+  return text.replace(TAG_ANY, (all, inner: string) => (classifyTag(inner) ? '' : all))
+    .replace(/\s{2,}/g, ' ')
+    .trimStart()
+}
+
+/** 「[记] …」记忆行：句尾单独一行（或紧跟在句尾）。 */
+const MEMORY_LINE = /(?:^|\n)\s*[[［【(（〔〖]\s*(?:记|memory|remember|note)\s*[\])］】）}〕〗]\s*(.+)$/i
+
+/** 从原始回复里剥出记忆行：返回记忆内容与剩余正文（记忆行整行删除）。 */
+export function extractMemoryNote(raw: string): { note: string; text: string } {
+  const match = MEMORY_LINE.exec(raw)
+  if (!match) return { note: '', text: raw }
+  const note = match[1].trim()
+  const text = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim()
+  return { note, text }
 }
 
 /**
  * 流式版标签剥离：`buffer` 是「还没发给前端的原始文本」。
  * 返回 `resolved=false` 表示它可能还是标签前缀（例如刚读到 `[sh`），继续攒着别发。
  */
-function stripLeadingTagStream(buffer: string): { resolved: boolean; emotion: Emotion | null; rest: string } {
-  const match = TAG_PATTERN.exec(buffer)
-  if (match) {
-    return { resolved: true, emotion: normalizeEmotion(match[1]), rest: stripInlineEmotionTags(buffer.slice(match[0].length)) }
+function stripLeadingTagStream(buffer: string): { resolved: boolean; expressions: string[]; motions: string[]; rest: string } {
+  const tags = parseLeadingTags(buffer)
+  if (tags.expressions.length > 0 || tags.motions.length > 0 || tags.rest !== buffer.trimStart()) {
+    return { resolved: true, expressions: tags.expressions, motions: tags.motions, rest: stripInlineTags(tags.rest) }
   }
-  if (TAG_OPEN_ONLY.test(buffer)) return { resolved: false, emotion: null, rest: '' }
-  return { resolved: true, emotion: null, rest: stripInlineEmotionTags(buffer) }
+  if (TAG_OPEN_ONLY.test(buffer)) return { resolved: false, expressions: [], motions: [], rest: '' }
+  return { resolved: true, expressions: [], motions: [], rest: stripInlineTags(buffer) }
 }
 
-export function systemPrompt(persona: string): string {
-  return `${persona}
+/**
+ * 拼 system 提示词：人设 + 记忆 + 动作/表情目录 + 输出要求（标签流式）。
+ * `memory` 是 memory.md 最近 N 条的注入文本（空串 = 没有记忆）。
+ */
+export function systemPrompt(persona: string, memory = ''): string {
+  const motionLines = AI_MOTIONS.map((motion) => `- ${motion.id}（${motion.name}）：${motion.meaning}`).join('\n')
+  const expressionLines = EXPRESSIONS
+    .filter((expression) => expression.id !== 'none')
+    .map((expression) => `- ${expression.id}（${expression.name}）：${expression.meaning}`)
+    .join('\n')
+  const memoryBlock = memory ? `\n## 你记得的事\n${memory}\n` : ''
+  return `${persona}${memoryBlock}
+## 可选动作（一次最多选一个，写在台词开头的标签里）
+${motionLines}
 
-输出要求：先写一个方括号情绪标签，再写一句中文台词，例如「[shy] 别、别看了啦」。
-情绪标签必须严格用下面这 ${EMOTIONS.length} 个英文 id 之一（后面是它代表的中文义项，不要写中文当标签）：
-${(Object.entries(EMOTION_WORDS) as [Emotion, readonly string[]][]).map(([id, words]) => `- ${id}（${words.slice(-2).join('、')}）`).join('\n')}
-台词不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
-不要复述或改写给你的参考台词：演出这个角色此刻的真实反应（嘴硬、反撩、撒娇、嫌弃、好奇都行），每次换个角度。`
+## 可选表情（可以选一到两个，写在动作标签后面）
+${expressionLines}
+
+输出要求（严格遵守）：
+1. 先写方括号标签再写台词，格式：[表情][动作] 台词。例如「[shy][ShakeHead] 别、别戳了啦」。
+   不想动就不写动作标签；不想做表情就不写表情标签。标签必须用上面的英文 id。
+2. 台词不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
+3. 如果这轮有值得长期记住的事（主人的习惯、约定、你的小心愿），在台词后面另起一行写「[记] 内容」，
+   十几个字以内，用第三人称记录（例如「[记] 主人半夜还在赶工」）。没有就别写。
+4. 每次换个角度反应，不要重复上一次的说法。`
 }
 
 /** 采样参数：两个入口共用（台词要短、要活，temperature 拉满）。 */
 const TEMPERATURE = 1
-const MAX_TOKENS = 120
+const MAX_TOKENS = 160
 
-/** 一次请求的「人设 + 历史 + 当前场景」组装（generateReply 与 streamReply 共用）。 */
+/** 一次请求的「人设 + 历史 + 记忆 + 当前场景」组装。 */
 function assembleRequest(options: {
   provider: string
   model: string
   persona: string
+  memory: string
   context: ReplyContext
   history?: readonly AiHistoryEntry[]
   historyCount?: number
+  memoryCount?: number
   onPayload?: (payload: AiPayload) => void
 }): { system: string; messages: Parameters<WaifuLlm['stream']>[0]['messages'] } {
-  const system = systemPrompt(options.persona)
+  const system = systemPrompt(options.persona, options.memory)
   const history = historyMessages(options.history ?? [], options.historyCount ?? 0, {
     provider: options.provider,
     model: options.model,
@@ -523,18 +556,21 @@ function assembleRequest(options: {
   return { system, messages }
 }
 
+/**
+ * 生成一次完整回复（非流式；设置页「测试」用）。
+ * 空回复且错误以 empty 开头时关掉推理链再试一次（gemma 类模型开思维链会吞掉正文）。
+ */
 export async function generateReply(
   llm: WaifuLlm,
   options: {
     provider: string
     model: string
     persona: string
+    memory?: string
     context: ReplyContext
     timeoutMs?: number
-    /** 最近对话历史（按 `historyCount` 取末尾若干条注入；ADR-030）。 */
     history?: readonly AiHistoryEntry[]
     historyCount?: number
-    /** 每次真正请求前回报载荷（`/ai-debug` 用，排查注入是否生效）。 */
     onPayload?: (payload: AiPayload) => void
   },
 ): Promise<ReplyAttempt> {
@@ -543,7 +579,7 @@ export async function generateReply(
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const { system, messages } = assembleRequest(options)
+      const { system, messages } = assembleRequest({ ...options, memory: options.memory ?? '' })
       const stream = llm.stream({
         provider: options.provider,
         model: options.model,
@@ -560,9 +596,18 @@ export async function generateReply(
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
         else if (chunk.type === 'finish') finish = describeFinish((chunk as { reason?: unknown }).reason)
       }
-      const tagged = parseEmotionTag(text)
-      const line = sanitizeLine(tagged.rest)
-      if (line) return { text: line, emotion: tagged.emotion }
+      // 记忆行剥掉，只留正文
+      const { text: withoutMemory, note } = extractMemoryNote(text)
+      const tags = parseLeadingTags(withoutMemory)
+      const line = sanitizeLine(tags.rest)
+      if (line) {
+        return {
+          text: line,
+          expressions: tags.expressions,
+          motions: tags.motions,
+          ...(note ? { memory: note } : {}),
+        }
+      }
       return {
         text: null,
         error: text ? 'empty-after-sanitize' : `empty-stream${finish === undefined ? '' : ` (${finish})`}`,
@@ -577,28 +622,30 @@ export async function generateReply(
 
   const first = await attempt()
   if (first.text !== null) return first
-  // 推理型模型（如 gemma）开着思维链时正文可能整段为空：关掉推理再试一次。
   if (!first.error?.startsWith('empty')) return first
   const retry = await attempt('off')
   return retry.text === null ? first : retry
 }
 
-/** 流式回复的一块：文本增量，或收尾（携带清洗后的整句）。 */
+/** 流式回复的一块：标签（表情/动作）、文本增量、记忆、或收尾。 */
 export type ReplyChunk =
-  | { type: 'emotion'; emotion: Emotion }
+  | { type: 'tags'; expressions: string[]; motions: string[] }
   | { type: 'delta'; text: string }
+  | { type: 'memory'; note: string }
   | { type: 'done'; text: string }
   | { type: 'error'; error: string }
 
 /**
- * 流式回复：把 LLM 的 `text-delta` 原样吐给调用方（供气泡逐字显示 + 句读切分），
- * 结束时给出清洗后的整句（与 `generateReply` 同一套 `sanitizeLine` / system 提示词）。
+ * 流式回复（ADR-037 标签流式）：
+ * - 开头的 `[表情][动作]` 标签闭合后先发 `tags` 事件（客户端立刻切表情/播动作）；
+ * - 正文 delta 原样吐出（供气泡逐字显示 + 句读切分）；
+ * - 句尾 `[记] …` 行以 `memory` 事件单独下发（Host 收到后写 memory.md）；
+ * - 结束时给出清洗后的整句。
  *
- * 与 `generateReply` 的差别：这里不重试。重试要重发整段请求，流式下会把已经说出口的
- * 半句再念一遍，反而更糟；空回复由调用方按「无台词」处理。
+ * 不重试：重试要重发整段请求，流式下会把已经说出口的半句再念一遍。
  * @param llm - DSH 的 `ctx.llm`。
- * @param options - provider/model/人设/场景/历史与载荷回调。
- * @yields 文本增量、收尾整句或失败原因。
+ * @param options - provider/model/人设/记忆/场景/历史与载荷回调。
+ * @yields 标签、文本增量、记忆行、收尾整句或失败原因。
  */
 export async function* streamReply(
   llm: WaifuLlm,
@@ -606,6 +653,7 @@ export async function* streamReply(
     provider: string
     model: string
     persona: string
+    memory?: string
     context: ReplyContext
     timeoutMs?: number
     history?: readonly AiHistoryEntry[]
@@ -620,8 +668,10 @@ export async function* streamReply(
   const forward = () => controller.abort()
   options.signal?.addEventListener('abort', forward, { once: true })
   let raw = ''
+  let sentTags = false
+  let sentMemory = false
   try {
-    const { system, messages } = assembleRequest(options)
+    const { system, messages } = assembleRequest({ ...options, memory: options.memory ?? '' })
     const stream = llm.stream({
       provider: options.provider,
       model: options.model,
@@ -632,7 +682,7 @@ export async function* streamReply(
       signal: controller.signal,
     })
     let finish: string | undefined
-    // 开头的情绪标签要吃掉：标签没闭合前先攒着，闭合后先把 emotion 事件发出去再吐文本
+    // 开头的标签要吃掉：标签没闭合前先攒着，闭合后先把 tags 事件发出去再吐文本
     let pending = ''
     let visible = ''
     let sent = 0
@@ -646,8 +696,17 @@ export async function* streamReply(
           pending += chunk.text
           const tag = stripLeadingTagStream(pending)
           if (!tag.resolved) continue
+          sentTags = true
+          if (tag.expressions.length > 0 || tag.motions.length > 0) {
+            yield { type: 'tags', expressions: tag.expressions, motions: tag.motions }
+          }
+          if (tag.rest === '') {
+            // 到目前为止只有标签：继续攒，正文出现才进入转发模式
+            // （否则下一个 delta 块里的 [Tilt] 会当正文念出来）
+            pending = ''
+            continue
+          }
           prefixDone = true
-          if (tag.emotion) yield { type: 'emotion', emotion: tag.emotion }
           visible = tag.rest
         }
         if (visible.length > sent) {
@@ -658,7 +717,17 @@ export async function* streamReply(
         finish = describeFinish((chunk as { reason?: unknown }).reason)
       }
     }
-    const line = sanitizeLine(visible)
+    // 收尾：从原始全文里剥记忆行（流式期间可能已经吐进 visible，这里再剥一次）
+    const { note, text: withoutMemory } = extractMemoryNote(raw)
+    if (!sentMemory && note) {
+      sentMemory = true
+      yield { type: 'memory', note }
+    }
+    const tags = parseLeadingTags(withoutMemory)
+    if (!sentTags && (tags.expressions.length > 0 || tags.motions.length > 0)) {
+      yield { type: 'tags', expressions: tags.expressions, motions: tags.motions }
+    }
+    const line = sanitizeLine(tags.rest)
     if (line) yield { type: 'done', text: line }
     else yield { type: 'error', error: raw ? 'empty-after-sanitize' : `empty-stream${finish === undefined ? '' : ` (${finish})`}` }
   } catch (error) {

@@ -31,7 +31,6 @@ describe('TouchPartsStore', () => {
       id: 'head',
       name: '头',
       boxes: [{ left: 0.1, top: 0.05, right: 0.9, bottom: 0.7 }],
-      motions: ['TapHead'],
     }]
     store.save('jian', parts)
     expect(store.partsFor('jian')).toEqual(parts)
@@ -41,46 +40,40 @@ describe('TouchPartsStore', () => {
     expect(text).toContain('"jian"')
   })
 
-  it('保存时归一化非法 box / 多余字段', () => {
+  it('保存时归一化非法 box / 多余字段（ADR-037：旧 motions/lines 被剥掉）', () => {
     const store = new TouchPartsStore()
     store.save('jian', [
-      { id: 'a', name: ' A ', boxes: [{ left: 1.5, top: -1, right: 0.5, bottom: 2 }], motions: ['X'] },
+      { id: 'a', name: ' A ', boxes: [{ left: 1.5, top: -1, right: 0.5, bottom: 2 }], motions: ['X'], lines: ['旧台词'] },
     ] as never)
     const parts = store.partsFor('jian')
-    expect(parts).toEqual([{ id: 'a', name: 'A', boxes: [{ left: 0.5, top: 0, right: 1, bottom: 1 }], motions: ['X'] }])
+    expect(parts).toEqual([{ id: 'a', name: 'A', boxes: [{ left: 0.5, top: 0, right: 1, bottom: 1 }] }])
   })
 
   it('文件损坏时沿用上次好结果并给出错误', () => {
     const store = new TouchPartsStore()
-    store.save('jian', [{ id: 'x', name: 'X', boxes: [{ left: 0, top: 0, right: 0.2, bottom: 0.2 }], motions: [] }])
+    store.save('jian', [{ id: 'x', name: 'X', boxes: [{ left: 0, top: 0, right: 0.2, bottom: 0.2 }] }])
     writeFileSync(store.path, '{ broken jsonc', 'utf8')
     const view = store.load()
     expect(view.error).toContain('解析失败')
     expect(view.models.jian?.parts[0].name).toBe('X')
   })
 
-  it('保存事件绑定覆盖层（动画组 + 台词池），并与部位一起读回', () => {
+  it('旧版文件里带 motions/lines/events 的部位读入时被剥成 id/name/boxes', () => {
     const store = new TouchPartsStore()
-    store.save('jian', [], {
-      idle: { motions: ['Idle'], lines: [['在的。']] },
-      thinking: { motions: ['Thinking', 'angry'], lines: [['想…'], ['还在想…']] },
-      bogus: { motions: ['X'], lines: [] },
-    } as never)
-    const events = store.load().models.jian?.events
-    expect(events?.idle).toEqual({ motions: ['Idle'], lines: [['在的。']] })
-    expect(events?.thinking?.motions).toEqual(['Thinking', 'angry'])
-    // ADR-026：多阶段固定台词取消，归一化只留入态一组
-    expect(events?.thinking?.lines).toEqual([['想…']])
-    expect(events && 'bogus' in events).toBe(false)
-  })
-
-  it('events 传 undefined 保留已有覆盖，传 {} 清空覆盖', () => {
-    const store = new TouchPartsStore()
-    store.save('jian', [], { idle: { motions: ['Idle'], lines: [] } })
-    store.save('jian', [], undefined)
-    expect(store.load().models.jian?.events?.idle?.motions).toEqual(['Idle'])
-    store.save('jian', [], {})
-    expect(store.load().models.jian?.events).toBeUndefined()
+    writeFileSync(store.path, JSON.stringify({
+      version: 2,
+      models: {
+        jian: {
+          parts: [
+            { id: 'face', name: '脸', boxes: [{ left: 0, top: 0, right: 0.5, bottom: 0.5 }], motions: ['Tilt', 'blush'], lines: ['别捏脸'] },
+          ],
+          events: { idle: { motions: ['Idle'], lines: [['在的。']] } },
+        },
+      },
+    }), 'utf8')
+    const entry = store.load().models.jian
+    expect(entry?.parts).toEqual([{ id: 'face', name: '脸', boxes: [{ left: 0, top: 0, right: 0.5, bottom: 0.5 }] }])
+    expect(entry && 'events' in entry).toBe(false)
   })
 
   it('model id 为空时 save 抛错', () => {

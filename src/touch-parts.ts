@@ -3,14 +3,16 @@
  * 用户自定义的触摸部位按模型 id 分组持久化；首次启动落地模板，保存时写回并保留文件头注释。
  * 与内置 preset 的默认部位的关系：用户保存过该模型 → 以用户文件为准；
  * 没有保存过（或文件被删）→ 回退 preset.touchParts → 再回退空表。
+ * ADR-037 起事件绑定（events/animationMap）整段作废：角色的动作/表情/台词全部由 AI 驱动，
+ * 部位只剩「命中判定 + 场景描述」两个用途（id/name/boxes）。
  * @module dsh-waifu/touch-parts
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { petHomeDir, fileStamp } from './home.ts'
-import type { EventBindings, TouchPart } from './models.ts'
-import { normalizeEventBindings, normalizeTouchParts } from './models.ts'
+import type { TouchPart } from './models.ts'
+import { normalizeTouchParts } from './models.ts'
 import { stripJsonComments } from './jsonc.ts'
 
 /** 触摸部位文件名（$DSH_HOME/waifu 下）。 */
@@ -19,8 +21,6 @@ export const TOUCH_PARTS_FILENAME = 'touch-parts.jsonc'
 /** 文件内每个模型 id 的配置。 */
 export interface TouchPartsModelEntry {
   parts: TouchPart[]
-  /** 可选：该模型的「事件绑定」用户覆盖（设置页「事件绑定」保存：动画组 + 台词池）。 */
-  events?: Partial<EventBindings>
 }
 
 /** 触摸部位文件视图（路径/错误/按模型分组的数据）。 */
@@ -34,45 +34,24 @@ export interface TouchPartsFileView {
 const TOUCH_PARTS_HEADER = `// 触摸部位配置文件（插件私有，JSONC 支持注释）。
 // 路径：$DSH_HOME/waifu/touch-parts.jsonc
 // 建议通过设置页「触摸部位」编辑；直接编辑后刷新页面即可生效。
-// 结构：models[<模型 id>].parts[] = { id, name, boxes[{left,top,right,bottom}], motions[] }
-// left/top/right/bottom 为相对模型包围盒的 0–1 归一化坐标（左上右下）。`
+// 结构：models[<模型 id>].parts[] = { id, name, boxes[{left,top,right,bottom}] }
+// left/top/right/bottom 为相对模型包围盒的 0–1 归一化坐标（左上右下）。
+// 部位不再携带台词/动作（ADR-037）：角色反应全部由 AI 驱动，这里只管命中判定。`
 
 function serializeTouchParts(models: Record<string, TouchPartsModelEntry>): string {
-  return `${TOUCH_PARTS_HEADER}\n${JSON.stringify({ version: 1, models }, null, 2)}\n`
+  return `${TOUCH_PARTS_HEADER}\n${JSON.stringify({ version: 2, models }, null, 2)}\n`
 }
 
 const TOUCH_PARTS_TEMPLATE = serializeTouchParts({})
 
-/** 旧格式 animationMap（状态 → 动作组）→ events（只填动作组）。 */
-function normalizeLegacyMotionMap(raw: unknown): Partial<EventBindings> {
-  const out: Partial<EventBindings> = {}
-  if (typeof raw !== 'object' || raw === null) return out
-  const record = raw as Record<string, unknown>
-  for (const [event, value] of Object.entries(record)) {
-    if (!Array.isArray(value)) continue
-    const motions = [...new Set(value.filter((m): m is string => typeof m === 'string' && m.trim().length > 0).map((m) => m.trim()))]
-    if (motions.length === 0) continue
-    out[event as keyof EventBindings] = { motions, lines: [[]] }
-  }
-  return out
-}
-
-/** 归一化「模型 id → 部位列表」映射（丢弃空值/非法结构）。 */
+/** 归一化「模型 id → 部位列表」映射（丢弃空值/非法结构；旧 events/animationMap 字段忽略）。 */
 function normalizeModelMap(raw: unknown): Record<string, TouchPartsModelEntry> {
   const out: Record<string, TouchPartsModelEntry> = {}
   if (typeof raw !== 'object' || raw === null) return out
   for (const [modelId, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!modelId.trim() || typeof value !== 'object' || value === null) continue
-    const record = value as { parts?: unknown; events?: unknown; animationMap?: unknown }
-    const entry: TouchPartsModelEntry = { parts: normalizeTouchParts(record.parts) }
-    const events = normalizeEventBindings(record.events)
-    if (Object.keys(events).length > 0) entry.events = events
-    else if (record.animationMap && typeof record.animationMap === 'object') {
-      // 旧格式迁移：animationMap（状态 → 动作组）→ events（仅动作组，台词用默认）
-      const legacy = normalizeLegacyMotionMap(record.animationMap)
-      if (Object.keys(legacy).length > 0) entry.events = legacy
-    }
-    out[modelId] = entry
+    const record = value as { parts?: unknown }
+    out[modelId] = { parts: normalizeTouchParts(record.parts) }
   }
   return out
 }
@@ -140,20 +119,12 @@ export class TouchPartsStore {
     return entry ? entry.parts : null
   }
 
-  /**
-   * 写回某个模型的部位列表 +（可选）事件绑定覆盖（设置页保存用；保留文件头注释）。
-   * events 传 undefined 表示不改动已有覆盖；传 {} 表示清空覆盖（回到内置/自定义默认）。
-   */
-  save(modelId: string, parts: readonly TouchPart[], events?: Partial<EventBindings>): TouchPartsFileView {
+  /** 写回某个模型的部位列表（设置页保存用；保留文件头注释）。 */
+  save(modelId: string, parts: readonly TouchPart[]): TouchPartsFileView {
     const id = modelId.trim()
     if (!id) throw new Error('model id 不能为空')
     const view = this.load()
-    const previous = view.models[id]
     const entry: TouchPartsModelEntry = { parts: normalizeTouchParts(parts) }
-    const mergedEvents = events === undefined
-      ? previous?.events
-      : normalizeEventBindings(events)
-    if (mergedEvents && Object.keys(mergedEvents).length > 0) entry.events = mergedEvents
     const next: Record<string, TouchPartsModelEntry> = { ...view.models, [id]: entry }
     try {
       writeFileSync(this.path, serializeTouchParts(next), 'utf8')

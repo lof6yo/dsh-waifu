@@ -2,13 +2,10 @@
  * 模型清单与触摸部位的共享类型/纯函数：presets.jsonc（内置策展，只读，JSONC 支持注释）
  * 由 host 侧 `models-host.ts` 负责读取；本模块保持 client 可安全打包。
  *
- * 模型加载：内置模型随包分发（assets/models/<id>/，经 Host 同源 `/waifu-assets/...` 路由），
- * 自定义模型仍支持任意 http(s) URL 或本机绝对路径（spec §6）。
- *
- * 触摸部位（spec §4）：部位完全由用户自定义——每个部位 = 名字 + 若干归一化矩形 box
- * （相对模型包围盒 0–1，左上右下）+ 该部位被触摸时播放的动作组列表。命中判定只用 box，
- * 不再依赖模型自带 HitArea 或空间阈值分档；部位有**图层**概念——parts 数组顺序即图层顺序，
- * 第 0 项最上层，box 重叠时上层部位生效（设置页可排序）。
+ * 全 AI 驱动（ADR-037）：不再有「事件绑定（动作组 + 台词池）」——角色说什么、做什么动作、
+ * 摆什么表情全部由模型决定，这里只保留两类事实数据：
+ * - 触摸部位：id + 名字 + box（命中判定与场景描述用）；
+ * - 动作/表情目录：给模型的「可做什么」清单（system 提示词与标签解析共用）。
  * @module dsh-waifu/models
  */
 
@@ -22,36 +19,53 @@ export interface BuiltinPreset {
   license: { type: string; url: string }
   cubism: number
   status: string
-  /** 可选：状态动画映射（6 个状态槽位）；缺省用 DEFAULT_MOTION_MAP。 */
-  animationMap?: MotionMap
-  /** 可选：默认触摸部位（用户自定义部位保存后覆盖它）。 */
+  /** 兼容字段：旧版的默认触摸部位（可能还带 motions/lines，载入时会被裁掉）。 */
   touchParts?: TouchPart[]
 }
 
-/** 状态动画映射槽位：6 个宠物状态。每个槽位 = 一个动作组（可选）+ 一个表情（可选，见 MotionSelection）。 */
+/** 宠物状态（状态机；ADR-037 起状态只作为「场景」喂给模型，不再绑定动作）。 */
 export type AnimationSlot =
   | 'idle' | 'thinking' | 'error' | 'done' | 'waiting' | 'delivered'
 
-/** 全部状态动画映射槽位（设置页表单 / 默认映射共用）。 */
+/** 全部状态槽位（设置页「可触发场景」的状态组；`idle` 是静息态，不作为触发键）。 */
 export const ANIMATION_SLOTS: readonly AnimationSlot[] = [
   'idle', 'thinking', 'error', 'done', 'waiting', 'delivered',
 ]
 
 /**
- * 状态 → 候选动作组集合。
- * 值数组 = 该槽位的「动作组 / 表情」混选；未配置的槽位由 DEFAULT_MOTION_MAP 兜底。
+ * 活动事件键（ADR-036）：一次性触发（工具/审批/会话/子代理），不进状态机。
+ * 全 AI 驱动后它们与状态事件一样，只是「场景」的一种。
  */
-export type MotionMap = Partial<Record<PetEventKey, string[]>>
+export type ActivityKey =
+  | 'tool-read'
+  | 'tool-write'
+  | 'tool-run'
+  | 'tool-agent'
+  | 'tool-other'
+  | 'approval-granted'
+  | 'approval-denied'
+  | 'session-open'
+  | 'session-close'
+  | 'subagent-start'
+  | 'subagent-end'
 
-/** 默认动画映射：动作组 + 表情混选（表情 id 与动作组同列存放，见 MotionSelection）。 */
-export const DEFAULT_MOTION_MAP: MotionMap = {
-  idle: ['Idle'],
-  thinking: ['Tilt'],
-  error: ['ShakeHead', 'whites', 'dark'],
-  done: ['Nod', 'star'],
-  waiting: ['Sway'],
-  delivered: ['Tilt', 'star'],
+/** 全部活动事件（设置页「可触发场景」的活动组顺序）。 */
+export const ACTIVITY_EVENTS: readonly ActivityKey[] = [
+  'tool-read', 'tool-write', 'tool-run', 'tool-agent', 'tool-other',
+  'approval-granted', 'approval-denied',
+  'session-open', 'session-close',
+  'subagent-start', 'subagent-end',
+]
+
+/** 是否是活动事件。 */
+export function isActivityKey(value: unknown): value is ActivityKey {
+  return typeof value === 'string' && (ACTIVITY_EVENTS as readonly string[]).includes(value)
 }
+
+/** 全部可作为 AI 触发场景的事件键（设置页勾选用；idle 永远不算触发）。 */
+export type PetEventKey = AnimationSlot | ActivityKey
+
+export const PET_EVENTS: readonly PetEventKey[] = [...ANIMATION_SLOTS, ...ACTIVITY_EVENTS]
 
 /**
  * 内置表情：模型里的布尔开关参数（`ParamSwitch*`）组合。
@@ -70,35 +84,50 @@ export interface ExpressionDef {
    * 缺省 = 可以任意叠加（脸红、生气这类互不冲突的开关）。
    */
   exclusive?: string
+  /** 给模型看的一句话释义（system 提示词的「表情目录」用）。 */
+  meaning: string
 }
 
-/** 全部内置表情（设置页下拉、事件绑定、触摸部位共用；`none` 表示恢复无表情）。 */
+/** 全部内置表情（`none` 表示恢复无表情；目录同时是 AI 可选表情与设置页勾选清单）。 */
 export const EXPRESSIONS: readonly ExpressionDef[] = [
-  { id: 'none', name: '无', params: {} },
-  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin' },
-  { id: 'angry', name: '生气', params: { ParamSwitch4: 1 } },
-  { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 }, exclusive: 'eye' },
-  { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 }, exclusive: 'eye' },
-  { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 }, exclusive: 'eye' },
-  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 }, exclusive: 'eye' },
-  { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 }, exclusive: 'eye' },
-  { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 }, exclusive: 'skin' },
-  { id: 'blood', name: '血', params: { ParamSwitch3: 1 }, exclusive: 'skin' },
-  { id: 'dim', name: '高光消失', params: { ParamSwitch21: 1 } },
+  { id: 'none', name: '无', params: {}, meaning: '' },
+  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin', meaning: '害羞、被戳中软处' },
+  { id: 'angry', name: '生气', params: { ParamSwitch4: 1 }, meaning: '恼火、炸毛' },
+  { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 }, exclusive: 'eye', meaning: '开心、崇拜、两眼放光' },
+  { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 }, exclusive: 'eye', meaning: '无语、嫌弃、不屑' },
+  { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 }, exclusive: 'eye', meaning: '委屈、含着泪' },
+  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 }, exclusive: 'eye', meaning: '喜欢、心里小鹿乱撞' },
+  { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 }, exclusive: 'eye', meaning: '哭出来、伤心' },
+  { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 }, exclusive: 'skin', meaning: '不爽、阴沉下来' },
+  { id: 'blood', name: '羞愤', params: { ParamSwitch3: 1 }, exclusive: 'skin', meaning: '又羞又气、脸上挂不住' },
+  { id: 'dim', name: '高光消失', params: { ParamSwitch21: 1 }, meaning: '失落、没精神、蔫了' },
 ]
 
-/** 动作组的显示名（下拉与卡片摘要用；未收录的自定义动作组回退成原名）。 */
-export const MOTION_LABELS: Readonly<Record<string, string>> = {
-  Idle: '待机',
-  Nod: '点头',
-  ShakeHead: '摇头',
-  Tilt: '歪头',
-  Sway: '左右晃',
+/** AI 可选动作组目录（标签解析与 system 提示词共用；不含 Idle——那是状态机的活）。 */
+export interface MotionDef {
+  id: string
+  name: string
+  /** 给模型看的一句话释义。 */
+  meaning: string
 }
+
+export const AI_MOTIONS: readonly MotionDef[] = [
+  { id: 'Nod', name: '点头', meaning: '同意、得意、敷衍地应一声' },
+  { id: 'ShakeHead', name: '摇头', meaning: '拒绝、无奈、不敢相信' },
+  { id: 'Tilt', name: '歪头', meaning: '好奇、疑惑、没听懂' },
+  { id: 'Sway', name: '左右晃', meaning: '撒娇、放松、哼着小曲' },
+  { id: 'Glance', name: '瞥一眼', meaning: '偷瞄、在意又嘴硬' },
+  { id: 'Perk', name: '竖起耳朵', meaning: '来了兴致、警觉、竖起耳朵' },
+  { id: 'Shift', name: '换重心', meaning: '准备动手、活动身体' },
+  { id: 'Sigh', name: '叹气', meaning: '无奈、松一口气' },
+]
+
+/** AI 可选动作组 id 列表。 */
+export const AI_MOTION_IDS: readonly string[] = AI_MOTIONS.map((motion) => motion.id)
 
 /** 动作组的显示名（未知动作组回退原 id）。 */
 export function motionLabel(id: string): string {
-  return MOTION_LABELS[id] ?? id
+  return AI_MOTIONS.find((motion) => motion.id === id)?.name ?? id
 }
 
 /** 表情的互斥组（没有则返回空串 = 可自由叠加）。 */
@@ -129,70 +158,14 @@ export function normalizeExpressionId(value: unknown): string {
   return EXPRESSIONS.some((expression) => expression.id === id) ? id : 'none'
 }
 
-/** 该名字是否是表情 id（「动作组」混选列表里靠它区分动作与表情）。 */
+/** 该名字是否是表情 id。 */
 export function isExpressionId(value: string): boolean {
   return EXPRESSION_IDS.includes(value.trim())
 }
 
-/**
- * 「动作组 / 表情」混选：事件绑定与触摸部位共用一套列表（ADR-023 / ADR-024）。
- * 语义 = 最多 1 个动作组 + 若干表情，同时触发；两项都可留空。
- * 表情之间只有互斥组（眼部 / 皮肤）内才二选一，其余可以叠：脸红 + 眼泪、生气 + 星星眼……
- */
-export interface MotionSelection {
-  /** 动作组名（空 = 不播动作）。 */
-  motion: string
-  /** 表情 id 列表（空 = 不改表情）；顺序 = 选择顺序。 */
-  expressions: string[]
-}
-
-/**
- * 拆解混选数组：第一个非表情名当动作组，其余都当表情；
- * 同一互斥组里后出现的替换先出现的，重复项只留最后一个。
- */
-export function splitMotionSelection(list: readonly unknown[]): MotionSelection {
-  let motion = ''
-  const expressions: string[] = []
-  for (const raw of list) {
-    if (typeof raw !== 'string') continue
-    const id = raw.trim()
-    if (!id) continue
-    if (!isExpressionId(id)) {
-      if (!motion) motion = id
-      continue
-    }
-    const group = expressionExclusiveGroup(id)
-    for (let i = expressions.length - 1; i >= 0; i -= 1) {
-      const other = expressions[i]
-      if (other === id) {
-        expressions.splice(i, 1)
-        continue
-      }
-      if (group && expressionExclusiveGroup(other) === group) expressions.splice(i, 1)
-    }
-    expressions.push(id)
-  }
-  return { motion, expressions }
-}
-
-/** 由动作组 + 表情列表拼出混选数组（顺序固定：动作组在前，空项省略）。 */
-export function joinMotionSelection(motion: string, expressions: readonly string[]): string[] {
-  const out: string[] = []
-  const name = typeof motion === 'string' ? motion.trim() : ''
-  if (name) out.push(name)
-  for (const raw of expressions) {
-    if (typeof raw !== 'string') continue
-    const expr = normalizeExpressionId(raw)
-    if (expr !== 'none' && !out.includes(expr)) out.push(expr)
-  }
-  return out
-}
-
-/** 归一化混选数组（动作组最多 1 项、表情按互斥组收敛；非数组返回空）。 */
-export function normalizeMotionSelection(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  const { motion, expressions } = splitMotionSelection(raw)
-  return joinMotionSelection(motion, expressions)
+/** 该名字是否是 AI 动作组 id。 */
+export function isMotionId(value: string): boolean {
+  return (AI_MOTION_IDS as readonly string[]).includes(value.trim())
 }
 
 /** 表情列表 → 需要写 1 的参数集合（多个表情叠加时取并集）。 */
@@ -206,216 +179,25 @@ export function expressionParams(ids: readonly string[]): Record<string, number>
   return params
 }
 
-/** 宠物事件键（与状态动画槽位同构：空闲/思考/出错/完成/交付/等审批）。 */
-/**
- * 活动事件键（ADR-036）：一次性动作/台词，不进状态机。
- * 与状态事件共用同一套「事件绑定」结构（动作组 + 表情 + 台词池 + AI 演绎）。
- */
-export type ActivityKey =
-  | 'tool-read'
-  | 'tool-write'
-  | 'tool-run'
-  | 'tool-agent'
-  | 'tool-other'
-  | 'approval-granted'
-  | 'approval-denied'
-  | 'session-open'
-  | 'session-close'
-  | 'subagent-start'
-  | 'subagent-end'
-
-/** 全部活动事件（设置页「事件绑定 · 活动」顺序）。 */
-export const ACTIVITY_EVENTS: readonly ActivityKey[] = [
-  'tool-read', 'tool-write', 'tool-run', 'tool-agent', 'tool-other',
-  'approval-granted', 'approval-denied',
-  'session-open', 'session-close',
-  'subagent-start', 'subagent-end',
-]
-
-/** 是否是活动事件（状态机不认它，但事件绑定认）。 */
-export function isActivityKey(value: unknown): value is ActivityKey {
-  return typeof value === 'string' && (ACTIVITY_EVENTS as readonly string[]).includes(value)
-}
-
-export type PetEventKey = AnimationSlot | ActivityKey
-
-/** 全部宠物事件（设置页「事件绑定」顺序：状态事件在前，活动事件在后）。 */
-export const PET_EVENTS: readonly PetEventKey[] = [...ANIMATION_SLOTS, ...ACTIVITY_EVENTS]
-
-/**
- * 事件绑定：该事件触发的「动作组 / 表情」+ 台词池。
- * - motions：混选数组（见 MotionSelection）——最多 1 个动作组 + 1 个表情，同时触发
- * - lines：台词池数组；普通事件只有 1 组，长状态（思考/等审批）按阶段 3 组
- *   （阶段推进时长见 EVENT_STAGE_DELAYS，index 越界时用最后一组）
- */
-export interface EventBinding {
-  motions: string[]
-  lines: string[][]
-}
-
-/** 六个事件的绑定表。 */
-export type EventBindings = Record<PetEventKey, EventBinding>
-
-/** 长状态（思考/等确认）：入态台词常驻，之后由 AI 演绎按节奏刷新（ADR-026）。 */
-export const LONG_STATES = ['thinking', 'waiting'] as const
-
-/** 长状态键。 */
-export type LongState = typeof LONG_STATES[number]
-
-/** 是否长状态：气泡常驻、台词可被 AI 反复演绎替换。 */
-export function isLongState(state: PetEventKey): state is LongState {
-  return (LONG_STATES as readonly string[]).includes(state)
-}
-
-/** 长状态 AI 演绎的默认节奏（delay/interval 单位秒，max 为每次入态最多演绎次数）。 */
-export const DEFAULT_LONG_AI: Record<LongState, { delay: number; interval: number; max: number }> = {
-  thinking: { delay: 5, interval: 10, max: 3 },
-  waiting: { delay: 5, interval: 20, max: 3 },
-}
-
-/** 长状态 AI 演绎节奏的取值范围（设置页滑杆/校验共用）。 */
-export const LONG_AI_LIMITS = {
-  delay: { min: 0, max: 120 },
-  interval: { min: 5, max: 600 },
-  max: { min: 1, max: 10 },
-} as const
-
-/** 台词池最多条数（每个阶段）。 */
-export const MAX_LINES_PER_POOL = 20
-
-/**
- * 默认事件绑定：中性口吻的默认台词（不再有固定人设；后续可由 LLM 人设提示词接管）。
- * motions 末位的表情 id（angry/star/heart）与动作组同时触发。
- */
-export const DEFAULT_EVENT_BINDINGS: EventBindings = {
-  idle: {
-    motions: ['Idle'],
-    lines: [['（安静地待着）', '……在的。', '有什么要做的吗？']],
-  },
-  thinking: {
-    motions: ['Tilt'],
-    lines: [['思考中…']],
-  },
-  error: {
-    motions: ['ShakeHead', 'whites', 'dark'],
-    lines: [['出错了…']],
-  },
-  done: {
-    motions: ['Nod', 'star'],
-    lines: [['搞定！']],
-  },
-  delivered: {
-    motions: ['Tilt', 'star'],
-    lines: [['交付！']],
-  },
-  waiting: {
-    motions: ['Sway'],
-    lines: [['喂，你定一下啦！']],
-  },
-  // 活动事件（ADR-036）：动作组小、台词短，和状态事件走同一套 AI 演绎
-  'tool-read': {
-    motions: ['Glance'],
-    lines: [['又让我看东西…', '翻翻看。', '在读了在读了。']],
-  },
-  'tool-write': {
-    motions: ['Perk'],
-    lines: [['记下来了。', '改好了，要不要看看？', '写完了。']],
-  },
-  'tool-run': {
-    motions: ['Shift'],
-    lines: [['跑起来了。', '在跑了在跑了。', '命令我按了哦。']],
-  },
-  'tool-agent': {
-    motions: ['Nod'],
-    lines: [['交给我吧。', '我去办。', '等我回来。']],
-  },
-  'tool-other': {
-    motions: ['Tilt'],
-    lines: [['嗯？这个也要我管…', '行吧。', '顺手做了。']],
-  },
-  'approval-granted': {
-    motions: ['Nod'],
-    lines: [['这还差不多。', '准了。', '嗯，你放心。']],
-  },
-  'approval-denied': {
-    motions: ['ShakeHead'],
-    lines: [['不给就算了…', '行吧，收回。', '真小气。']],
-  },
-  'session-open': {
-    motions: ['Perk'],
-    lines: [['来了？', '又要干什么。', '我在的。']],
-  },
-  'session-close': {
-    motions: ['Sigh'],
-    lines: [['走了啊…', '结束了？', '终于。']],
-  },
-  'subagent-start': {
-    motions: ['Glance'],
-    lines: [['分身出来了。', '那我去跑腿。', '让我看看那边。']],
-  },
-  'subagent-end': {
-    motions: ['Nod'],
-    lines: [['回来了。', '报告：办完。', '交差。']],
-  },
-}
-
-/**
- * 归一化单个事件绑定：motions 收敛为「动作组 + 表情」混选（旧版 `expression` 字段并入）；
- * lines 只保留**入态**一组（ADR-026 取消多阶段固定台词，其余阶段丢弃；旧文件的多阶段
- * 二维数组取第一组）。
- */
-function normalizeEventBinding(raw: unknown): EventBinding | null {
-  if (typeof raw !== 'object' || raw === null) return null
-  const record = raw as { motions?: unknown; lines?: unknown; expression?: unknown }
-  const legacyExpression = normalizeExpressionId(record.expression)
-  const motions = normalizeMotionSelection([
-    ...(Array.isArray(record.motions) ? record.motions : []),
-    ...(legacyExpression === 'none' ? [] : [legacyExpression]),
-  ])
-  const rawLines = Array.isArray(record.lines) ? record.lines : []
-  const lines: string[][] = []
-  for (const pool of rawLines) {
-    if (!Array.isArray(pool)) continue
-    const cleaned = [...new Set(
-      pool
-        .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
-        .map((line) => line.trim().slice(0, MAX_LINE_LENGTH))
-        .slice(0, MAX_LINES_PER_POOL),
-    )]
-    lines.push(cleaned)
-    break
-  }
-  if (lines.length === 0) lines.push([])
-  return { motions, lines }
-}
-
-/** 归一化用户事件绑定（只保留合法事件键；缺失事件不出现，由调用方回退默认/内置）。 */
-export function normalizeEventBindings(raw: unknown): Partial<EventBindings> {
-  const out: Partial<EventBindings> = {}
-  if (typeof raw !== 'object' || raw === null) return out
-  const record = raw as Record<string, unknown>
-  for (const event of PET_EVENTS) {
-    const binding = normalizeEventBinding(record[event])
-    if (binding) out[event] = binding
-  }
-  return out
-}
-
-/** 合并事件绑定：base 为默认/内置，override 为用户覆盖（整事件替换，阶段数可不同）。 */
-export function mergeEventBindings(
-  base: EventBindings,
-  override?: Partial<EventBindings> | null,
-): EventBindings {
-  const out = {} as EventBindings
-  for (const event of PET_EVENTS) {
-    out[event] = override?.[event] ?? base[event]
+/** 互斥组去重：同一组后出现的替换先出现的（AI 可能给出叠加标签）。 */
+export function dedupeExpressions(ids: readonly string[]): string[] {
+  const out: string[] = []
+  for (const raw of ids) {
+    const id = normalizeExpressionId(raw)
+    if (id === 'none') continue
+    const group = expressionExclusiveGroup(id)
+    for (let i = out.length - 1; i >= 0; i -= 1) {
+      const other = out[i]
+      if (other === id) { out.splice(i, 1); continue }
+      if (group && expressionExclusiveGroup(other) === group) out.splice(i, 1)
+    }
+    out.push(id)
   }
   return out
 }
 
 /**
  * 触摸部位矩形（相对模型包围盒的归一化坐标，0–1，左上右下）。
- * left/top 为左上角，right/bottom 为右下角；加载时自动排序并夹到 0–1。
  */
 export interface TouchBox {
   left: number
@@ -425,38 +207,23 @@ export interface TouchBox {
 }
 
 /**
- * 用户自定义触摸部位（spec §4）：
- * - id：稳定标识（保存时生成，用于部位动画映射与排序）
- * - name：展示名（也是选台词池的提示词，如「头」「手」）
- * - boxes：一到多个矩形，命中任一即算该部位（多个矩形可拼出不规则部位）
- * - motions：混选数组（见 MotionSelection）——最多 1 个动作组 + 1 个表情，点中即同时触发
- * - lines：该部位的自定义台词（一行一条，随机选一条）；留空 = 只播动作、不显示气泡
- *
- * 图层：部位列表（`TouchPart[]`）的顺序就是图层顺序，**第 0 项为最上层**；
- * 设置页「触摸部位」用上移/下移调整，保存后按该顺序持久化。
+ * 用户自定义触摸部位（ADR-037 起只保留「id + 名字 + box」）：
+ * 名字用于向模型描述「主人碰了你哪里」，box 只做命中判定；反应交给 AI。
+ * 图层：parts 数组顺序即图层顺序，**第 0 项为最上层**，box 重叠时上层部位生效。
  */
 export interface TouchPart {
   id: string
   name: string
   boxes: TouchBox[]
-  motions: string[]
-  /** 可选：该部位的自定义台词（随机选一条）；空/缺省 = 只播动作、不显示气泡。 */
-  lines?: string[]
 }
 
-/** 无默认触摸部位时的空表（用户未创建部位 → 点击不触发互动，spec §4）。 */
+/** 无默认触摸部位时的空表（用户未创建部位 → 点击不触发互动）。 */
 export const DEFAULT_TOUCH_PARTS: readonly TouchPart[] = []
 
 /** 单个部位最多 box 数（防止配置失控；设置页同步限制）。 */
 export const MAX_BOXES_PER_PART = 12
 
-/** 单个部位最多自定义台词条数。 */
-export const MAX_LINES_PER_PART = 30
-
-/** 单条自定义台词最大长度（字符）。 */
-export const MAX_LINE_LENGTH = 120
-
-/** 部位 id 合法形式（保存时生成，仅用于持久化与映射键）。 */
+/** 部位 id 合法形式（保存时生成，仅用于持久化与排序）。 */
 export function isValidPartId(value: string): boolean {
   return /^[a-z][a-z0-9_-]*$/i.test(value)
 }
@@ -488,7 +255,7 @@ export function normalizeTouchBox(raw: unknown): TouchBox | null {
 
 /**
  * 归一化部位列表：丢弃非法条目、限制 box 数量、去重 id。
- * 供 Host 存储与设置页保存共用（纯函数，client 可安全打包）。
+ * 旧文件里的 `motions` / `lines` 字段（ADR-037 前的部位绑定）直接忽略。
  */
 export function normalizeTouchParts(raw: unknown): TouchPart[] {
   if (!Array.isArray(raw)) return []
@@ -511,36 +278,8 @@ export function normalizeTouchParts(raw: unknown): TouchPart[] {
       if (box) boxes.push(box)
       if (boxes.length >= MAX_BOXES_PER_PART) break
     }
-    const legacyExpression = normalizeExpressionId(record.expression)
-    const motions = normalizeMotionSelection([
-      ...(Array.isArray(record.motions) ? record.motions : []),
-      ...(legacyExpression === 'none' ? [] : [legacyExpression]),
-    ])
-    const rawLines = Array.isArray(record.lines)
-      ? record.lines
-        .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
-        .map((line) => line.trim().slice(0, MAX_LINE_LENGTH))
-        .slice(0, MAX_LINES_PER_PART)
-      : []
-    const lines = [...new Set(rawLines)]
     seen.add(id)
-    const part: TouchPart = { id, name, boxes, motions }
-    if (lines.length > 0) part.lines = lines
-    out.push(part)
-  }
-  return out
-}
-
-/** 归一化状态动画映射（只保留 6 个状态槽位 + 字符串数组；未知键丢弃）。 */
-export function normalizeMotionMap(raw: unknown): MotionMap {
-  const out: MotionMap = {}
-  if (typeof raw !== 'object' || raw === null) return out
-  const record = raw as Record<string, unknown>
-  for (const slot of ANIMATION_SLOTS) {
-    const value = record[slot]
-    if (!Array.isArray(value)) continue
-    const names = [...new Set(value.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).map((n) => n.trim()))]
-    if (names.length > 0) out[slot] = names
+    out.push({ id, name, boxes })
   }
   return out
 }
@@ -559,9 +298,8 @@ export function pointToBoundsRatio(
 }
 
 /**
- * 触摸命中判定（spec §4）：按**图层顺序**（parts 数组顺序，第 0 项最上层）遍历，
- * 返回第一个命中任意 box 的部位；box 重叠时上层部位生效，不再按面积比较。
- * 未命中返回 null。
+ * 触摸命中判定：按**图层顺序**（parts 数组顺序，第 0 项最上层）遍历，
+ * 返回第一个命中任意 box 的部位；未命中返回 null。
  */
 export function hitTestTouchParts(parts: readonly TouchPart[], nx: number, ny: number): TouchPart | null {
   for (const part of parts) {

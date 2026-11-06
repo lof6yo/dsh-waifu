@@ -4,10 +4,14 @@
  * 之前默认值散在 5 处（Config schema、设置页 DEFAULT_VALUE、客户端兜底常量、
  * persist.DEFAULT_DISPLAY、内置 preset），改一个忘一个就会出现「设置页显示 240、实际渲染 160」。
  * 现在统一在这里定义，其余地方只引用；`defaults.test.ts` 校验 schema 与常量的取值一致。
+ *
+ * 全 AI 驱动（ADR-037）的新设置也在这里：触发频率策略 / 最小间隔 / 静默超时 /
+ * 场景触发开关 / 同类事件窗口 / 记忆注入条数。
  * @module dsh-waifu/defaults
  */
 
 import { clampInt } from './clamp.ts'
+import { ACTIVITY_EVENTS, ANIMATION_SLOTS, type PetEventKey } from './models.ts'
 
 /** 显示/位置持久化默认值（`$DSH_HOME/waifu.json`，px 相对视口右下角）。 */
 export const DEFAULT_DISPLAY = { right: 24, bottom: 20, size: 300 } as const
@@ -31,9 +35,60 @@ export const DEFAULT_MODEL_ID = 'jian'
 /** AI 回复默认路由（DSH 已配置的 provider / 模型，ADR-025）。 */
 export const DEFAULT_AI_PROVIDER = 'openrouter'
 export const DEFAULT_AI_MODEL = 'google/gemma-4-31b-it'
-/** 注入到 prompt 的最近对话条数（0 = 不注入；ADR-030）。 */
-/** 注入的最近对话轮数（1 轮 = 用户一句 + 桌宠一句）。 */
+/** 注入的最近对话轮数（1 轮 = 用户一句 + 桌宠一句；0 = 不注入；ADR-030）。 */
 export const DEFAULT_AI_HISTORY = 20
+/** 注入的记忆条数（memory.md 最近 N 条；0 = 不注入；ADR-037）。 */
+export const DEFAULT_AI_MEMORY = 20
+
+/**
+ * 触发频率策略（ADR-037）：
+ * - `interrupt`：截断抢占——新触发直接掐掉上一轮（说话/语音立刻断，动作表情立刻换）；
+ * - `queue`：排队等完成——上一轮「气泡出完 + 语音念完」后才处理下一条（只留最新一条，
+ *   等待期间到达的事件合并进下一条的场景里）。
+ */
+export const TRIGGER_MODES = ['interrupt', 'queue'] as const
+export type TriggerMode = (typeof TRIGGER_MODES)[number]
+export const DEFAULT_TRIGGER_MODE: TriggerMode = 'interrupt'
+
+/** 归一化触发频率策略：未知值回退默认。 */
+export function normalizeTriggerMode(value: unknown, fallback: TriggerMode): TriggerMode {
+  return TRIGGER_MODES.includes(value as TriggerMode) ? (value as TriggerMode) : fallback
+}
+
+/** 事件类触发的最小间隔（秒）：上一次 AI 反应开始后多久内不再因 DSH 事件触发；触摸/对话不受限。 */
+export const DEFAULT_AI_MIN_INTERVAL_SEC = 3
+export const AI_MIN_INTERVAL_LIMITS = { min: 0, max: 600 } as const
+
+/** 静默超时（秒）：多久没有任何事件/互动就自动触发一轮；0 = 关闭。 */
+export const DEFAULT_IDLE_TIMEOUT_SEC = 300
+export const IDLE_TIMEOUT_LIMITS = { min: 0, max: 3600 } as const
+
+/** 同类事件触发窗口（秒，Host 节流）：窗口内同类活动只触发一次。 */
+export const DEFAULT_ACTIVITY_WINDOW_SEC = 3
+export const ACTIVITY_WINDOW_LIMITS = { min: 0, max: 300 } as const
+
+/** 场景开关表（Record 形式持久化在 settings.jsonc）。 */
+export type EventTriggers = Record<string, boolean>
+
+/** 可触发场景目录（设置页勾选；`idle` 是静息态不算触发键）。 */
+export const TRIGGER_EVENTS: readonly PetEventKey[] = [...ANIMATION_SLOTS.slice(1), ...ACTIVITY_EVENTS]
+
+/** 默认全部场景可触发（Record 形式持久化在 settings.jsonc）。 */
+export function defaultEventTriggers(): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  for (const key of TRIGGER_EVENTS) out[key] = true
+  return out
+}
+
+/** 归一化场景开关：未知键忽略；缺失的键补 true（新场景默认开）。 */
+export function normalizeEventTriggers(raw: unknown): Record<string, boolean> {
+  const out = defaultEventTriggers()
+  if (typeof raw !== 'object' || raw === null) return out
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'boolean' && key in out) out[key] = value
+  }
+  return out
+}
 
 /** 语音合成（TTS，ADR-033）：默认引擎 = OpenRouter 的 `/api/v1/audio/speech`。 */
 export const DEFAULT_TTS_ENABLED = true
@@ -108,7 +163,7 @@ export const DEFAULT_LIPSYNC_ENABLED = true
 /** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
 export const DEFAULT_LIPSYNC_GAIN = 140
 
-/** 鼠标跟随范围：以模型包围盒为基准向外扩展的百分比（0 = 只在模型框内才跟随）。 */
+/** 鼠标跟随范围：以模型包围盒为基准向外扩展的百分比（0 = 只在模型框内跟随）。 */
 export const DEFAULT_FOCUS_RANGE = 60
 
 export const FOCUS_RANGE_LIMITS = { min: 0, max: 300 } as const
@@ -133,15 +188,13 @@ export function normalizeHistoryCount(value: unknown, fallback: number): number 
   return clampInt(value, fallback, AI_HISTORY_LIMITS.min, AI_HISTORY_LIMITS.max)
 }
 
-/**
- * 打断优先级（ADR-032）：状态事件与触摸互动抢占同一套「气泡 + 动作 + AI 演绎」通道时的规则。
- * - `mutual`：互相打断——触摸立刻接管，状态一变也立刻收回；
- * - `touch-first`：触摸优先——触摸期间状态事件不改气泡、不恢复演绎（默认）；
- * - `event-first`：事件优先——长状态演绎不被触摸打断，触摸只播动作/表情与 AI 台词。
- */
-export const INTERACTION_MODES = ['mutual', 'touch-first', 'event-first'] as const
-export type InteractionMode = (typeof INTERACTION_MODES)[number]
-export const DEFAULT_INTERACTION_MODE: InteractionMode = 'touch-first'
+/** 注入记忆条数的边界（0 = 不注入）。 */
+export const AI_MEMORY_LIMITS = { min: 0, max: 100 } as const
+
+/** 归一化注入记忆条数。 */
+export function normalizeMemoryCount(value: unknown, fallback: number): number {
+  return clampInt(value, fallback, AI_MEMORY_LIMITS.min, AI_MEMORY_LIMITS.max)
+}
 
 /** 交互条（模型上方/下方的静音按钮 + 对话输入框）的位置：上方 `top` / 下方 `bottom`。 */
 export const BAR_POSITIONS = ['top', 'bottom', 'hidden'] as const
@@ -157,9 +210,26 @@ export function normalizeBarPosition(value: unknown, fallback: BarPosition): Bar
   return BAR_POSITIONS.includes(value as BarPosition) ? (value as BarPosition) : fallback
 }
 
-/** 归一化打断优先级：未知值回退默认。 */
-export function normalizeInteractionMode(value: unknown, fallback: InteractionMode): InteractionMode {
-  return INTERACTION_MODES.includes(value as InteractionMode) ? (value as InteractionMode) : fallback
+/**
+ * 触摸交互类型（ADR-037）：按按住时长区分。
+ * - `light` 轻碰：< 250ms 的快速点触；
+ * - `poke` 戳戳：250–900ms；
+ * - `stroke` 抚摸：≥ 900ms（或按住滑动）。
+ */
+export type TouchKind = 'light' | 'poke' | 'stroke'
+
+/** 按住时长 → 触摸类型。 */
+export function touchKindOf(durationMs: number): TouchKind {
+  if (durationMs < 250) return 'light'
+  if (durationMs < 900) return 'poke'
+  return 'stroke'
+}
+
+/** 触摸类型的中文描述（场景消息用）。 */
+export function touchKindLabel(kind: TouchKind): string {
+  if (kind === 'light') return '轻碰'
+  if (kind === 'poke') return '戳戳'
+  return '抚摸'
 }
 
 /**
@@ -183,16 +253,24 @@ export const DEFAULT_SETTINGS = {
   bubbleBgOpacity: DEFAULT_BUBBLE_BG_OPACITY,
   bubbleMaxSeconds: DEFAULT_BUBBLE_MAX_SECONDS,
   bubbleTextColor: DEFAULT_BUBBLE_TEXT_COLOR,
+  /** AI 总开关（ADR-037：关掉 = 角色完全静默，只剩物理反应）。 */
   aiEnabled: true,
-  aiTouchOnly: false,
-  /** 全 AI 接管：不显示任何预置对白，气泡全靠模型；长状态延迟失效、入态即请求（ADR-031）。 */
-  aiTakeover: true,
-  /** 待机小动作（偶尔偏头/抬眉/换重心/叹气），关掉后只有 Idle 循环。 */
-  idleMotionEnabled: true,
   aiProvider: DEFAULT_AI_PROVIDER,
   aiModel: DEFAULT_AI_MODEL,
   aiHistoryCount: DEFAULT_AI_HISTORY,
-  interactionMode: DEFAULT_INTERACTION_MODE,
+  aiMemoryCount: DEFAULT_AI_MEMORY,
+  /** 触发频率策略（截断抢占 / 排队等完成）。 */
+  triggerMode: DEFAULT_TRIGGER_MODE,
+  /** 事件类触发的最小间隔（秒；触摸/对话不受限）。 */
+  aiMinIntervalSec: DEFAULT_AI_MIN_INTERVAL_SEC,
+  /** 静默超时（秒；0 = 关闭）。 */
+  idleTimeoutSec: DEFAULT_IDLE_TIMEOUT_SEC,
+  /** 同类事件触发窗口（秒）。 */
+  activityWindowSec: DEFAULT_ACTIVITY_WINDOW_SEC,
+  /** 按事件类型的触发开关（v8 起持久化；normalizeSettings 会补全键）。 */
+  eventTriggers: defaultEventTriggers(),
+  /** 待机小动作（偶尔偏头/抬眉/换重心/叹气），关掉后只有 Idle 循环。 */
+  idleMotionEnabled: true,
   /** 交互条：模型上下的静音按钮 + 对话输入框。 */
   barPosition: DEFAULT_BAR_POSITION,
   barOffset: DEFAULT_BAR_OFFSET,

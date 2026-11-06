@@ -17,11 +17,12 @@ import {
   generateReply,
   historyMessages,
   loadPersona,
-  normalizeEmotion,
-  parseEmotionTag,
+  parseLeadingTags,
+  extractMemoryNote,
   personaPath,
   sanitizeLine,
   savePersona,
+  streamReply,
   type AiHistoryEntry,
   type WaifuLlm,
   type WaifuLlmRequest,
@@ -57,7 +58,7 @@ describe('sanitizeLine', () => {
     expect(line.endsWith('…')).toBe(true)
   })
 
-  it('空文本返回空串', () => {
+  it('空文本返回空串；时间戳也滤掉', () => {
     expect(sanitizeLine('\n  \n')).toBe('')
     // 模型偶尔会给回复加时间戳：进气泡前就得滤掉（否则气泡里会冒出「[14:57]」）
     expect(sanitizeLine('[14:57] 哼，才不要呢')).toBe('哼，才不要呢')
@@ -95,20 +96,70 @@ describe('时区', () => {
   })
 })
 
-describe('buildSceneMessage', () => {
-  it('触摸情景包含部位名与参考台词，并要求即兴演绎而非改写', () => {
-    const message = buildSceneMessage({ kind: 'tap', part: '胸', hint: '呀！那里不能戳啦…' })
-    expect(message).toContain('胸')
-    expect(message).toContain('呀！那里不能戳啦…')
-    expect(message).toContain('一句话')
-    expect(message).toContain('别照搬')
-    expect(message).not.toContain('换个说法')
+describe('buildSceneMessage（ADR-037 场景描述）', () => {
+  it('触摸情景按轻碰/戳戳/抚摸区分，附按压时长', () => {
+    expect(buildSceneMessage({ kind: 'tap', part: '脸', tapKind: 'light' })).toContain('轻轻碰了一下你的「脸」')
+    expect(buildSceneMessage({ kind: 'tap', part: '胸', tapKind: 'poke', durationMs: 400 })).toContain('戳了戳你的「胸」，按了约 0.4 秒')
+    expect(buildSceneMessage({ kind: 'tap', part: '头', tapKind: 'stroke', durationMs: 1500 })).toContain('温柔地抚摸你的「头」')
   })
 
-  it('状态情景按状态给出不同描述', () => {
-    expect(buildSceneMessage({ kind: 'state', state: 'thinking' })).toContain('等你想事情')
-    expect(buildSceneMessage({ kind: 'state', state: 'error' })).toContain('出错了')
-    expect(buildSceneMessage({ kind: 'state', state: 'idle' })).toContain('看着你')
+  it('事件情景按事件键给出不同描述（状态 + 活动）', () => {
+    expect(buildSceneMessage({ kind: 'event', event: 'thinking' })).toContain('你正在思考')
+    expect(buildSceneMessage({ kind: 'event', event: 'error' })).toContain('出错了')
+    expect(buildSceneMessage({ kind: 'event', event: 'tool-read' })).toContain('看东西')
+    expect(buildSceneMessage({ kind: 'event', event: 'approval-denied' })).toContain('拒绝了你的请求')
+    expect(buildSceneMessage({ kind: 'event', event: 'subagent-end' })).toContain('分身')
+  })
+
+  it('对话情景带上主人原话；静默超时说明「没人理你」', () => {
+    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('主人刚对你说「今天累不累？」')
+    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('回应主人这句话')
+    expect(buildSceneMessage({ kind: 'idle' })).toContain('有一阵子没人理你')
+  })
+
+  it('窗口内合并的事件一起描述', () => {
+    const message = buildSceneMessage({ kind: 'event', event: 'done', merged: ['主人又看了个文件', '主人跑了个命令'] })
+    expect(message).toContain('这期间还发生了：主人又看了个文件；主人跑了个命令。')
+  })
+})
+
+describe('标签与记忆行（ADR-037 输出格式）', () => {
+  it('拆掉开头的方括号标签并按目录分类', () => {
+    expect(parseLeadingTags('[blush] 别、别看了啦')).toMatchObject({ expressions: ['blush'], motions: [] })
+    expect(parseLeadingTags('[Nod] 哼')).toMatchObject({ expressions: [], motions: ['Nod'] })
+    expect(parseLeadingTags('[blush][ShakeHead] 讨厌！')).toMatchObject({ expressions: ['blush'], motions: ['ShakeHead'] })
+  })
+
+  it('认不出的标签也剥掉（控制信号不能念出来）；无标签原样返回', () => {
+    expect(parseLeadingTags('[dunno] 喂')).toMatchObject({ expressions: [], motions: [], rest: '喂' })
+    expect(parseLeadingTags('别看了啦')).toMatchObject({ expressions: [], motions: [], rest: '别看了啦' })
+    // 普通方括号（如 [注]）不受影响
+    expect(parseLeadingTags('这里[注]不动').rest).toBe('这里[注]不动')
+  })
+
+  it('中文标签也能认（表情/动作的中文名）', () => {
+    const tags = parseLeadingTags('[脸红][摇头] 呜…')
+    expect(tags.expressions).toContain('脸红')
+    expect(tags.motions).toContain('摇头')
+    expect(tags.rest).toBe('呜…')
+  })
+
+  it('[记] 行提取：支持多种括号写法，剩余正文保留', () => {
+    expect(extractMemoryNote('哼，别乱戳\n[记] 主人喜欢戳我')).toEqual({ note: '主人喜欢戳我', text: '哼，别乱戳' })
+    expect(extractMemoryNote('（记）主人怕痒').note).toBe('主人怕痒')
+    expect(extractMemoryNote('没有记忆行').note).toBe('')
+    expect(extractMemoryNote('没有记忆行').text).toBe('没有记忆行')
+  })
+
+  it('generateReply 把标签拆出来、记忆剥出来', async () => {
+    const llm = fakeLlm(['[blush][Tilt] 呜…别摸啦\n[记] 主人手劲好大'])
+    const result = await generateReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头', tapKind: 'stroke' },
+    })
+    expect(result.text).toBe('呜…别摸啦')
+    expect(result.expressions).toEqual(['blush'])
+    expect(result.motions).toEqual(['Tilt'])
+    expect(result.memory).toBe('主人手劲好大')
   })
 })
 
@@ -133,7 +184,7 @@ describe('generateReply', () => {
       provider: 'deepseek-official',
       model: 'deepseek-flash',
       persona: DEFAULT_PERSONA,
-      context: { kind: 'tap', part: '手' },
+      context: { kind: 'tap', part: '手', tapKind: 'poke' },
     })
     expect(attempt.text).toBe('好吧…就一下')
     // 请求带上 provider/model 与人设前缀
@@ -141,16 +192,16 @@ describe('generateReply', () => {
     expect(llm.calls[0].provider).toBe('deepseek-official')
     expect(llm.calls[0].model).toBe('deepseek-flash')
     expect(llm.calls[0].system).toContain(DEFAULT_PERSONA)
-    expect(llm.calls[0].maxTokens).toBe(120)
+    expect(llm.calls[0].maxTokens).toBe(160)
   })
 
-  it('流中断或空文本返回 null + 原因（调用方回落预置台词）', async () => {
+  it('流中断或空文本返回 null + 原因', async () => {
     const broken = fakeLlm(['啊', '哦'], { throwAt: 1 })
-    const failed = await generateReply(broken, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })
+    const failed = await generateReply(broken, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' } })
     expect(failed.text).toBeNull()
     expect(failed.error).toBeTruthy()
     const empty = fakeLlm(['   '])
-    const blank = await generateReply(empty, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'state', state: 'idle' } })
+    const blank = await generateReply(empty, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'idle' } })
     expect(blank.text).toBeNull()
     expect(blank.error).toBe('empty-after-sanitize')
   })
@@ -168,7 +219,7 @@ describe('generateReply 推理模型兜底', () => {
         })()
       },
     }
-    const attempt = await generateReply(llm, { provider: 'openrouter', model: 'google/gemma-4-31b-it', persona: 'x', context: { kind: 'tap', part: '脸' } })
+    const attempt = await generateReply(llm, { provider: 'openrouter', model: 'google/gemma-4-31b-it', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' } })
     expect(attempt.text).toBe('哼，手拿开。')
     expect(calls).toHaveLength(2)
     expect(calls[0].reasoningEffort).toBeUndefined()
@@ -185,7 +236,7 @@ describe('generateReply 结束原因', () => {
         })()
       },
     }
-    const attempt = await generateReply(llm, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })
+    const attempt = await generateReply(llm, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' } })
     expect(attempt.text).toBeNull()
     expect(attempt.error).toContain('UNKNOWN_MODEL')
     expect(attempt.error).toContain('no model x')
@@ -246,18 +297,8 @@ describe('最近对话注入（ADR-030）', () => {
     expect(formatStamp(new Date('2026-11-04T20:03:00').getTime(), now)).toBe('11/4 20:03')
   })
 
-  it('chat 场景：原话进「主人刚对你说」，并要求回应这句话', () => {
-    const text = buildSceneMessage({ kind: 'chat', text: '今天累不累？' })
-    expect(text).toContain('主人刚对你说「今天累不累？」')
-    expect(text).toContain('回应主人这句话')
-    expect(text).not.toContain('即兴演一下这一刻的反应')
-    // 历史里不写「回应」指令，只记发生过的事
-    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' }, { forHistory: true }))
-      .toContain('主人刚对你说「今天累不累？」')
-  })
-
   it('场景描述注入当前时间', () => {
-    const text = buildSceneMessage({ kind: 'tap', part: '头' })
+    const text = buildSceneMessage({ kind: 'tap', part: '头', tapKind: 'poke' })
     expect(text).toMatch(/现在是 \d+月\d+日 周[一二三四五六日] \d{2}:\d{2}/)
     expect(formatNow(new Date('2026-11-05T21:10:00').getTime())).toBe('11月5日 周四 21:10')
   })
@@ -269,7 +310,7 @@ describe('最近对话注入（ADR-030）', () => {
       provider: 'p',
       model: 'm',
       persona: '人设',
-      context: { kind: 'tap', part: '脸', hint: '别捏脸啦～' },
+      context: { kind: 'tap', part: '脸', tapKind: 'poke' },
       history,
       historyCount: 1,
       onPayload: (payload) => payloads.push(payload),
@@ -277,18 +318,17 @@ describe('最近对话注入（ADR-030）', () => {
     expect(payloads).toHaveLength(1)
     expect(payloads[0].system).toContain('人设')
     expect(payloads[0].messages).toHaveLength(3)
-    expect(payloads[0].messages[2].content).toContain('主人刚戳了你的「脸」')
-    expect(payloads[0].messages[2].content).toContain('别捏脸啦～')
-    expect(payloads[0].messages[0].content).not.toContain('别捏脸啦')
+    expect(payloads[0].messages[2].content).toContain('主人戳了戳你的「脸」')
+    expect(payloads[0].messages[0].content).not.toContain('戳了你的「脸」')
   })
 
-  it('注入内容排在当前情景之前', async () => {
+  it('注入内容排在当前情景之前；assistant 历史必须带 source', async () => {
     const llm = fakeLlm(['好'])
     await generateReply(llm, {
       provider: 'p',
       model: 'm',
       persona: '人设',
-      context: { kind: 'tap', part: '脸' },
+      context: { kind: 'tap', part: '脸', tapKind: 'poke' },
       history,
       historyCount: 1,
     })
@@ -300,16 +340,7 @@ describe('最近对话注入（ADR-030）', () => {
     expect(JSON.stringify(messages[0])).toContain('第 3 句')
     // assistant 历史必须带 source（否则 pi-ai 重建历史时读 message.source.replayState 崩）
     expect(messages[1]).toMatchObject({ role: 'assistant', source: { kind: 'model' } })
-    expect(JSON.stringify(messages[2])).toContain('主人刚戳了你的「脸」')
-  })
-
-  it('历史版情景描述不含参考台词', () => {
-    const live = buildSceneMessage({ kind: 'tap', part: '脸', hint: '别捏脸啦～' })
-    const forHistory = buildSceneMessage({ kind: 'tap', part: '脸', hint: '别捏脸啦～' }, { forHistory: true })
-    expect(live).toContain('你下意识想说的是「别捏脸啦～」')
-    expect(forHistory).not.toContain('你下意识想说的是')
-    expect(forHistory).not.toContain('别捏脸啦')
-    expect(forHistory).toContain('主人刚戳了你的「脸」')
+    expect(JSON.stringify(messages[2])).toContain('主人戳了戳你的「脸」')
   })
 
   it('历史只保留上限条数，且默认上限等于 limits.max', () => {
@@ -323,66 +354,71 @@ describe('最近对话注入（ADR-030）', () => {
   })
 })
 
-describe('情绪标签', () => {
-  it('拆掉开头的方括号标签并识别情绪', () => {
-    expect(parseEmotionTag('[shy] 别、别看了啦')).toEqual({ emotion: 'shy', rest: '别、别看了啦' })
-    expect(parseEmotionTag('【害羞】别看了')).toEqual({ emotion: 'shy', rest: '别看了' })
-    expect(parseEmotionTag('(angry)喂！')).toEqual({ emotion: 'angry', rest: '喂！' })
-  })
-  it('没有标签时原样返回；认不出的标签也剥掉（它是控制信号，不能念出来）', () => {
-    expect(parseEmotionTag('别看了啦')).toEqual({ emotion: null, rest: '别看了啦' })
-    expect(parseEmotionTag('[dunno] 喂')).toEqual({ emotion: null, rest: '喂' })
-  })
-  it('各种写法都能认出来：前缀、修饰词、markdown、大小写', () => {
-    expect(parseEmotionTag('[emotion: shy] 别')).toEqual({ emotion: 'shy', rest: '别' })
-    expect(parseEmotionTag('**[shy]** 嗯')).toEqual({ emotion: 'shy', rest: '嗯' })
-    expect(parseEmotionTag('（有点害羞）别看了')).toEqual({ emotion: 'shy', rest: '别看了' })
-    expect(parseEmotionTag('【开心】太好啦')).toEqual({ emotion: 'happy', rest: '太好啦' })
-    expect(parseEmotionTag('[骄傲] 哼')).toEqual({ emotion: 'smug', rest: '哼' })
-    expect(normalizeEmotion('SURPRISED')).toBe('surprised')
-    expect(normalizeEmotion('害羞地')).toBe('shy')
-    expect(normalizeEmotion('无奈')).toBe('neutral')
-    expect(normalizeEmotion('mood: angry')).toBe('angry')
-  })
-
-  it('全角方括号［］也要认（模型偶尔会用全角）', () => {
-    expect(parseEmotionTag('［shy］别看了')).toEqual({ emotion: 'shy', rest: '别看了' })
-    expect(parseEmotionTag('［ 害羞 ］嗯')).toEqual({ emotion: 'shy', rest: '嗯' })
-  })
-
-  it('连写多个标签只取第一个认出的情绪，剩下的也剥掉', () => {
-    expect(parseEmotionTag('[smug] [happy] 哼')).toEqual({ emotion: 'smug', rest: '哼' })
+describe('streamReply（ADR-037 标签流式）', () => {
+  it('标签先于正文下发；[记] 行单独成 memory 事件；done 带整句', async () => {
+    const llm = fakeLlm(['[blush]', '[Tilt] 呜', '…别摸啦', '\n[记] 主人手劲大'])
+    const events: { type: string; data: unknown }[] = []
+    for await (const chunk of streamReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头', tapKind: 'stroke' },
+    })) {
+      events.push({ type: chunk.type, data: chunk })
+    }
+    const types = events.map((e) => e.type)
+    const tagsAt = types.indexOf('tags')
+    const firstDeltaAt = types.findIndex((t) => t === 'delta')
+    const memoryAt = types.indexOf('memory')
+    const doneAt = types.lastIndexOf('done')
+    expect(tagsAt).toBeGreaterThanOrEqual(0)
+    expect(tagsAt).toBeLessThan(firstDeltaAt)
+    expect(memoryAt).toBeGreaterThan(firstDeltaAt)
+    expect(memoryAt).toBeLessThan(doneAt)
+    const tagEvents = events.filter((e) => e.type === 'tags')
+    const allExpressions = tagEvents.flatMap((e) => (e.data as { expressions: string[] }).expressions)
+    const allMotions = tagEvents.flatMap((e) => (e.data as { motions: string[] }).motions)
+    expect(allExpressions).toContain('blush')
+    expect(allMotions).toContain('Tilt')
+    const done = events.find((e) => e.type === 'done') as { data: { text: string } }
+    expect(done.data.text).toBe('呜…别摸啦')
+    const memory = events.find((e) => e.type === 'memory') as { data: { note: string } }
+    expect(memory.data.note).toBe('主人手劲大')
   })
 
-  it('标签写在句子中间也要清掉，普通方括号不受影响', () => {
-    expect(parseEmotionTag('别[shy]看了')).toEqual({ emotion: null, rest: '别看了' })
-    expect(parseEmotionTag('这里[注]不动')).toEqual({ emotion: null, rest: '这里[注]不动' })
-  })
-
-  it('sanitizeLine 兜底：标签不出现在台词里', () => {
-    expect(sanitizeLine('[shy] “哼，才不呢”')).toBe('哼，才不呢')
-  })
-
-  it('长标签（surprised）也能识别', () => {
-    expect(parseEmotionTag('[surprised] 呀！你干嘛')).toEqual({ emotion: 'surprised', rest: '呀！你干嘛' })
-  })
-  it('生成结果带上情绪', async () => {
-    const llm = fakeLlm(['[smug] 就这点本事？'])
-    const result = await generateReply(llm, {
-      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头' },
-    })
-    expect(result.text).toBe('就这点本事？')
-    expect(result.emotion).toBe('smug')
-  })
-})
-
-describe('buildSceneMessage · 活动事件（ADR-036）', () => {
-  it('工具/审批/会话/子代理都有各自的场景描述', () => {
-    const read = buildSceneMessage({ kind: 'state', state: 'tool-read' })
-    expect(read).toContain('看东西')
-    expect(buildSceneMessage({ kind: 'state', state: 'approval-denied' })).toContain('拒绝了你的请求')
-    expect(buildSceneMessage({ kind: 'state', state: 'subagent-end' })).toContain('分身')
-    // 状态事件仍走原描述
-    expect(buildSceneMessage({ kind: 'state', state: 'thinking' })).toContain('等你想事情')
+  it('失败收尾：正常文本给 done；空文本给 error（含 finish 原因）', async () => {
+    const llm: WaifuLlm = {
+      stream() {
+        return (async function* () {
+          yield { type: 'text-delta', text: '呀' }
+          yield { type: 'finish', reason: { kind: 'error', failure: { code: 'X', message: 'boom' } } }
+        })()
+      },
+    }
+    const events: { type: string; data: unknown }[] = []
+    for await (const chunk of streamReply(llm, {
+      provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' },
+    })) {
+      events.push({ type: chunk.type, data: chunk })
+    }
+    const types = events.map((e) => e.type)
+    // 有正文：done 带整句，不报 error
+    expect(types).toContain('done')
+    expect(types).not.toContain('error')
+    const done = events.find((e) => e.type === 'done') as { data: { text: string } }
+    expect(done.data.text).toBe('呀')
+    // 空正文：error 带 finish 原因
+    const blank: WaifuLlm = {
+      stream() {
+        return (async function* () {
+          yield { type: 'finish', reason: { kind: 'error', failure: { code: 'X', message: 'boom' } } }
+        })()
+      },
+    }
+    const blanks: { type: string; data: unknown }[] = []
+    for await (const chunk of streamReply(blank, {
+      provider: 'p', model: 'm', persona: 'x', context: { kind: 'idle' },
+    })) {
+      blanks.push({ type: chunk.type, data: chunk })
+    }
+    const error = blanks.find((e) => e.type === 'error') as { data: { error: string } }
+    expect(error.data.error).toContain('X')
   })
 })

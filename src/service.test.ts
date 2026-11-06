@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { PetService } from './service.ts'
 import type { PetSettings } from './settings-store.ts'
+import { defaultEventTriggers } from './defaults.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
 const BASE_SETTINGS: PetSettings = {
@@ -26,21 +27,18 @@ const BASE_SETTINGS: PetSettings = {
   bubbleTextColor: '#222222',
   bubbleMaxSeconds: 30,
   aiEnabled: false,
-  aiTouchOnly: false,
-  aiTakeover: false,
   idleMotionEnabled: true,
-  interactionMode: 'touch-first',
   barPosition: 'bottom',
   barOffset: 0,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,
-  thinkingAiDelay: 3,
-  thinkingAiInterval: 20,
-  thinkingAiMax: 3,
-  waitingAiDelay: 4,
-  waitingAiInterval: 30,
-  waitingAiMax: 3,
+  aiMemoryCount: 20,
+  triggerMode: 'interrupt',
+  aiMinIntervalSec: 3,
+  idleTimeoutSec: 300,
+  activityWindowSec: 3,
+  eventTriggers: defaultEventTriggers(),
   ttsEnabled: true,
   ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
@@ -97,13 +95,11 @@ describe('PetService 状态机', () => {
     expect(view.version).toBe(0)
     expect(view.config.maxFps).toBe(30)
     expect(view.config.model).toBe('jian')
-    expect(view.config.events.idle.motions).toEqual(['Idle'])
-    expect(view.config.events.thinking.motions).toEqual(['Tilt'])
-    expect(view.config.events.done.motions).toEqual(['Nod', 'star'])
-    // 默认台词池（无固定人设，中性口吻；长状态 3 阶段）
-    expect(view.config.events.idle.lines.length).toBe(1)
-    expect(view.config.events.thinking.lines.length).toBe(1)
-    expect(view.config.events.error.lines[0].length).toBeGreaterThan(0)
+    // ADR-037：不再有 events 绑定 / 固定台词 —— 台词、动作、表情全部由 AI 决定
+    expect((view.config as Record<string, unknown>).events).toBeUndefined()
+    expect(view.config.triggerMode).toBe('interrupt')
+    expect(view.config.aiMemoryCount).toBe(20)
+    expect(view.config.eventTriggers).toEqual(defaultEventTriggers())
   })
 
   it('内置「简」默认触摸部位：十个部位且都带台词，box 为 0–1 归一化', () => {
@@ -119,48 +115,22 @@ describe('PetService 状态机', () => {
         expect(box.top).toBeLessThan(box.bottom)
       }
     }
-    // 默认每个部位都挂了「动作组 + 表情」（用户本地调好的那套）
-    expect(parts[0].motions).toEqual(['Tilt', 'blush'])
-    expect(parts[1].motions).toEqual(['Nod', 'blush'])
+    // ADR-037：部位只剩 id/name/boxes（台词与动作由 AI 决定）
+    for (const part of parts) {
+      expect(Object.keys(part).sort()).toEqual(['boxes', 'id', 'name'])
+    }
   })
 
-  it('用户保存触摸部位后覆盖内置默认', () => {
+  it('用户保存触摸部位后覆盖内置默认（旧 motions/lines 被剥掉）', () => {
     const { service } = makeHarness()
     const saved = [{
       id: 'custom-hand',
       name: '手',
       boxes: [{ left: 0.1, top: 0.2, right: 0.3, bottom: 0.4 }],
-      motions: ['TapHead'],
     }]
     service.saveTouchParts('jian', saved)
     expect(service.snapshot().config.touchParts).toEqual(saved)
     expect(service.snapshot().version).toBe(1)
-  })
-
-  it('保存事件绑定覆盖层后 snapshot.config.events 立即生效（整事件替换）', () => {
-    const { service } = makeHarness()
-    expect(service.snapshot().config.events.thinking.motions).toEqual(['Tilt'])
-    service.saveTouchParts('jian', [], {
-      thinking: { motions: ['TapHead', 'blush'], lines: [['自己想的台词']] },
-    })
-    const events = service.snapshot().config.events
-    expect(events.thinking.motions).toEqual(['TapHead', 'blush'])
-    expect(events.thinking.lines).toEqual([['自己想的台词']])
-    // 未覆盖的事件保持默认
-    expect(events.idle.motions).toEqual(['Idle'])
-    expect(service.effectiveEvents('jian').thinking.lines).toEqual([['自己想的台词']])
-  })
-
-  it('部位自定义台词原样保留', () => {
-    const { service } = makeHarness()
-    service.saveTouchParts('jian', [{
-      id: 'face',
-      name: '脸',
-      boxes: [{ left: 0.3, top: 0.4, right: 0.7, bottom: 0.7 }],
-      motions: ['TapFace'],
-      lines: ['别捏脸啦', '脸要变形了'],
-    }])
-    expect(service.snapshot().config.touchParts[0].lines).toEqual(['别捏脸啦', '脸要变形了'])
   })
 
   it('未知模型的触摸部位为空表', () => {
