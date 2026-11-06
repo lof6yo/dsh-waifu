@@ -41,3 +41,4 @@
 | [033](033-tts-streaming-lipsync.md) | 语音合成按句读流式，气泡与口型吃同一段音频 | Accepted |
 | 034 | [模型上的交互条（静音 + 对话）](./034-interaction-bar.md) | 已采纳 |
 | [035](035-alive-idle-emotion-body.md) | 待机小动作 / 情绪标签 / 说话身体语言 | 已采纳 |
+| 036 | [一次性「活动」提示（工具 / 审批 / 会话 / 子代理）](./036-pet-activity-hints.md) | 已采纳 |

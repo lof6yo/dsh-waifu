@@ -325,3 +325,65 @@ describe('PetService 变更订阅', () => {
     expect(listener).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('PetService 活动提示（ADR-036）', () => {
+  it('工具调用按名字归类，并在 700ms 内节流合并', () => {
+    const { service, emit } = makeHarness()
+    expect(service.snapshot().activity).toBeNull()
+    emit('tools/pre-execute', { name: 'read' })
+    const first = service.snapshot().activity
+    expect(first?.kind).toBe('tool-read')
+    const seq = first!.seq
+    emit('tools/pre-execute', { name: 'bash' })
+    expect(service.snapshot().activity?.seq).toBe(seq)
+    vi.advanceTimersByTime(800)
+    emit('tools/pre-execute', { name: 'bash' })
+    expect(service.snapshot().activity).toMatchObject({ kind: 'tool-run', seq: seq + 1 })
+  })
+
+  it('写文件 / 派子代理 / 其它工具各自归类', () => {
+    const { service, emit } = makeHarness()
+    emit('tools/pre-execute', { name: 'edit' })
+    expect(service.snapshot().activity?.kind).toBe('tool-write')
+    vi.advanceTimersByTime(800)
+    emit('tools/pre-execute', { name: 'subagent' })
+    expect(service.snapshot().activity?.kind).toBe('tool-agent')
+    vi.advanceTimersByTime(800)
+    emit('tools/pre-execute', { name: 'todo_write' })
+    expect(service.snapshot().activity?.kind).toBe('tool-other')
+  })
+
+  it('审批结果：批准 → approval-granted，拒绝 → approval-denied', async () => {
+    const { service, emitArgs } = makeHarness()
+    emitArgs('approval/request', {}, () => Promise.resolve('rejected'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(service.snapshot().activity?.kind).toBe('approval-denied')
+    vi.advanceTimersByTime(800)
+    emitArgs('approval/request', {}, () => Promise.resolve('allowed-once'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(service.snapshot().activity?.kind).toBe('approval-granted')
+    // 审批链必须被放行（waterfall 不吞后续回答者）
+  })
+
+  it('顶层会话开关才打招呼/道别，子代理会话忽略', () => {
+    const { service, emitArgs } = makeHarness()
+    emitArgs('session/created', { header: { parentSession: 'parent-1' } })
+    expect(service.snapshot().activity).toBeNull()
+    emitArgs('session/created', { header: {} })
+    expect(service.snapshot().activity?.kind).toBe('session-open')
+    vi.advanceTimersByTime(800)
+    emitArgs('session/disposed', { header: {} })
+    expect(service.snapshot().activity?.kind).toBe('session-close')
+  })
+
+  it('子代理进出', () => {
+    const { service, emitArgs } = makeHarness()
+    emitArgs('subagent/start', { runId: 'r1' })
+    expect(service.snapshot().activity?.kind).toBe('subagent-start')
+    vi.advanceTimersByTime(800)
+    emitArgs('subagent/end', { runId: 'r1' })
+    expect(service.snapshot().activity?.kind).toBe('subagent-end')
+  })
+})

@@ -70,6 +70,8 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - 命中判定：点击点换算到包围盒比例坐标 (nx, ny)；**按图层顺序从上到下遍历**，返回第一个命中任意 box 的部位（box 重叠时上层部位生效）；未命中不响应
 - 命中检测不再依赖模型 HitArea，也不再使用旧的「空间回退阈值分档」（spatialTap 已移除）
 
+- 活动提示（ADR-036，与状态正交、不写气泡）：工具执行、审批批准/拒绝、会话开关、子代理进出各播一个短动作（`tool-read→Glance`、`tool-write→Perk`、`tool-run→Shift`、`tool-agent→Nod`、`tool-other→Tilt`、`approval-granted→Nod`、`approval-denied→ShakeHead`、`session-open→Perk`、`session-close→Sigh`、`subagent-start→Glance`、`subagent-end→Nod`）；NORMAL 优先级，不压状态与触摸；服务端 700ms 节流
+
 ### 4.2 命中后的表现
 
 - 台词选择：部位配置了**自定义台词**（`part.lines`）→ 从该部位台词池随机选一条（避开同一部位上一条）；**未配置 → 不显示气泡，只播该部位动作**（不再有固定人设台词池兜底）

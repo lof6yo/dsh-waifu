@@ -1442,8 +1442,40 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 上一次应用过的快照签名（display + config）：一致就跳过整段 applyConfig。 */
   let viewSignature = ''
 
+  /** 活动提示（ADR-036）→ 复用现有动作组，避免为每个事件再生成一份动作资源。 */
+  const ACTIVITY_MOTIONS: Record<string, string> = {
+    'tool-read': 'Glance',
+    'tool-write': 'Perk',
+    'tool-run': 'Shift',
+    'tool-agent': 'Nod',
+    'tool-other': 'Tilt',
+    'approval-granted': 'Nod',
+    'approval-denied': 'ShakeHead',
+    'session-open': 'Perk',
+    'session-close': 'Sigh',
+    'subagent-start': 'Glance',
+    'subagent-end': 'Nod',
+  }
+  /** 已播过的活动序号：SSE 每帧都带同一个 activity，靠它去重（不重复播）。 */
+  let lastActivitySeq = 0
+
+  /**
+   * 播一次性活动动作（工具执行 / 审批结果 / 会话开关 / 子代理进出）。
+   * 用 NORMAL 优先级：不压状态动作、更不压触摸的 FORCE；调试预览与拖拽中不播。
+   */
+  function applyActivity(activity: { seq: number; kind: string } | null | undefined): void {
+    if (!activity || typeof activity.seq !== 'number') return
+    if (activity.seq <= lastActivitySeq) return
+    lastActivitySeq = activity.seq
+    if (!model || dragging || previewActive || hidden) return
+    const motion = ACTIVITY_MOTIONS[activity.kind]
+    if (!motion) return
+    void startMotionWithPriority([motion], MotionPriority.NORMAL, { suppressFocus: true, isInteraction: false })
+  }
+
   function applyState(next: PetStateView | null): void {
     const state = demoState ?? next?.state ?? 'idle'
+    applyActivity(next?.activity)
     // 状态变化时播状态气泡与状态动作（spec §3）：长状态（思考/等审批）走
     // 阶段演进常驻气泡，短状态气泡瞬态显示；点击互动另走 handleTap（可连点打断）。
     // 动作只在状态变化（及长状态阶段推进）时触发；startMotionWithPriority 会先

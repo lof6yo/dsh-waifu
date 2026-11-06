@@ -28,6 +28,29 @@ import { TouchPartsStore, type TouchPartsFileView } from './touch-parts.ts'
 
 export type PetState = 'idle' | 'thinking' | 'error' | 'done' | 'waiting' | 'delivered'
 
+/**
+ * 一次性「活动」提示（ADR-036）：不进状态机，只让客户端播一个短动作。
+ * 工具执行、审批结果、会话开关、子代理进出都走这里，避免把状态机撑爆。
+ */
+export type PetActivityKind =
+  | 'tool-read'
+  | 'tool-write'
+  | 'tool-run'
+  | 'tool-agent'
+  | 'tool-other'
+  | 'approval-granted'
+  | 'approval-denied'
+  | 'session-open'
+  | 'session-close'
+  | 'subagent-start'
+  | 'subagent-end'
+
+export interface PetActivity {
+  /** 单调递增；客户端只认比上次大的 seq，SSE 重复推送不会重播。 */
+  seq: number
+  kind: PetActivityKind
+}
+
 export interface PetStateView {
   state: PetState
   agent: string
@@ -96,10 +119,15 @@ export interface PetStateView {
   /** 是否已有持久化位置（false = 首次启动，客户端按「默认中心位置」套用一次并回写）。 */
   displaySaved: boolean
   version: number
+  /** 最近一次活动提示（客户端按 seq 去重后播一次短动作）。 */
+  activity: PetActivity | null
 }
 
 /** "完成/交付"庆祝状态在回到空闲前的保持时长（ms）。 */
 const DONE_HOLD_MS = 3500
+
+/** 工具活动的最小间隔（ms）：读文件/跑命令一秒好几次，全播会像抽筋（ADR-036）。 */
+const ACTIVITY_THROTTLE_MS = 700
 
 /** 变化通知监听器（状态/显示/配置变化时触发，供 SSE 推送使用）。 */
 type ChangeListener = () => void
@@ -111,6 +139,9 @@ export class PetService {
   private display: PetDisplay
   private displaySaved = false
   private holdTimerId: ReturnType<typeof setTimeout> | undefined
+  private activity: PetActivity | null = null
+  private activitySeq = 0
+  private lastActivityAt = 0
   private listeners = new Set<ChangeListener>()
 
   constructor(
@@ -143,9 +174,12 @@ export class PetService {
       if (this.state !== 'delivered') this.setDone()
     })
     // approval/request 是 waterfall 事件：必须调用 next() 放行审批链
-    ctx.on('approval/request', (_req, next) => {
+    ctx.on('approval/request', async (_req, next) => {
       this.set('waiting')
-      return next()
+      const outcome = await next()
+      // 批准/拒绝都是「人做了决定」的时刻，值得一个明确的点头/摇头（ADR-036）
+      this.noteApproval(String(outcome))
+      return outcome
     })
     // 向用户提问（agent 的 ask_user_question 等）同样是「等人做选择」，按 waiting 处理；
     // 这也是 waterfall 事件，必须 next() 放行到真正的 answerer。
@@ -161,6 +195,57 @@ export class PetService {
     ctx.on('session/event', (_session, event) => {
       if (event?.type === 'deliverables/presented') this.setDelivered()
     })
+    // 工具执行（ADR-036）：按工具名归类成一次性活动，客户端播对应短动作。
+    // tools / subagent 的 Events 增强由它们各自的包声明，插件没有直接依赖它们，
+    // 因此这里按字符串事件订阅（运行期等价，cordis 只按名字分发）。
+    const onLoose = (ctx as unknown as {
+      on(event: string, fn: (first: unknown, second: unknown) => unknown): void
+    }).on
+    onLoose('tools/pre-execute', (exec, next) => {
+      this.noteTool((exec as { name?: string } | undefined)?.name)
+      return (next as () => Promise<unknown>)()
+    })
+    onLoose('subagent/start', () => this.noteActivity('subagent-start'))
+    onLoose('subagent/end', () => this.noteActivity('subagent-end'))
+    // 会话开关：只对顶层会话（子代理会话 header 里带 parentSession）打招呼/道别
+    const onLooseSession = ctx as unknown as {
+      on(event: string, fn: (session: { header?: { parentSession?: string } } | undefined) => void): void
+    }
+    onLooseSession.on('session/created', (session) => {
+      if (!session?.header?.parentSession) this.noteActivity('session-open')
+    })
+    onLooseSession.on('session/disposed', (session) => {
+      if (!session?.header?.parentSession) this.noteActivity('session-close')
+    })
+  }
+
+  /** 审批结果（approval/request 的返回值）：批准点头、被拒摇头（ADR-036）。 */
+  private noteApproval(outcome: string): void {
+    if (outcome === 'allowed-once') this.noteActivity('approval-granted')
+    else if (outcome === 'rejected') this.noteActivity('approval-denied')
+  }
+
+  /** 工具名 → 活动种类（读 / 写 / 跑命令 / 派代理 / 其它）。 */
+  private noteTool(name: string | undefined): void {
+    if (!name) return
+    const tool = name.toLowerCase()
+    if (tool.startsWith('mcp__')) return
+    if (/^(bash|terminal|kill|job)/.test(tool)) this.noteActivity('tool-run')
+    else if (/^(write|edit|multi_edit|apply_patch|notebook_edit)/.test(tool)) this.noteActivity('tool-write')
+    else if (/^(read|glob|grep|ls|list|search|web)/.test(tool)) this.noteActivity('tool-read')
+    else if (/^(subagent|agent|workflow|task|team)/.test(tool)) this.noteActivity('tool-agent')
+    else this.noteActivity('tool-other')
+  }
+
+  /** 记录一次性活动；高频工具调用做 700ms 节流，避免动作乱蹦（ADR-036）。 */
+  private noteActivity(kind: PetActivityKind): void {
+    const now = Date.now()
+    if (now - this.lastActivityAt < ACTIVITY_THROTTLE_MS) return
+    this.lastActivityAt = now
+    this.activitySeq += 1
+    this.activity = { seq: this.activitySeq, kind }
+    this.version += 1
+    this.emitChange()
   }
 
   /** 立即切换状态；取消未完成的"完成/交付"保持计时。 */
@@ -226,6 +311,7 @@ export class PetService {
     return {
       state: this.state,
       agent: this.agent,
+      activity: this.activity,
       config: {
         enabled: settings.enabled,
         size: settings.size,
