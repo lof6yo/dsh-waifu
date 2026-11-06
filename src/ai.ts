@@ -350,11 +350,8 @@ export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts
   // 事件合并：窗口内被攒下来的事件一起描述（模型自己会挑重点反应）
   const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
   const mergedText = merged.length > 0 ? `这期间还发生了：${merged.join('；')}。` : ''
-  // 指令用「你就是这个人物」的口吻，不要说「演」——避免模型切到扮演/旁白视角
-  const ask = context.kind === 'chat'
-    ? '你就是这个人，直接按你的性格回应主人的这句话。'
-    : '你就是这个人。这就是你此刻真实遇到的事，直接给出你的反应。'
-  return `（现在是 ${now}。${where}。${mergedText}）${ask}`
+  // 统一一句「按你的人设回应」：不分场景，也不说「演」（2026-11-06 用户指定）
+  return `（现在是 ${now}。${where}。${mergedText}）按你的人设回应。`
 }
 
 /**

@@ -151,7 +151,7 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
 
   it('对话情景带上主人原话；静默超时说明「没人理你」', () => {
     expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('主人刚对你说「今天累不累？」')
-    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('回应主人的这句话')
+    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('按你的人设回应')
     expect(buildSceneMessage({ kind: 'idle' })).toContain('有一阵子没人理你')
   })
 
