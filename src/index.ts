@@ -141,6 +141,8 @@ export const Config: Schema<Config> = Schema.object({
   aiEnabled: Schema.boolean().default(DEFAULT_SETTINGS.aiEnabled),
   aiTouchOnly: Schema.boolean().default(DEFAULT_SETTINGS.aiTouchOnly),
   aiTakeover: Schema.boolean().default(DEFAULT_SETTINGS.aiTakeover),
+  /** 待机小动作：每隔十几秒随机来一个微动作，避免像定格动画。 */
+  idleMotionEnabled: Schema.boolean().default(DEFAULT_SETTINGS.idleMotionEnabled),
   aiProvider: Schema.string().default(DEFAULT_AI_PROVIDER),
   aiModel: Schema.string().default(DEFAULT_AI_MODEL),
   interactionMode: Schema.union([
@@ -205,6 +207,7 @@ export function apply(ctx: Context, config: Config): void {
     aiEnabled: config.aiEnabled,
     aiTouchOnly: config.aiTouchOnly,
     aiTakeover: config.aiTakeover,
+    idleMotionEnabled: config.idleMotionEnabled,
     aiProvider: config.aiProvider,
     aiModel: config.aiModel,
     interactionMode: config.interactionMode,

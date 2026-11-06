@@ -26,6 +26,7 @@ const BASE: PetSettings = {
   aiEnabled: false,
   aiTouchOnly: false,
   aiTakeover: false,
+  idleMotionEnabled: true,
   interactionMode: 'touch-first',
   barPosition: 'bottom',
   barOffset: 0,

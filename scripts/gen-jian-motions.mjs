@@ -37,7 +37,7 @@ const MODEL3_FILE = resolve(MODEL_DIR, '简.model3.json')
 const CDI3_FILE = resolve(MODEL_DIR, '简.cdi3.json')
 
 const FPS = 30
-const EXPECTED_GROUPS = ['Idle', 'Nod', 'ShakeHead', 'Tilt', 'Sway']
+const EXPECTED_GROUPS = ['Idle', 'Nod', 'ShakeHead', 'Tilt', 'Sway', 'Glance', 'Perk', 'Shift', 'Sigh']
 
 /**
  * 允许在动作里驱动的参数白名单 + 量纲守护范围。
@@ -451,6 +451,114 @@ const MOTION_DEFS = [
         buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
         buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
         buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+      ]
+    },
+  },
+  {
+    group: 'Glance',
+    file: 'glance.motion3.json',
+    duration: 2.2,
+    loop: false,
+    build: () => {
+      const d = 2.2
+      // 待机小动作①：偏头看一眼再回来（眼球先到、头跟上，回来时带一点过冲）
+      const hold = (t) => smoothstep(t, 0.16, 0.52) - smoothstep(t, 1.44, 1.96)
+      const headX = (t) => 7.0 * hold(t) - 0.8 * pulse(t, 2.04, 0.12)
+      const headZ = (t) => 3.4 * hold(t)
+      const headY = (t) => -1.6 * hold(t)
+      const eyeBallX = (t) => 0.52 * hold(t)
+      const eye = (t) => 1 - 0.95 * pulse(t, 0.6, 0.05) - 0.95 * pulse(t, 1.62, 0.05)
+      const brow = (t) => 0.16 * hold(t)
+      return [
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamEyeBallX', sample(d, eyeBallX), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
+      ]
+    },
+  },
+  {
+    group: 'Perk',
+    file: 'perk.motion3.json',
+    duration: 1.5,
+    loop: false,
+    build: () => {
+      const d = 1.5
+      // 待机小动作②：听到动静——头一抬、眉一挑、眼睛睁大，随后放松回去。
+      // 幅度刻意很小：这是「被什么吸引了」的微反应，不是动作表演。
+      const up = (t) => pulse(t, 0.34, 0.17)
+      const headY = (t) => -4.4 * up(t)
+      const headX = (t) => 5.0 * up(t)
+      const headZ = (t) => 2.0 * up(t)
+      const headPX = (t) => 1.6 * up(t)
+      const eye = (t) => 1 - 0.5 * pulse(t, 0.2, 0.06)
+      const brow = (t) => 0.55 * up(t)
+      const mouth = (t) => 0.14 * up(t)
+      return [
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamMouthOpenY', sample(d, mouth), { loop: false, duration: d }),
+      ]
+    },
+  },
+  {
+    group: 'Shift',
+    file: 'shift.motion3.json',
+    duration: 2.4,
+    loop: false,
+    build: () => {
+      const d = 2.4
+      // 待机小动作③：换个重心站着——位移参数带动物理链，头发/衣服/尾巴会自己晃一下
+      const hold = (t) => smoothstep(t, 0.2, 0.8) - smoothstep(t, 1.56, 2.1)
+      const headPX = (t) => 2.4 * hold(t)
+      const headPY = (t) => -1.1 * hold(t)
+      const headX = (t) => 3.6 * hold(t)
+      const headZ = (t) => -3.0 * hold(t)
+      const eye = (t) => 1 - 0.95 * pulse(t, 1.7, 0.05)
+      return [
+        buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
+        buildCurve('ParamAnglePY', sample(d, headPY), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+      ]
+    },
+  },
+  {
+    group: 'Sigh',
+    file: 'sigh.motion3.json',
+    duration: 2.6,
+    loop: false,
+    build: () => {
+      const d = 2.6
+      // 待机小动作④：叹口气——胸口起伏（ParamBreath），眼睛半闭、头略微下垂
+      const breath = (t) => 0.12 + 0.78 * pulse(t, 1.0, 0.55)
+      const hold = (t) => smoothstep(t, 0.3, 1.0) - smoothstep(t, 1.8, 2.4)
+      const headY = (t) => 3.2 * hold(t)
+      const headX = (t) => -1.4 * hold(t)
+      const eye = (t) => 1 - 0.42 * hold(t)
+      const brow = (t) => -0.26 * hold(t)
+      const mouth = (t) => 0.2 * pulse(t, 1.15, 0.4)
+      return [
+        buildCurve('ParamBreath', sample(d, breath), { loop: false, duration: d }),
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
+        buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamMouthOpenY', sample(d, mouth), { loop: false, duration: d }),
       ]
     },
   },

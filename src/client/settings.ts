@@ -99,6 +99,7 @@ export interface PetSettingsValue {
   aiTouchOnly: boolean
   /** 全 AI 接管（ADR-031）：不显示预置对白；长状态延迟失效、入态即请求模型。 */
   aiTakeover: boolean
+  idleMotionEnabled: boolean
   /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider）。 */
   aiProvider: string
   /** AI 回复使用的模型 id。 */
@@ -2270,6 +2271,16 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             onChange: (id: string) => {
               enqueueWrite(() => [{ op: 'set', path: ['maxFps'], value: normalizeMaxFps(Number(id)) }])
             },
+          }),
+        ),
+      ),
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, { title: '待机小动作', hint: '每隔十几秒随机偏头 / 抬眉 / 换重心 / 叹气；关掉只剩 Idle 循环' }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement(ThemeSwitch, {
+            checked: value.idleMotionEnabled !== false,
+            disabled: !writable,
+            onChange: (next: boolean) => enqueueWrite(() => [{ op: 'set', path: ['idleMotionEnabled'], value: next }]),
           }),
         ),
       ),

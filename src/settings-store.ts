@@ -74,6 +74,8 @@ export interface PetSettings {
   aiTouchOnly: boolean
   /** 全 AI 接管（ADR-031）：不显示预置对白，长状态延迟失效、入态即请求模型。 */
   aiTakeover: boolean
+  /** 待机小动作总开关。 */
+  idleMotionEnabled: boolean
   /** AI 回复使用的 provider 路由（DSH 已配置的 LLM provider，如 `deepseek-official`）。 */
   aiProvider: string
   /** AI 回复使用的模型 id（provider 下可用模型）。 */
@@ -251,6 +253,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     aiEnabled: bool('aiEnabled'),
     aiTouchOnly: bool('aiTouchOnly'),
     aiTakeover: bool('aiTakeover'),
+    idleMotionEnabled: bool('idleMotionEnabled'),
     aiProvider: pickString(record.aiProvider) ?? base.aiProvider,
     aiModel: pickString(record.aiModel) ?? base.aiModel,
     aiHistoryCount: clampInt(record.aiHistoryCount, base.aiHistoryCount, AI_HISTORY_LIMITS.min, AI_HISTORY_LIMITS.max),

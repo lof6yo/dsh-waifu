@@ -62,6 +62,7 @@ export interface PetStateView {
     aiEnabled: boolean
     aiTouchOnly: boolean
     aiTakeover: boolean
+    idleMotionEnabled: boolean
     interactionMode: string
     /** 交互条位置：`top` | `bottom`。 */
     barPosition: string
@@ -245,6 +246,7 @@ export class PetService {
         aiEnabled: settings.aiEnabled,
         aiTouchOnly: settings.aiTouchOnly,
         aiTakeover: settings.aiTakeover,
+        idleMotionEnabled: settings.idleMotionEnabled,
         interactionMode: settings.interactionMode,
         barPosition: settings.barPosition,
         barOffset: settings.barOffset,

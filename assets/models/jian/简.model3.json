@@ -1,65 +1,93 @@
 {
-	"Version": 3,
-	"FileReferences": {
-		"Moc": "简.moc3",
-		"Textures": [
-			"textures/texture_00.png"
-		],
-		"Physics": "简.physics3.json",
-		"DisplayInfo": "简.cdi3.json",
-		"Motions": {
-			"Idle": [
-				{
-					"File": "motions/idle.motion3.json",
-					"FadeInTime": 0.5,
-					"FadeOutTime": 0.5
-				}
-			],
-			"Nod": [
-				{
-					"File": "motions/nod.motion3.json",
-					"FadeInTime": 0.15,
-					"FadeOutTime": 0.25
-				}
-			],
-			"ShakeHead": [
-				{
-					"File": "motions/shake-head.motion3.json",
-					"FadeInTime": 0.15,
-					"FadeOutTime": 0.25
-				}
-			],
-			"Tilt": [
-				{
-					"File": "motions/tilt.motion3.json",
-					"FadeInTime": 0.25,
-					"FadeOutTime": 0.3
-				}
-			],
-			"Sway": [
-				{
-					"File": "motions/sway.motion3.json",
-					"FadeInTime": 0.3,
-					"FadeOutTime": 0.35
-				}
-			]
-		}
-	},
-	"Groups": [
-		{
-			"Target": "Parameter",
-			"Name": "EyeBlink",
-			"Ids": [
-				"ParamEyeLOpen",
-				"ParamEyeROpen"
-			]
-		},
-		{
-			"Target": "Parameter",
-			"Name": "LipSync",
-			"Ids": [
-				"ParamMouthOpenY"
-			]
-		}
-	]
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "简.moc3",
+    "Textures": [
+      "textures/texture_00.png"
+    ],
+    "Physics": "简.physics3.json",
+    "DisplayInfo": "简.cdi3.json",
+    "Motions": {
+      "Idle": [
+        {
+          "File": "motions/idle.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 0.5
+        }
+      ],
+      "Nod": [
+        {
+          "File": "motions/nod.motion3.json",
+          "FadeInTime": 0.15,
+          "FadeOutTime": 0.25
+        }
+      ],
+      "ShakeHead": [
+        {
+          "File": "motions/shake-head.motion3.json",
+          "FadeInTime": 0.15,
+          "FadeOutTime": 0.25
+        }
+      ],
+      "Tilt": [
+        {
+          "File": "motions/tilt.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "Sway": [
+        {
+          "File": "motions/sway.motion3.json",
+          "FadeInTime": 0.3,
+          "FadeOutTime": 0.35
+        }
+      ],
+      "Glance": [
+        {
+          "File": "motions/glance.motion3.json",
+          "FadeInTime": 0.3,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "Perk": [
+        {
+          "File": "motions/perk.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.25
+        }
+      ],
+      "Shift": [
+        {
+          "File": "motions/shift.motion3.json",
+          "FadeInTime": 0.4,
+          "FadeOutTime": 0.4
+        }
+      ],
+      "Sigh": [
+        {
+          "File": "motions/sigh.motion3.json",
+          "FadeInTime": 0.45,
+          "FadeOutTime": 0.45
+        }
+      ]
+    }
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ]
 }

@@ -177,6 +177,8 @@ export const DEFAULT_SETTINGS = {
   aiTouchOnly: false,
   /** 全 AI 接管：不显示任何预置对白，气泡全靠模型；长状态延迟失效、入态即请求（ADR-031）。 */
   aiTakeover: true,
+  /** 待机小动作（偶尔偏头/抬眉/换重心/叹气），关掉后只有 Idle 循环。 */
+  idleMotionEnabled: true,
   aiProvider: DEFAULT_AI_PROVIDER,
   aiModel: DEFAULT_AI_MODEL,
   aiHistoryCount: DEFAULT_AI_HISTORY,

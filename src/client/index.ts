@@ -168,6 +168,12 @@ const EXPRESSION_FADE_MS = 280
 /** 触摸互动的「保持窗口」：这段时间内触摸拥有气泡与动作（ADR-032）。 */
 const TAP_INTERACTION_HOLD_MS = 2600
 const EXPRESSION_TEMP_MS = 2200
+/** 待机小动作：随机间隔与候选动作组（幅度很小，只为消除「定格动画」感）。 */
+const IDLE_MICRO_MOTIONS = ['Glance', 'Perk', 'Shift', 'Sigh'] as const
+const IDLE_MICRO_MIN_MS = 9000
+const IDLE_MICRO_MAX_MS = 22000
+/** 被打断（非 idle / 正在互动）后重试的间隔。 */
+const IDLE_MICRO_RETRY_MS = 4000
 
 /** 归一化配置帧率档（非法值回落默认 30）。 */
 function normalizeMaxFps(raw: unknown): number {
@@ -540,6 +546,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 长状态的「延迟」失效——入态立刻请求一句，之后仍按间隔/上限反复演绎。
    */
   let aiTakeover = false
+  /** 待机小动作开关（设置页「待机小动作」）。 */
+  let idleMotionEnabled: boolean = DEFAULT_SETTINGS.idleMotionEnabled
+  let idleMicroTimer: number | null = null
   /** 语音合成开关（SSE config.ttsEnabled；ADR-033）：开启后走 /speak 流式管线（气泡与语音同步）。 */
   let ttsEnabled: boolean = DEFAULT_SETTINGS.ttsEnabled
   /** 口型跟随开关（SSE config.lipsyncEnabled）：按正在播放的音频能量驱动 ParamMouthOpenY。 */
@@ -1314,6 +1323,39 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     void startMotionWithPriority(names, priority, { suppressFocus: state !== 'idle', isInteraction: false })
   }
 
+  /** 待机小动作调度：一次只挂一个 setTimeout（不轮询、空闲无开销），
+   * 触发时只有「确实是 idle、没在互动/预览、页面可见」才播，否则延后重试。 */
+  function clearIdleMicro(): void {
+    if (idleMicroTimer !== null) {
+      window.clearTimeout(idleMicroTimer)
+      idleMicroTimer = null
+    }
+  }
+
+  function scheduleIdleMicro(delay?: number): void {
+    clearIdleMicro()
+    if (!idleMotionEnabled || !model) return
+    const ms = delay ?? IDLE_MICRO_MIN_MS + Math.random() * (IDLE_MICRO_MAX_MS - IDLE_MICRO_MIN_MS)
+    idleMicroTimer = window.setTimeout(() => {
+      idleMicroTimer = null
+      playIdleMicro()
+    }, ms)
+  }
+
+  function playIdleMicro(): void {
+    if (!model || !idleMotionEnabled) return
+    const busy = previewActive || tapActive() || longState !== null || interactionActive
+    if (busy || lastState !== 'idle' || document.visibilityState === 'hidden') {
+      scheduleIdleMicro(IDLE_MICRO_RETRY_MS)
+      return
+    }
+    const name = IDLE_MICRO_MOTIONS[Math.floor(Math.random() * IDLE_MICRO_MOTIONS.length)]
+    // isInteraction=true 让 motionFinish 后自动回到当前状态动作（Idle 循环）；
+    // suppressFocus=true 避免鼠标跟随与微动作抢同一批头部参数。
+    void startMotionWithPriority([name], MotionPriority.IDLE, { suppressFocus: true, isInteraction: true })
+    scheduleIdleMicro()
+  }
+
   /** MotionManager.motionFinish：动作真正播完。互动结束后恢复当前状态动作并解除 focus 抑制。
    * 注意该事件在库内部 state.complete()/自动回 idle 之前同步触发，恢复动作需延到微任务，
    * 避免在 MotionManager.update 中间重入修改 MotionState。 */
@@ -1561,6 +1603,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     lastPointerClient = null
     detachMotionFinish?.()
     detachMotionFinish = null
+    clearIdleMicro()
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
     stopOverlayLoop()
@@ -1672,6 +1715,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         detachMotionFinish?.()
         detachMotionFinish = () => motionManager.off?.('motionFinish', handleMotionFinish)
       }
+      // 模型就绪后开始排待机小动作（定时器单发、随 idle 状态自行延后）
+      scheduleIdleMicro()
       // 表情：包装 InternalModel.update，在动作/物理生效前写入开关与连续参数（spec §5）
       const internal = loaded.internalModel
       if (internal && typeof internal.update === 'function') {
@@ -2427,6 +2472,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     aiEnabled = cfg.aiEnabled === true
     aiTouchOnly = cfg.aiTouchOnly === true
     aiTakeover = cfg.aiTakeover === true
+    idleMotionEnabled = cfg.idleMotionEnabled !== false
+    scheduleIdleMicro()
     ttsEnabled = cfg.ttsEnabled !== false
     barPosition = normalizeBarPosition(cfg.barPosition, DEFAULT_BAR_POSITION)
     barOffset = Number.isFinite(cfg.barOffset)
@@ -2732,6 +2779,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         aiEnabled = view.config.aiEnabled === true
         aiTouchOnly = view.config.aiTouchOnly === true
         aiTakeover = view.config.aiTakeover === true
+        idleMotionEnabled = view.config.idleMotionEnabled !== false
+        scheduleIdleMicro()
         ttsEnabled = view.config.ttsEnabled !== false
         barPosition = normalizeBarPosition(view.config.barPosition, DEFAULT_BAR_POSITION)
         barOffset = Number.isFinite(view.config.barOffset)
