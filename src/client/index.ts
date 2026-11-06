@@ -1934,20 +1934,56 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     el.addEventListener('pointercancel', () => { down = null; dragging = false })
     // 悬停（ADR-038 修订）：鼠标停在该部位 box 内 ≥ holdMs 自动触发「停留」交互；
     // 按下（可能要拖动）或移出都清计时；同一趟悬停只触发一次，移出再回来重新计。
-    el.addEventListener('pointerenter', () => beginHover(part))
-    el.addEventListener('pointerleave', clearHover)
+    // 注意：box 之间会互相覆盖（如「头发」完全盖住「脸」），DOM 里后插入的 div 才是指针真正
+    // 命中的那个。所以悬停不能直接用这个 div 绑定的 part，必须按坐标重新做一次命中测试，
+    // 否则停在脸上只会落到「头发」的 div（没有 hold 交互 → 什么都不发生）。
+    el.addEventListener('pointerenter', syncHoverFromPointer)
+    el.addEventListener('pointermove', syncHoverFromPointer)
+    el.addEventListener('pointerleave', syncHoverFromPointer)
+  }
+
+  /** 按指针坐标取当前命中部位（与点击路径同一套：parts 顺序 = 图层顺序，上层优先）。 */
+  function hoverPartAt(clientX: number, clientY: number): TouchPart | null {
+    if (!canvas || !model) return null
+    const bounds = model.getBounds?.()
+    if (!bounds || !(bounds.width > 0 && bounds.height > 0)) return null
+    if (!canvasRectCache) {
+      try { canvasRectCache = canvas.getBoundingClientRect() } catch { return null }
+    }
+    const rect = canvasRectCache
+    const ratio = pointToBoundsRatio(clientX - rect.left, clientY - rect.top, bounds)
+    if (!ratio) return null
+    return hitTestTouchParts(editState?.parts ?? touchParts, ratio.nx, ratio.ny)
+  }
+
+  /** 指针进入/移动/离开命中区时同步悬停计时器（原地不动也保持计时）。 */
+  function syncHoverFromPointer(e: PointerEvent): void {
+    if (down) return
+    const part = hoverPartAt(e.clientX, e.clientY)
+    if (!part) {
+      if (hoverState !== null) clearHover()
+      return
+    }
+    if (hoverState?.partId === part.id) return
+    const holds = (part.interactions ?? []).filter((item) => item.trigger === 'hold')
+    if (holds.length === 0) {
+      if (hoverState !== null) clearHover()
+      return
+    }
+    beginHover(part)
   }
 
   function beginHover(part: TouchPart): void {
     const holds = (part.interactions ?? []).filter((item) => item.trigger === 'hold')
     if (holds.length === 0) return
     clearHover()
-    const holdMs = Math.max(...holds.map((item) => item.holdMs))
+    // 多个 hold 交互取「最容易达成」的那个（holdMs 最短）：计时也按最短的来，
+    // 否则最短 1s / 最长 5s 并存时要干等 5s 才触发
+    const hold = [...holds].sort((a, b) => a.holdMs - b.holdMs)[0]
+    const holdMs = hold.holdMs
     const timer = window.setTimeout(() => {
       if (hoverState === null) return
       hoverState = null
-      // 多个 hold 交互取「最容易达成」的那个（holdMs 最短）；都达不成时不会走到这
-      const hold = [...holds].sort((a, b) => a.holdMs - b.holdMs)[0]
       if (aiEnabled && ttsEnabled) ensureAudio()
       clientLog('info', `tap | ${part.name} | ${hold.name}(hold 悬停) ${holdMs}ms`)
       fireTrigger({
