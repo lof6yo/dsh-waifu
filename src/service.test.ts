@@ -387,3 +387,17 @@ describe('PetService 活动提示（ADR-036）', () => {
     expect(service.snapshot().activity?.kind).toBe('subagent-end')
   })
 })
+
+describe('PetService 子代理隔离（ADR-036 修订）', () => {
+  it('子代理的 running 与 turn-stopping 不驱动宠物状态', () => {
+    const { service, emit, emitArgs } = makeHarness()
+    emitArgs('subagent/start', { id: 'child-1' })
+    emit('agent/status', { agent: { id: 'child-1' }, status: 'running' })
+    expect(service.snapshot().state).toBe('idle')
+    emitArgs('agent/turn-stopping', { agent: { id: 'child-1' }, turn: 1 })
+    expect(service.snapshot().state).toBe('idle')
+    // 主代理照旧
+    emit('agent/status', { agent: { id: 'main-1' }, status: 'running' })
+    expect(service.snapshot().state).toBe('thinking')
+  })
+})

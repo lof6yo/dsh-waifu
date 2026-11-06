@@ -142,6 +142,8 @@ export class PetService {
   private activity: PetActivity | null = null
   private activitySeq = 0
   private lastActivityAt = 0
+  /** 子代理的会话 id：它们的 status/turn-stopping 不该驱动宠物状态（ADR-036 修订）。 */
+  private readonly subagentIds = new Set<string>()
   private listeners = new Set<ChangeListener>()
 
   constructor(
@@ -158,6 +160,7 @@ export class PetService {
     })
 
     ctx.on('agent/status', (payload) => {
+      if (this.isSubagent(payload?.agent)) return
       const status = payload?.status
       if (!status) return
       this.agent = String(status)
@@ -168,8 +171,12 @@ export class PetService {
         this.set('idle')
       }
     })
-    ctx.on('agent/error', () => this.set('error'))
-    ctx.on('agent/turn-stopping', () => {
+    ctx.on('agent/error', (payload) => {
+      if (this.isSubagent(payload?.agent)) return
+      this.set('error')
+    })
+    ctx.on('agent/turn-stopping', (payload) => {
+      if (this.isSubagent(payload?.agent)) return
       // 交付保持期内紧随的轮次结束不打断交付庆祝（交付是更强的完成时刻，ADR-012）
       if (this.state !== 'delivered') this.setDone()
     })
@@ -205,7 +212,11 @@ export class PetService {
       this.noteTool((exec as { name?: string } | undefined)?.name)
       return (next as () => Promise<unknown>)()
     })
-    onLoose('subagent/start', () => this.noteActivity('subagent-start'))
+    onLoose('subagent/start', (info) => {
+      const id = (info as { id?: unknown } | undefined)?.id
+      if (typeof id === 'string') this.subagentIds.add(id)
+      this.noteActivity('subagent-start')
+    })
     onLoose('subagent/end', () => this.noteActivity('subagent-end'))
     // 会话开关：只对顶层会话（子代理会话 header 里带 parentSession）打招呼/道别
     const onLooseSession = ctx as unknown as {
@@ -217,6 +228,15 @@ export class PetService {
     onLooseSession.on('session/disposed', (session) => {
       if (!session?.header?.parentSession) this.noteActivity('session-close')
     })
+  }
+
+  /**
+   * 该 agent 是否是子代理。子代理的 turn 结束不该让宠物庆祝「完成」，
+   * 否则我每派一个分身它就欢呼一次（ADR-036 修订）。
+   */
+  private isSubagent(agent: { id?: unknown } | undefined): boolean {
+    const id = agent?.id
+    return typeof id === 'string' && this.subagentIds.has(id)
   }
 
   /** 审批结果（approval/request 的返回值）：批准点头、被拒摇头（ADR-036）。 */
