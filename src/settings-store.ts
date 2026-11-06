@@ -25,6 +25,9 @@ import {
   normalizeBarPosition,
   normalizeEventTriggers,
   normalizeEventTexts,
+  normalizeMotionTexts,
+  normalizeExpressionTexts,
+  CATALOG_TEXT_MAX,
   EVENT_TEXT_MAX,
   normalizeFocusRange,
   normalizeLipsyncGain,
@@ -101,6 +104,10 @@ export interface PetSettings {
   eventTriggers: EventTriggers
   /** 事件文案覆写（空 = 内置文案；ADR-039）。 */
   eventTexts: Record<string, string>
+  /** 动作释义覆写（空 = 内置释义；ADR-040）。 */
+  motionTexts: Record<string, string>
+  /** 表情释义覆写（空 = 内置释义；ADR-040）。 */
+  expressionTexts: Record<string, string>
   /** 交互条位置（模型上方 / 下方）。 */
   barPosition: BarPosition
   /** 交互条额外偏移（px，正数远离模型）。 */
@@ -245,6 +252,8 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
   // 根本没有位置，天然作废；eventTriggers 允许部分写入，缺的键按默认（开）补齐。
   const eventTriggers = normalizeEventTriggers(record.eventTriggers)
   const eventTexts = normalizeEventTexts(record.eventTexts)
+  const motionTexts = normalizeMotionTexts(record.motionTexts)
+  const expressionTexts = normalizeExpressionTexts(record.expressionTexts)
   return {
     enabled: bool('enabled'),
     size: clampSize(record.size) ?? base.size,
@@ -275,6 +284,8 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     activityWindowSec: clampInt(record.activityWindowSec, base.activityWindowSec, ACTIVITY_WINDOW_LIMITS.min, ACTIVITY_WINDOW_LIMITS.max),
     eventTriggers: version >= SETTINGS_SCHEMA_VERSION ? eventTriggers : defaultEventTriggers(),
     eventTexts,
+    motionTexts,
+    expressionTexts,
     barPosition: normalizeBarPosition(record.barPosition, base.barPosition),
     barOffset: clampInt(record.barOffset, base.barOffset, BAR_OFFSET_LIMITS.min, BAR_OFFSET_LIMITS.max),
     ttsEnabled: bool('ttsEnabled'),
@@ -373,6 +384,21 @@ export class SettingsStore {
           next.eventTriggers = triggers
         } else if (op.path.length === 1) {
           next.eventTriggers = op.value
+        }
+        continue
+      }
+      if (key === 'motionTexts' || key === 'expressionTexts') {
+        // 二层路径：单个动作/表情的释义（空串 = 删掉覆写，回到内置释义）
+        if (op.path.length === 2 && typeof op.path[1] === 'string') {
+          const catalogId = op.path[1]
+          const field = key === 'motionTexts' ? 'motionTexts' : 'expressionTexts'
+          const texts = { ...(next[field] as Record<string, string>) }
+          const text = typeof op.value === 'string' ? op.value.replace(/\s+/g, ' ').trim().slice(0, CATALOG_TEXT_MAX) : ''
+          if (text.length > 0) texts[catalogId] = text
+          else delete texts[catalogId]
+          next[field] = texts
+        } else if (op.path.length === 1) {
+          next[key] = op.value
         }
         continue
       }

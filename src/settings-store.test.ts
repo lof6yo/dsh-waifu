@@ -37,6 +37,8 @@ const BASE: PetSettings = {
   activityWindowSec: 3,
   eventTriggers: defaultEventTriggers(),
   eventTexts: {},
+  motionTexts: {},
+  expressionTexts: {},
   ttsEnabled: true,
   ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
@@ -199,6 +201,23 @@ describe('SettingsStore', () => {
     // 空串 = 删掉覆写
     store.applyOps([{ op: 'set', path: ['eventTexts', 'tool-run'], value: '   ' }])
     expect(store.get().eventTexts).toEqual({})
+  })
+
+  it('motionTexts / expressionTexts 二层路径可写释义，空串删除覆写（ADR-040）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().motionTexts).toEqual({})
+    store.applyOps([{ op: 'set', path: ['motionTexts', 'Nod'], value: '  点头表示同意  ' }])
+    expect(store.get().motionTexts).toEqual({ Nod: '点头表示同意' })
+    store.applyOps([{ op: 'set', path: ['expressionTexts', 'blush'], value: '害羞到脸红' }])
+    expect(store.get().expressionTexts).toEqual({ blush: '害羞到脸红' })
+    // 目录外 id 忽略
+    store.applyOps([{ op: 'set', path: ['motionTexts', 'Nope'], value: 'x' }])
+    store.applyOps([{ op: 'set', path: ['expressionTexts', 'none'], value: 'x' }])
+    expect(store.get().motionTexts).toEqual({ Nod: '点头表示同意' })
+    expect(store.get().expressionTexts).toEqual({ blush: '害羞到脸红' })
+    // 空串 = 删掉覆写
+    store.applyOps([{ op: 'set', path: ['motionTexts', 'Nod'], value: '  ' }])
+    expect(store.get().motionTexts).toEqual({})
   })
 
   it('eventTriggers 二层路径可单开关写入，非法值回落 true（ADR-037）', () => {

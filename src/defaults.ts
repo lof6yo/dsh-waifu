@@ -11,7 +11,7 @@
  */
 
 import { clampInt } from './clamp.ts'
-import { ACTIVITY_EVENTS, ANIMATION_SLOTS, type PetEventKey } from './models.ts'
+import { ACTIVITY_EVENTS, AI_MOTION_IDS, ANIMATION_SLOTS, EXPRESSION_IDS, type PetEventKey } from './models.ts'
 
 /** 显示/位置持久化默认值（`$DSH_HOME/waifu.json`，px 相对视口右下角）。 */
 export const DEFAULT_DISPLAY = { right: 24, bottom: 20, size: 300 } as const
@@ -113,6 +113,32 @@ export function normalizeEventTexts(raw: unknown): Record<string, string> {
     if (typeof value !== 'string') continue
     const text = value.replace(/\s+/g, ' ').trim().slice(0, EVENT_TEXT_MAX)
     if (text.length > 0) out[key] = text
+  }
+  return out
+}
+
+/** 动作/表情给模型的释义：字符上限（设置页输入框与归一化共用）。 */
+export const CATALOG_TEXT_MAX = 80
+
+/** 归一化「动作释义覆写」：只留目录内 id、压空白、截断；空串 = 用内置释义。 */
+export function normalizeMotionTexts(raw: unknown): Record<string, string> {
+  return normalizeCatalogTexts(raw, AI_MOTION_IDS)
+}
+
+/** 归一化「表情释义覆写」：只留目录内 id（不含 none）、压空白、截断；空串 = 用内置释义。 */
+export function normalizeExpressionTexts(raw: unknown): Record<string, string> {
+  return normalizeCatalogTexts(raw, EXPRESSION_IDS)
+}
+
+function normalizeCatalogTexts(raw: unknown, ids: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  const record = raw as Record<string, unknown>
+  for (const id of ids) {
+    const value = record[id]
+    if (typeof value !== 'string') continue
+    const text = value.replace(/\s+/g, ' ').trim().slice(0, CATALOG_TEXT_MAX)
+    if (text.length > 0) out[id] = text
   }
   return out
 }
@@ -286,6 +312,10 @@ export const DEFAULT_SETTINGS = {
   eventTriggers: defaultEventTriggers(),
   /** 事件文案覆写（空 = 用内置文案；键为事件键）。 */
   eventTexts: {} as Record<string, string>,
+  /** 动作释义覆写（空 = 用内置释义；键为动作 id）。 */
+  motionTexts: {} as Record<string, string>,
+  /** 表情释义覆写（空 = 用内置释义；键为表情 id）。 */
+  expressionTexts: {} as Record<string, string>,
   /** 待机小动作（偶尔偏头/抬眉/换重心/叹气），关掉后只有 Idle 循环。 */
   idleMotionEnabled: true,
   /** 交互条：模型上下的静音按钮 + 对话输入框。 */

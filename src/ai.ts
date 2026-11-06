@@ -496,11 +496,18 @@ function stripLeadingTagStream(buffer: string): { resolved: boolean; expressions
  * 拼 system 提示词：人设 + 记忆 + 动作/表情目录 + 输出要求（标签流式）。
  * `memory` 是 memory.md 最近 N 条的注入文本（空串 = 没有记忆）。
  */
-export function systemPrompt(persona: string, memory = ''): string {
-  const motionLines = AI_MOTIONS.map((motion) => `- ${motion.id}（${motion.name}）：${motion.meaning}`).join('\n')
+export function systemPrompt(
+  persona: string,
+  memory = '',
+  motionTexts?: Record<string, string>,
+  expressionTexts?: Record<string, string>,
+): string {
+  const motionLines = AI_MOTIONS
+    .map((motion) => `- ${motion.id}（${motion.name}）：${motionTexts?.[motion.id] ?? motion.meaning}`)
+    .join('\n')
   const expressionLines = EXPRESSIONS
     .filter((expression) => expression.id !== 'none')
-    .map((expression) => `- ${expression.id}（${expression.name}）：${expression.meaning}`)
+    .map((expression) => `- ${expression.id}（${expression.name}）：${expressionTexts?.[expression.id] ?? expression.meaning}`)
     .join('\n')
   const memoryBlock = memory ? `\n## 你记得的事\n${memory}\n` : ''
   return `${persona}${memoryBlock}
@@ -533,12 +540,14 @@ function assembleRequest(options: {
   memory: string
   context: ReplyContext
   eventTexts?: EventTexts
+  motionTexts?: Record<string, string>
+  expressionTexts?: Record<string, string>
   history?: readonly AiHistoryEntry[]
   historyCount?: number
   memoryCount?: number
   onPayload?: (payload: AiPayload) => void
 }): { system: string; messages: Parameters<WaifuLlm['stream']>[0]['messages'] } {
-  const system = systemPrompt(options.persona, options.memory)
+  const system = systemPrompt(options.persona, options.memory, options.motionTexts, options.expressionTexts)
   const history = historyMessages(options.history ?? [], options.historyCount ?? 0, {
     provider: options.provider,
     model: options.model,
@@ -575,6 +584,9 @@ export async function generateReply(
     context: ReplyContext
     /** 事件文案覆写（ADR-039）。 */
     eventTexts?: EventTexts
+    /** 动作/表情释义覆写（ADR-040）。 */
+    motionTexts?: Record<string, string>
+    expressionTexts?: Record<string, string>
     timeoutMs?: number
     history?: readonly AiHistoryEntry[]
     historyCount?: number
@@ -664,6 +676,9 @@ export async function* streamReply(
     context: ReplyContext
     /** 事件文案覆写（ADR-039）。 */
     eventTexts?: EventTexts
+    /** 动作/表情释义覆写（ADR-040）。 */
+    motionTexts?: Record<string, string>
+    expressionTexts?: Record<string, string>
     timeoutMs?: number
     history?: readonly AiHistoryEntry[]
     historyCount?: number

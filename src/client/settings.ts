@@ -17,7 +17,9 @@ import type { CSSProperties, ChangeEvent, FocusEvent, KeyboardEvent, ReactNode, 
 import type { InteractionTrigger, TouchBox, TouchInteraction, TouchPart } from '../models.ts'
 import {
   ACTIVITY_EVENTS,
+  AI_MOTIONS,
   ANIMATION_SLOTS,
+  EXPRESSIONS,
   INTERACTION_NAME_MAX,
   INTERACTION_TRIGGERS,
   INTERACTION_TRIGGER_LABELS,
@@ -32,6 +34,7 @@ import {
   AI_MEMORY_LIMITS,
   AI_MIN_INTERVAL_LIMITS,
   BAR_OFFSET_LIMITS,
+  CATALOG_TEXT_MAX,
   DEFAULT_AI_HISTORY,
   DEFAULT_AI_MEMORY,
   DEFAULT_EVENT_TEXTS,
@@ -44,6 +47,8 @@ import {
   TTS_MODELS,
   normalizeEventTexts,
   normalizeEventTriggers,
+  normalizeExpressionTexts,
+  normalizeMotionTexts,
   normalizeFocusRange,
   normalizeHistoryCount,
   normalizeLipsyncGain,
@@ -120,6 +125,10 @@ export interface PetSettingsValue {
   eventTriggers: Record<string, boolean>
   /** 事件文案覆写（空 = 内置文案；ADR-039）。 */
   eventTexts: Record<string, string>
+  /** 动作释义覆写（空 = 内置释义；ADR-040）。 */
+  motionTexts: Record<string, string>
+  /** 表情释义覆写（空 = 内置释义；ADR-040）。 */
+  expressionTexts: Record<string, string>
   /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
   ttsEnabled: boolean
   /** 语音模型 slug（OpenRouter speech 模型）。 */
@@ -1101,6 +1110,21 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       .finally(() => setMemorySaving(false))
   }
   const memoryLineCount = (memoryDraft ?? '').split('\n').filter((line) => line.trim() !== '').length
+  // 动作/表情释义草稿（ADR-040）：折叠态按 `${kind}:${id}` 记，回车/失焦即保存
+  const [openCatalog, setOpenCatalog] = useState<Record<string, boolean>>({})
+  const [catalogDrafts, setCatalogDrafts] = useState<Record<string, string>>({})
+  const catalogDraftRef = useRef<Record<string, string>>({})
+  const setCatalogDraft = (key: string, raw: string): void => {
+    catalogDraftRef.current = { ...catalogDraftRef.current, [key]: raw }
+    setCatalogDrafts(catalogDraftRef.current)
+  }
+  const commitCatalogDraft = (meta: { field: 'motionTexts' | 'expressionTexts'; id: string }, key: string, raw: string): void => {
+    const next = { ...catalogDraftRef.current }
+    delete next[key]
+    catalogDraftRef.current = next
+    setCatalogDrafts(next)
+    enqueueWrite(() => [{ op: 'set', path: [meta.field, meta.id], value: raw }])
+  }
   // 设置页折叠态（ADR-039 之后不再写第二行小字，长内容一律折叠）
   const [openScenes, setOpenScenes] = useState<Record<string, boolean>>({})
   // 场景文案草稿（回车/失焦即保存；每键写盘会互相覆盖导致「编辑框一直自动刷已保存」）
@@ -2356,6 +2380,87 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
+      ),
+      createElement('div', { key: 'ai-catalog-card', style: rowStyle },
+        createElement('div', { style: cardHeadingStyle }, '动作与表情'),
+        createElement('div', { style: formRowStartStyle },
+          createElement(FormLabel, {
+            title: '给模型的释义',
+            hint: '这些是模型能选的全部动作与表情；展开可改「这个动作/表情是什么意思」，留空用内置释义',
+          }),
+          createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
+            ...[
+              {
+                field: 'motionTexts' as const,
+                title: '动作',
+                items: AI_MOTIONS.map((motion) => ({ id: motion.id, name: motion.name, meaning: motion.meaning })),
+                custom: normalizeMotionTexts(value.motionTexts),
+              },
+              {
+                field: 'expressionTexts' as const,
+                title: '表情',
+                items: EXPRESSIONS.filter((expression) => expression.id !== 'none')
+                  .map((expression) => ({ id: expression.id, name: expression.name, meaning: expression.meaning })),
+                custom: normalizeExpressionTexts(value.expressionTexts),
+              },
+            ].map((group) =>
+              createElement('div', { key: `catalog-${group.field}`, style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+                createElement('div', { style: { fontSize: 11, color: C.textSecondary, padding: '4px 0 2px' } },
+                  `${group.title}（${group.items.length}）`),
+                ...group.items.map((item) => {
+                  const key = `${group.field}:${item.id}`
+                  const custom = group.custom[item.id] ?? ''
+                  const open = openCatalog[key] === true
+                  return createElement('div', {
+                    key,
+                    style: { display: 'flex', flexDirection: 'column', paddingBottom: GAP.xs },
+                  },
+                    createElement('div', { style: foldHeadStyle },
+                      createElement('span', { style: { ...foldTitleStyle, flex: '1 1 auto', minWidth: 0 } },
+                        `${item.id}（${item.name}）`),
+                      createElement('span', { style: foldMetaStyle }, (catalogDrafts[key] ?? custom).trim() !== '' ? '已自定义' : ''),
+                      createElement(FoldToggle, {
+                        open,
+                        disabled: !writable,
+                        onClick: () => setOpenCatalog((prev) => ({ ...prev, [key]: !open })),
+                      }),
+                    ),
+                    open && createElement('div', { style: foldBodyStyle },
+                      createElement('textarea', {
+                        rows: 2,
+                        value: catalogDrafts[key] ?? custom,
+                        placeholder: `留空用内置释义：${item.meaning || '（无）'}`,
+                        maxLength: CATALOG_TEXT_MAX,
+                        disabled: !writable,
+                        style: {
+                          ...textareaStyle,
+                          height: 46,
+                          minHeight: 46,
+                          maxHeight: 46,
+                          width: '100%',
+                          fontSize: 12,
+                          lineHeight: 1.45,
+                          resize: 'none',
+                        },
+                        onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setCatalogDraft(key, e.target.value),
+                        onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault()
+                            commitCatalogDraft({ field: group.field, id: item.id }, key, (e.target as HTMLTextAreaElement).value)
+                          }
+                        },
+                        onBlur: (e: FocusEvent<HTMLTextAreaElement>) => {
+                          if (catalogDrafts[key] === undefined) return
+                          commitCatalogDraft({ field: group.field, id: item.id }, key, e.target.value)
+                        },
+                      }),
+                    ),
+                  )
+                }),
+              ),
+            ),
+          ),
+        ),
       ),
       createElement('div', { key: 'ai-trigger-card', style: rowStyle },
         createElement('div', { style: cardHeadingStyle }, '触发'),

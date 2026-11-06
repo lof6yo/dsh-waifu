@@ -23,6 +23,7 @@ import {
   personaPath,
   sanitizeLine,
   savePersona,
+  systemPrompt,
   streamReply,
   type AiHistoryEntry,
   type WaifuLlm,
@@ -94,6 +95,15 @@ describe('时区', () => {
   it('buildSceneMessage 带上时区换算后的「现在」', () => {
     // 不注入 at，只断言形状：时区参数不会让文案崩掉
     expect(buildSceneMessage({ kind: 'tap', part: '胸', tz: 'Asia/Shanghai' })).toContain('现在是')
+  })
+})
+
+describe('systemPrompt（动作/表情释义可覆写，ADR-040）', () => {
+  it('覆写后目录行用自定义释义，未覆写仍用内置释义', () => {
+    const prompt = systemPrompt('你是简。', '', { Nod: '酷酷地点头' }, { blush: '羞到冒烟' })
+    expect(prompt).toContain('- Nod（点头）：酷酷地点头')
+    expect(prompt).toContain('- blush（脸红）：羞到冒烟')
+    expect(prompt).toContain('- ShakeHead（摇头）：拒绝、无奈、不敢相信')
   })
 })
 

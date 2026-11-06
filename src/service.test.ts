@@ -40,6 +40,8 @@ const BASE_SETTINGS: PetSettings = {
   activityWindowSec: 3,
   eventTriggers: defaultEventTriggers(),
   eventTexts: {},
+  motionTexts: {},
+  expressionTexts: {},
   ttsEnabled: true,
   ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
