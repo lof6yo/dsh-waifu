@@ -2105,8 +2105,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       }),
     }),
     !!value.aiEnabled && createElement('div', null,
-      createElement('div', { style: formRowStyle },
-        createElement(FormLabel, { title: 'Provider' }),
+      createElement('div', { key: 'ai-model-card', style: rowStyle },
+        createElement('div', { style: cardHeadingStyle }, '模型'),
+        createElement('div', { style: formRowStyle },
+          createElement(FormLabel, { title: 'Provider' }),
         createElement('div', { style: formControlStyle },
           providerChoices.length > 0
             ? createElement('select', {
@@ -2169,8 +2171,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }, aiChecking ? '测试中…' : '测试'),
         ),
       ),
-      createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '注入对话历史（轮）' }),
+      ),
+      createElement('div', { key: 'ai-context-card', style: rowStyle },
+        createElement('div', { style: cardHeadingStyle }, '上下文'),
+        createElement('div', { style: formRowInlineStyle },
+          createElement(FormLabel, { title: '注入对话历史（轮）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2205,8 +2210,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowStyle },
-        createElement(FormLabel, { title: '触发方式' }),
+      ),
+      createElement('div', { key: 'ai-trigger-card', style: rowStyle },
+        createElement('div', { style: cardHeadingStyle }, '触发'),
+        createElement('div', { style: formRowStyle },
+          createElement(FormLabel, { title: '触发方式' }),
         createElement('div', { style: formControlStyle },
           createElement('select', {
             value: value.triggerMode,
@@ -2396,9 +2404,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           },
         }, aiCheckStatus.text),
       ),
-      // 人设：默认折叠，展开才给编辑框（ADR-039 之后说明一律不写第二行小字）
-      createElement('div', { style: formRowStartStyle },
-        createElement(FormLabel, { title: '人设' }),
+      ),
+      createElement('div', { key: 'ai-prompt-card', style: rowStyle },
+        createElement('div', { style: cardHeadingStyle }, '人设与记忆'),
+        // 人设：默认折叠，展开才给编辑框（ADR-039 之后说明一律不写第二行小字）
+        createElement('div', { style: formRowStartStyle },
+          createElement(FormLabel, { title: '人设' }),
         createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
           createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
             createElement('button', {
@@ -2468,6 +2479,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           ),
         ),
       ),
+      ),
     ),
   ))
 
@@ -2492,7 +2504,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         },
       }),
     }),
-    !!value.ttsEnabled && createElement('div', null,
+    !!value.ttsEnabled && createElement('div', { key: 'voice-card', style: rowStyle },
+      createElement('div', { style: cardHeadingStyle }, '语音'),
       createElement('div', { style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '语音模型'),
         createElement('div', { style: formControlInlineStyle },
