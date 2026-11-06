@@ -67,6 +67,7 @@ import {
   type TriggerMode,
 } from '../defaults.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
+import { onCatalogPreview, type CatalogPreview } from './catalog-preview.ts'
 import { homePercentFromPos, onCaptureHome, onRecenter } from './pet-commands.ts'
 
 /** 注入所需服务。 */
@@ -421,6 +422,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   // 设置页「编辑触摸部位」事件（spec §4）：编辑态强制显示宠物并实时绘制草稿 box。
   // 退订随挂载清理，避免 StrictMode/HMR 重挂载残留监听。
   pushCleanup(onTouchEdit(handleTouchEdit))
+  // 设置页「动作 / 表情」预览（ADR-040 修订）：点一下就按目录播一次，用来确认释义对应的表现。
+  pushCleanup(onCatalogPreview((target) => { previewCatalog(target) }))
   // 设置页「归位」命令（spec §2）：按配置「显示中心距右/距下」重算位置并持久化。
   // 退订随挂载清理，避免 StrictMode/HMR 重挂载重复响应。
   pushCleanup(onRecenter(() => {
@@ -2748,6 +2751,26 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       clientLog('info', 'ai motions', motionList.join('+'))
       void playInteractionMotion(motionList)
     }
+  }
+
+  /**
+   * 设置页预览（ADR-040 修订）：动作走互动动作通道播一次；表情走临时表情通道
+   * （与 AI 标签同一套落地逻辑，`TAG_EXPRESSION_HOLD_MS` 后回到常态）。
+   */
+  function previewCatalog(target: CatalogPreview): void {
+    if (target.kind === 'expression') {
+      if (!isExpressionId(target.id)) return
+      debugExpression = null
+      tempExpressions = [target.id]
+      tempExpressionUntil = Date.now() + TAG_EXPRESSION_HOLD_MS
+      repaintDebugExpressions?.()
+      refreshExpressionTargets()
+      clientLog('info', 'preview expression', target.id)
+      return
+    }
+    if (!isMotionId(target.id)) return
+    clientLog('info', 'preview motion', target.id)
+    void playInteractionMotion([target.id])
   }
 
   function handleTap(e: PointerEvent): void {

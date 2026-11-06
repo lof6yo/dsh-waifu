@@ -40,6 +40,16 @@ ADR-037 之后，角色的动作与表情完全由 AI 从两份固定目录里�
   所以关闭是「对模型不可见 + 不生效」双重保证。
 - 全关时目录段回落成一句「（这次没有可用动作，不要写动作标签）」，避免出现空的目录标题。
 
+## 修订 2（2026-11-06）：每行加「预览」
+
+释义写得对不对，光看字没法判断，得让角色演一遍。设置页每行右侧在「编辑」之后再放一个「预览」：
+
+- 广播 `window` CustomEvent `dsh-waifu:preview-catalog`（`src/client/catalog-preview.ts`，
+  与 `touch-edit.ts` / `pet-commands.ts` 同一套同页通信，不进 Host、不加接口）。
+- 宠物层收到后按目录落地：动作 → `playInteractionMotion([id])`（FORCE 优先级，会打断当前状态动画，
+  播完自然回落）；表情 → 走 AI 标签同一条临时表情通道（`tempExpressions` + `TAG_EXPRESSION_HOLD_MS` 后复位）。
+- 目录外的 id 直接忽略，与 AI 标签的校验一致。
+
 ## 后果
 
 - 改释义不用发版，也不需要重启：释义在每次请求时从设置读取并拼 prompt。

@@ -61,6 +61,7 @@ import {
 } from '../defaults.ts'
 import { clientLog } from './client-log.ts'
 import { emitCaptureHome, emitRecenter } from './pet-commands.ts'
+import { emitCatalogPreview } from './catalog-preview.ts'
 import { emitTouchEdit } from './touch-edit.ts'
 
 /** 插件 API 前缀（与 index.ts / client-log.ts 保持一致）。 */
@@ -2392,7 +2393,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         createElement('div', { style: formRowStartStyle },
           createElement(FormLabel, {
             title: '动作与表情',
-            hint: '勾选的才会发给模型挑选；展开可改「这个动作/表情是什么意思」给模型看，留空用内置释义',
+            hint: '勾选的才会发给模型挑选；点「预览」在角色上试一次，展开可改「这个动作/表情是什么意思」，留空用内置释义',
           }),
           createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
             ...[
@@ -2446,6 +2447,16 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                         disabled: !writable,
                         onClick: () => setOpenCatalog((prev) => ({ ...prev, [key]: !open })),
                       }),
+                      createElement('button', {
+                        type: 'button',
+                        className: 'dsh-btn dsh-btn-secondary',
+                        title: group.field === 'motionTexts' ? '在角色上播一次这个动作' : '在角色上亮一次这个表情',
+                        style: { ...buttonSecondaryStyle, height: 22, padding: '0 8px', fontSize: 11, lineHeight: 1, flexShrink: 0 },
+                        onClick: () => emitCatalogPreview({
+                          kind: group.field === 'motionTexts' ? 'motion' : 'expression',
+                          id: item.id,
+                        }),
+                      }, '预览'),
                     ),
                     open && createElement('div', { style: foldBodyStyle },
                       createElement('textarea', {
