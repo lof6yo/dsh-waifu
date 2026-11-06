@@ -29,7 +29,7 @@ import type { PetState, PetStateView } from '../service.ts'
 import { PetSettingsSection } from './settings.ts'
 import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
 import { stripTimestamps, hasDoubleInteraction, pickTapInteraction, DOUBLE_TAP_MS } from '../models.ts'
-import { clientLog } from './client-log.ts'
+import { clientLog, setClientLogObserver } from './client-log.ts'
 import {
   EXPRESSIONS,
   expressionParams,
@@ -352,6 +352,8 @@ const api = {
       }
     }
   },
+  /** 排查用（ADR-043）：最近一次 LLM / TTS 请求报文与历史。 */
+  aiDebug: (): Promise<unknown> => fetch(`${PET_API}/ai-debug`).then((res) => readJson<unknown>(res)),
   setDisplay: (patch: { right?: number; bottom?: number }): Promise<{ ok: boolean }> =>
     fetch(`${PET_API}/set-display`, {
       method: 'POST',
@@ -2247,6 +2249,69 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     debugPanelTopLogical = top
   }
 
+  // ---- 调试控制台（ADR-043）：开启记录后显示所有客户端事件与 LLM/TTS 原始报文 ----
+  /** 是否在记录（关闭即清空缓冲区与 DOM）。 */
+  let conRecording = false
+  /** 控制台滚动区（面板重建时随之重建）。 */
+  let conBody: HTMLDivElement | null = null
+  /** 记录行上限：超出从头部丢弃，避免长时间开启吃内存。 */
+  const CON_MAX_LINES = 300
+  /** 单行原文字符上限（payload 可能上万字符）。 */
+  const CON_LINE_MAX = 4000
+
+  function conClock(): string {
+    const now = new Date()
+    const pad = (n: number, w = 2): string => String(n).padStart(w, '0')
+    return `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`
+  }
+
+  /** 追加一条原始报文（未开启记录时直接丢弃）。 */
+  function conPush(tag: string, text: string): void {
+    if (!conRecording || !conBody) return
+    const line = document.createElement('div')
+    line.style.cssText = 'white-space:pre-wrap;word-break:break-all;color:#cfd6e6;border-bottom:1px solid rgba(128,128,128,.1);padding:2px 0'
+    const time = document.createElement('span')
+    time.style.cssText = 'color:#6f7c93'
+    time.textContent = `${conClock()} `
+    const kind = document.createElement('span')
+    kind.style.cssText = 'color:#78aaff;font-weight:600'
+    kind.textContent = `${tag} `
+    line.appendChild(time)
+    line.appendChild(kind)
+    line.appendChild(document.createTextNode(text.slice(0, CON_LINE_MAX)))
+    conBody.appendChild(line)
+    while (conBody.childElementCount > CON_MAX_LINES) conBody.removeChild(conBody.firstElementChild as Element)
+    // 贴着底部时才自动滚动，翻上去看历史时不打断
+    if (conBody.scrollHeight - conBody.scrollTop - conBody.clientHeight < 40) conBody.scrollTop = conBody.scrollHeight
+  }
+
+  /** 「开始/停止记录」：停止时清空缓冲区与 DOM。 */
+  function setConsoleRecording(next: boolean): void {
+    conRecording = next
+    if (!conRecording && conBody) conBody.textContent = ''
+    clientLog('info', `console recording ${next ? 'on' : 'off'}`)
+  }
+
+  /** 拉一次 /ai-debug，把这一轮的 LLM 与 TTS 原始请报落进控制台。 */
+  async function dumpAiPayloads(): Promise<void> {
+    if (!conRecording) return
+    try {
+      const debug = await api.aiDebug() as { lastPayload?: unknown; lastTtsPayload?: unknown; lastSpeakPayload?: unknown }
+      const payload = debug.lastPayload as { provider?: string; model?: string; system?: string; messages?: { role?: string; content?: string }[] } | null
+      if (payload) {
+        conPush('llm', `provider=${payload.provider ?? '?'} model=${payload.model ?? '?'} system=${(payload.system ?? '').length}字 messages=${payload.messages?.length ?? 0}`)
+        if (payload.system) conPush('llm.system', payload.system)
+        for (const [index, message] of (payload.messages ?? []).entries()) {
+          conPush(`llm.${message.role ?? '?'}#${index}`, message.content ?? '')
+        }
+      }
+      const tts = (debug.lastSpeakPayload ?? debug.lastTtsPayload) as { endpoint?: string; body?: unknown; cached?: boolean } | null
+      if (tts) conPush('tts', `cached=${tts.cached === true} ${JSON.stringify(tts.body)}`)
+    } catch (error) {
+      clientLog('warn', 'ai-debug fetch failed', error)
+    }
+  }
+
   /** 调试面板动态开关（spec §2）。 */
   function ensureDebugPanel(show: boolean): void {
     if (show && !debugEl && box) {
@@ -2329,6 +2394,34 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       paintExprButtons()
       debugEl.appendChild(exprRow)
 
+      // 控制台（ADR-043）：开启后记录所有事件与 LLM/TTS 原始报文
+      debugEl.appendChild(sectionLabel('控制台'))
+      const conRow = document.createElement('div')
+      conRow.style.cssText = 'display:flex;gap:6px;align-items:center'
+      const conToggle = document.createElement('button')
+      conToggle.textContent = '开始记录'
+      conToggle.style.cssText = 'padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;background:rgba(120,170,255,.28);color:#e8eaf0;border:1px solid rgba(120,170,255,.35);outline:none'
+      const conClear = document.createElement('button')
+      conClear.textContent = '清空'
+      conClear.style.cssText = 'padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;background:rgba(128,128,128,.14);color:#dbe2ef;border:1px solid rgba(128,128,128,.3);outline:none'
+      const conState = document.createElement('span')
+      conState.style.cssText = 'color:#7f8aa0;font-size:11px'
+      const paintConState = (): void => {
+        conToggle.textContent = conRecording ? '停止记录' : '开始记录'
+        conToggle.style.background = conRecording ? 'rgba(120,255,170,.26)' : 'rgba(120,170,255,.28)'
+        conState.textContent = conRecording ? '记录中（关闭即清除）' : '未记录'
+      }
+      paintConState()
+      conToggle.onclick = () => { setConsoleRecording(!conRecording); paintConState() }
+      conClear.onclick = () => { if (conBody) conBody.textContent = '' }
+      conRow.appendChild(conToggle)
+      conRow.appendChild(conClear)
+      conRow.appendChild(conState)
+      debugEl.appendChild(conRow)
+      conBody = document.createElement('div')
+      conBody.style.cssText = 'margin-top:6px;max-height:200px;overflow-y:auto;overflow-x:hidden;background:rgba(0,0,0,.32);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:6px;font:11px/1.45 ui-monospace,monospace;color:#cfd6e6'
+      debugEl.appendChild(conBody)
+
       // 状态信息：与上方区域分隔
       debugTextEl = document.createElement('div')
       debugTextEl.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
@@ -2347,6 +2440,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugEl = null
       debugMotionSelect = null
       debugTextEl = null
+      conBody = null
+      conRecording = false
       debugPanelTopLogical = Number.NaN
     } else if (show && debugEl && !debugEl.parentNode) {
       // 模型层重建/降级后浮层可能被摘掉：重新挂回（绝对定位不占布局）
@@ -2668,6 +2763,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const seq = ++aiRequestSeq
     try {
       const result = await api.interact(input)
+      if (conRecording) { conPush('interact', JSON.stringify(result)); void dumpAiPayloads() }
       if (seq !== aiRequestSeq) return null
       if (!result.ok || !result.text) return null
       applyTags(result.expressions, result.motions)
@@ -2699,6 +2795,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     let sawClause = false
     try {
       await api.speak(withTz, (event, data) => {
+        if (conRecording) {
+          const raw = event === 'audio' && data && typeof data === 'object' && typeof (data as { data?: unknown }).data === 'string'
+            ? { ...(data as Record<string, unknown>), data: `<base64 ${Math.round(String((data as { data: string }).data).length * 3 / 4 / 1024)} KB>` }
+            : data
+          conPush('sse', `${event} ${JSON.stringify(raw)}`)
+        }
         if (seq !== speakSeq) return
         if (event === 'clause') {
           const item = data as { index?: unknown; text?: unknown }
@@ -2746,6 +2848,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     if (seq !== speakSeq) return null
     await speakChain.catch(() => undefined)
+    if (conRecording) void dumpAiPayloads()
     if (seq !== speakSeq) return null
     if (!sawClause && finalText === null) {
       // 失败/零文本 = 完全静默（ADR-037）：不回落固定台词（已不存在）

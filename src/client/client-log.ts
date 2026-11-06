@@ -9,11 +9,20 @@
 const PET_API = '/api/dsh-waifu'
 
 /** 上报一条客户端诊断日志。 */
+/** 同页观察者（开发者选项的调试控制台用，ADR-043）：收到每条上报的原文。 */
+type ClientLogObserver = (level: 'info' | 'warn' | 'error', message: string, detail: string) => void
+let observer: ClientLogObserver | null = null
+
+export function setClientLogObserver(next: ClientLogObserver | null): void {
+  observer = next
+}
+
 export function clientLog(level: 'info' | 'warn' | 'error', message: string, detail?: unknown): void {
   try {
     const text = detail === undefined
       ? ''
       : (detail instanceof Error ? (detail.stack ?? detail.message) : String(detail)).slice(0, 4000)
+    try { observer?.(level, message, text) } catch { /* 观察者异常不影响上报 */ }
     void fetch(`${PET_API}/client-log`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

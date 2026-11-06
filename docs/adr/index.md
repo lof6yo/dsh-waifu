@@ -48,3 +48,4 @@
 | 040 | [动作/表情的「给模型的释义」可在设置页编辑](./040-editable-motion-expression-prompts.md) | 已采纳 |
 | 041 | [演出手势（动作 / 表情）期间暂停鼠标跟随](./041-pause-focus-during-performance.md) | 已采纳 |
 | 042 | [只在标签页隐藏时暂停渲染](./042-pause-render-only-when-hidden.md) | 已采纳 |
+| 043 | [调试控制台：事件 + 原始报文](./043-debug-console.md) | 已采纳 |
