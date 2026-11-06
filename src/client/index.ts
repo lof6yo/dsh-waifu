@@ -105,6 +105,17 @@ const BUBBLE_DISPLAY_MS = 2500
 /** 气泡最长连续可见时长兜底（秒）：默认 30；0 = 不限（spec §3，ADR-027）。 */
 const BUBBLE_MAX_DEFAULT = DEFAULT_BUBBLE_MAX_SECONDS
 /**
+ * 调试面板手动摆放（spec §2 / ADR-044）：拖动标题栏移动、拖四角缩放后，几何存浏览器本地。
+ * 用 localStorage 而不是设置文件——这是纯客户端的调试工具状态，不该进 Host schema、也不该
+ * 跟着设置同步到别的设备；键带版本号，几何结构再变时换键即可让旧记录自然失效。
+ */
+const DEBUG_PANEL_STORE_KEY = 'dsh-waifu.debug-panel:v1'
+/** 面板尺寸下限（px）：再小按钮就点不准了。 */
+const DEBUG_PANEL_MIN_W = 180
+const DEBUG_PANEL_MIN_H = 140
+/** 面板与视口边缘的最小间距（px）。 */
+const DEBUG_PANEL_MARGIN = 8
+/**
  * 与 Host 的 `AI_COOLDOWN_MS` 对齐的客户端冷却：冷却内的点击**不发请求**（Host 会直接拒），
  * 也不能顺手 `stopSpeaking()` 把上一条已经说了一半的台词掐掉——否则连点两下等于「什么都没发生」。
  */
@@ -233,6 +244,17 @@ interface DebugMotionItem {
   index: number
   label: string
 }
+
+/** 调试面板手动几何（petLayer 逻辑 CSS px）：用户拖出来的位置与大小（spec §2 / ADR-044）。 */
+interface DebugPanelGeometry {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/** 面板缩放方向（四角）。 */
+type PanelCorner = 'nw' | 'ne' | 'sw' | 'se'
 
 interface ModelLike {
   width: number
@@ -459,6 +481,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let previewActive = false
   /** 调试面板顶部（逻辑画布 CSS px；NaN = 不可见/未定位），用于气泡避让（spec §2）。 */
   let debugPanelTopLogical = Number.NaN
+  /** 调试面板底部（逻辑画布 CSS px；NaN = 不可见/未定位）：气泡避让只在面板整体位于模型上方时生效。 */
+  let debugPanelBottomLogical = Number.NaN
+  /** 调试面板手动几何（逻辑画布 CSS px；null = 自动跟随模型上方，spec §2 / ADR-044）。 */
+  let debugPanelManual: DebugPanelGeometry | null = null
+  /** 是否已从 localStorage 读过手动几何（首次建面板时读一次，之后以内存为准）。 */
+  let debugPanelGeometryLoaded = false
   let canvas: HTMLCanvasElement | null = null
   /** 画布外包一层，便于绝对定位触摸部位叠加层。 */
   let petLayer: HTMLDivElement | null = null
@@ -726,10 +754,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const bounds = boundsArg === undefined ? modelBounds() : boundsArg
     if (!bounds) return
     const anchorX = bounds.x + bounds.width / 2 + bubbleOffsetX
-    // 调试面板可见时气泡上移避让：锚点 = 面板顶部再往上 6px（spec §2）
-    let anchorY = Number.isFinite(debugPanelTopLogical)
-      ? debugPanelTopLogical - 6
-      : bounds.y - bubbleOffsetY
+    // 气泡默认锚在模型包围盒上方（spec §3）
+    let anchorY = bounds.y - bubbleOffsetY
+    // 调试面板整体位于模型上方时（自动跟随的常态）气泡叠到面板之上避让（spec §2）；
+    // 面板被用户拖到别处（侧边/下方）就不再上移，否则气泡会莫名其妙飞到面板顶上。
+    if (Number.isFinite(debugPanelTopLogical) && debugPanelBottomLogical <= bounds.y + 1) {
+      anchorY = debugPanelTopLogical - 6
+    }
     // 气泡目标视口 y clamp 到 ≥8（用缓存的 petLayer 视口 rect 换算，面板/模型贴顶时不跑出视口）
     const rect = layerRect()
     if (rect && rect.top + anchorY < 8) anchorY = 8 - rect.top
@@ -1606,6 +1637,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     invalidateLayout()
     // 调试面板随旧 petLayer 一起移除，复位避让状态（新层加载后若 debug 仍开会重新挂载）
     debugPanelTopLogical = Number.NaN
+    debugPanelBottomLogical = Number.NaN
     removeFallback()
   }
 
@@ -2198,29 +2230,193 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     void currentModel.motion(group, index, MotionPriority.FORCE)
   }
 
+  // ---- 调试面板几何：可拖动 / 可缩放 / 本地记住（spec §2，ADR-044） ----
+
+  /** 面板可用尺寸范围（视口内留 DEBUG_PANEL_MARGIN 边距）。 */
+  function debugPanelSizeBounds(): { minW: number; minH: number; maxW: number; maxH: number } {
+    const viewportW = window.innerWidth || document.documentElement?.clientWidth || 0
+    const viewportH = window.innerHeight || document.documentElement?.clientHeight || 0
+    return {
+      minW: DEBUG_PANEL_MIN_W,
+      minH: DEBUG_PANEL_MIN_H,
+      maxW: Math.max(DEBUG_PANEL_MIN_W, viewportW - DEBUG_PANEL_MARGIN * 2),
+      maxH: Math.max(DEBUG_PANEL_MIN_H, viewportH - DEBUG_PANEL_MARGIN * 2),
+    }
+  }
+
+  /** 把手动几何夹进视口：先收敛宽高，再把整块面板拉回边距内（逻辑坐标按 petLayer 视口 rect 换算）。 */
+  function clampDebugPanelGeometry(geometry: DebugPanelGeometry): DebugPanelGeometry {
+    const { minW, minH, maxW, maxH } = debugPanelSizeBounds()
+    const width = Math.round(Math.min(Math.max(geometry.width, minW), maxW))
+    const height = Math.round(Math.min(Math.max(geometry.height, minH), maxH))
+    const viewportW = window.innerWidth || document.documentElement?.clientWidth || 0
+    const viewportH = window.innerHeight || document.documentElement?.clientHeight || 0
+    const rect = layerRect()
+    const originLeft = rect ? rect.left : 0
+    const originTop = rect ? rect.top : 0
+    const minLeft = DEBUG_PANEL_MARGIN - originLeft
+    const minTop = DEBUG_PANEL_MARGIN - originTop
+    const maxLeft = Math.max(minLeft, viewportW - DEBUG_PANEL_MARGIN - width - originLeft)
+    const maxTop = Math.max(minTop, viewportH - DEBUG_PANEL_MARGIN - height - originTop)
+    return {
+      left: Math.round(Math.min(Math.max(geometry.left, minLeft), maxLeft)),
+      top: Math.round(Math.min(Math.max(geometry.top, minTop), maxTop)),
+      width,
+      height,
+    }
+  }
+
+  /** 读一次本地记住的手动几何（隐私模式/无 localStorage 视为没记过）。 */
+  function readDebugPanelGeometry(): DebugPanelGeometry | null {
+    if (debugPanelGeometryLoaded) return debugPanelManual
+    debugPanelGeometryLoaded = true
+    try {
+      const raw = window.localStorage.getItem(DEBUG_PANEL_STORE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as Partial<DebugPanelGeometry>
+      const values = [parsed.left, parsed.top, parsed.width, parsed.height].map((value) => Number(value))
+      if (!values.every((value) => Number.isFinite(value))) return null
+      debugPanelManual = { left: values[0], top: values[1], width: values[2], height: values[3] }
+    } catch { /* 读不到就当没记过，回落到自动跟随 */ }
+    return debugPanelManual
+  }
+
+  /** 手动几何写回本地；null = 清除记录（回到自动跟随）。 */
+  function writeDebugPanelGeometry(): void {
+    try {
+      if (debugPanelManual) window.localStorage.setItem(DEBUG_PANEL_STORE_KEY, JSON.stringify(debugPanelManual))
+      else window.localStorage.removeItem(DEBUG_PANEL_STORE_KEY)
+    } catch { /* 写不进去只影响下次记忆，不影响当前摆放 */ }
+  }
+
+  /** 面板当前几何（逻辑 px）：手动模式取记录值，自动模式量一次 offset*（拖动起始时接管用）。 */
+  function currentDebugPanelGeometry(): DebugPanelGeometry | null {
+    if (debugPanelManual) return { ...debugPanelManual }
+    if (!debugEl) return null
+    const width = debugEl.offsetWidth
+    const height = debugEl.offsetHeight
+    if (!(width > 0 && height > 0)) return null
+    return { left: debugEl.offsetLeft, top: debugEl.offsetTop, width, height }
+  }
+
+  /** 把手动几何落到面板样式（位置+宽高固定），并记录顶部/底部供气泡避让。 */
+  function applyDebugPanelGeometry(geometry: DebugPanelGeometry): void {
+    if (!debugEl) return
+    debugEl.style.left = `${geometry.left}px`
+    debugEl.style.top = `${geometry.top}px`
+    debugEl.style.width = `${geometry.width}px`
+    debugEl.style.height = `${geometry.height}px`
+    debugEl.style.maxHeight = 'none'
+    panelSizeCache = { width: geometry.width, height: geometry.height }
+    debugPanelTopLogical = geometry.top
+    debugPanelBottomLogical = geometry.top + geometry.height
+  }
+
+  /** 恢复自动跟随（标题栏 ↺ / 双击标题栏）：清掉手动几何与本地记录，重新按模型定位。 */
+  function resetDebugPanelGeometry(): void {
+    if (!debugPanelManual) return
+    debugPanelManual = null
+    writeDebugPanelGeometry()
+    invalidateLayout()
+    syncDebugPanelWidth()
+    updateDebugPanelPosition()
+  }
+
+  /**
+   * 面板拖动/缩放（spec §2 / ADR-044）：mode='move' 为标题栏拖动，否则按四角缩放。
+   * 拖动过程只改内存与样式（不写盘、不触发重排循环），松手才落 localStorage。
+   */
+  function bindDebugPanelPointer(handle: HTMLElement, mode: 'move' | PanelCorner): void {
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return
+      // 标题栏上的按钮（↺）自己处理点击，不当作拖动
+      if (mode === 'move' && (event.target as HTMLElement | null)?.closest('button')) return
+      const start = currentDebugPanelGeometry()
+      if (!start) return
+      event.preventDefault()
+      event.stopPropagation()
+      const startX = event.clientX
+      const startY = event.clientY
+      // 拖过 2px 才算拖动：单击标题栏不会把面板「粘」到鼠标上
+      let dragging = false
+      const onMove = (moveEvent: PointerEvent): void => {
+        const dx = moveEvent.clientX - startX
+        const dy = moveEvent.clientY - startY
+        if (!dragging && Math.abs(dx) + Math.abs(dy) < 2) return
+        dragging = true
+        let next: DebugPanelGeometry
+        if (mode === 'move') {
+          next = { ...start, left: start.left + dx, top: start.top + dy }
+        } else {
+          const { minW, minH, maxW, maxH } = debugPanelSizeBounds()
+          const right = start.left + start.width
+          const bottom = start.top + start.height
+          const rawWidth = mode === 'nw' || mode === 'sw' ? start.width - dx : start.width + dx
+          const rawHeight = mode === 'nw' || mode === 'ne' ? start.height - dy : start.height + dy
+          const width = Math.round(Math.min(Math.max(rawWidth, minW), maxW))
+          const height = Math.round(Math.min(Math.max(rawHeight, minH), maxH))
+          // 拖左上角时右/下边固定：宽高被夹住后由固定边反推 left/top，把手才跟得住鼠标
+          next = {
+            left: mode === 'nw' || mode === 'sw' ? right - width : start.left,
+            top: mode === 'nw' || mode === 'ne' ? bottom - height : start.top,
+            width,
+            height,
+          }
+        }
+        debugPanelManual = clampDebugPanelGeometry(next)
+        applyDebugPanelGeometry(debugPanelManual)
+      }
+      const finish = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', finish)
+        window.removeEventListener('pointercancel', finish)
+        if (!dragging) return
+        writeDebugPanelGeometry()
+        invalidateLayout()
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', finish)
+      window.addEventListener('pointercancel', finish)
+    })
+  }
+
   /** 调试面板宽度/最大高度（浮层不占布局，spec §2）：宽度 min(280, 画布逻辑宽度-16)，
-   *  最大高度 min(420, 视口高*0.5) 且可滚动，避免面板过高无处放。 */
+   *  最大高度 min(420, 视口高*0.5)，内容区自己滚动，避免面板过高无处放。
+   *  用户拖过角（手动几何）后不再按画布回写，宽高完全由用户决定（ADR-044）。 */
   function syncDebugPanelWidth(): void {
     if (!debugEl) return
+    if (debugPanelManual) {
+      applyDebugPanelGeometry(clampDebugPanelGeometry(debugPanelManual))
+      return
+    }
     // append 阶段 PIXI app 尚未创建，此时 canvas 属性本身就是逻辑尺寸
     const canvasWidth = app ? logicalCanvasSize().width : (canvas?.width ?? pos.size)
     const width = Math.max(120, Math.min(280, Math.round(canvasWidth - 16)))
     debugEl.style.width = `${width}px`
     debugEl.style.boxSizing = 'border-box'
+    // 高度回到内容自适应：手动模式写过的 px 高必须清掉，否则恢复自动跟随后面板缩不回去
+    debugEl.style.removeProperty('height')
     debugEl.style.maxHeight = `${Math.max(80, Math.min(420, Math.round(window.innerHeight * 0.5)))}px`
-    debugEl.style.overflowY = 'auto'
   }
 
   /**
-   * 调试面板定位（spec §2）：浮在模型包围盒**上方**（不覆盖角色），允许伸出画布留白/画布
-   * 上边缘（逻辑 top 可为负），但整体保持在视口内。用 petLayer 的视口 rect 换算：
-   * 期望视口 top = rect.top + bounds.y - 8 - panelHeight，clamp 到 [8, innerHeight-panelH-8]，
-   * 再换算回 petLayer 逻辑 top = clampedTop - rect.top；水平同理。
-   * 每帧由命中层 rAF 调用（跟随动作/内容高度变化），并记录逻辑顶部供气泡避让。
+   * 调试面板定位（spec §2）：
+   * - 自动模式（默认）：浮在模型包围盒**上方**（不覆盖角色），允许伸出画布留白/画布上边缘
+   *   （逻辑 top 可为负），但整体保持在视口内。用 petLayer 的视口 rect 换算：
+   *   期望视口 top = rect.top + bounds.y - 8 - panelHeight，clamp 到 [8, innerHeight-panelH-8]，
+   *   再换算回 petLayer 逻辑 top = clampedTop - rect.top；水平同理。
+   * - 手动模式（用户拖过标题栏/角）：位置与大小都由用户决定，只在视口变化时重新夹回屏幕内。
+   * 每帧由命中层 rAF 调用，并记录顶部/底部供气泡避让。
    */
   function updateDebugPanelPosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
     debugPanelTopLogical = Number.NaN
+    debugPanelBottomLogical = Number.NaN
     if (!debugEl || !petLayer || debugEl.parentNode !== petLayer || !model) return
+    // 手动模式不跟随模型：只保证整块面板还在视口里（窗口缩放/角色挪动后也不丢）
+    if (debugPanelManual) {
+      applyDebugPanelGeometry(clampDebugPanelGeometry(debugPanelManual))
+      return
+    }
     const bounds = boundsArg === undefined ? modelBounds() : boundsArg
     if (!bounds) return
     // 面板尺寸带缓存：内容/窗口变化时由 invalidateLayout 失效，避免每帧读 offsetWidth（强制布局）
@@ -2234,12 +2430,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const rect = layerRect()
     if (!rect) return
     // 垂直：贴模型顶部上方 8px；只在视口放不下时才被夹到视口顶部附近
-    const maxViewportTop = Math.max(8, window.innerHeight - panelHeight - 8)
-    const viewportTop = Math.min(Math.max(rect.top + bounds.y - 8 - panelHeight, 8), maxViewportTop)
+    const maxViewportTop = Math.max(DEBUG_PANEL_MARGIN, window.innerHeight - panelHeight - DEBUG_PANEL_MARGIN)
+    const viewportTop = Math.min(Math.max(rect.top + bounds.y - 8 - panelHeight, DEBUG_PANEL_MARGIN), maxViewportTop)
     // 水平：面板居中对齐模型，限制在视口内
-    const maxViewportLeft = Math.max(8, window.innerWidth - panelWidth - 8)
+    const maxViewportLeft = Math.max(DEBUG_PANEL_MARGIN, window.innerWidth - panelWidth - DEBUG_PANEL_MARGIN)
     const viewportLeft = Math.min(
-      Math.max(rect.left + bounds.x + bounds.width / 2 - panelWidth / 2, 8),
+      Math.max(rect.left + bounds.x + bounds.width / 2 - panelWidth / 2, DEBUG_PANEL_MARGIN),
       maxViewportLeft,
     )
     const top = viewportTop - rect.top
@@ -2247,6 +2443,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     debugEl.style.left = `${left}px`
     debugEl.style.top = `${top}px`
     debugPanelTopLogical = top
+    debugPanelBottomLogical = top + panelHeight
   }
 
   // ---- 调试控制台（ADR-043）：开启记录后显示所有客户端事件与 LLM/TTS 原始报文 ----
@@ -2315,13 +2512,51 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 调试面板动态开关（spec §2）。 */
   function ensureDebugPanel(show: boolean): void {
     if (show && !debugEl && box) {
+      // 首次建面板时恢复上次拖出来的位置/大小（spec §2 / ADR-044）
+      readDebugPanelGeometry()
       debugEl = document.createElement('div')
-      debugEl.style.cssText = 'position:absolute;z-index:5;pointer-events:auto;padding:10px 12px;background:rgba(24,26,36,.94);color:#e8eaf0;border:1px solid rgba(128,128,128,.22);border-radius:10px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.35)'
+      debugEl.style.cssText = `position:absolute;z-index:5;pointer-events:auto;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;background:rgba(24,26,36,.94);color:#e8eaf0;border:1px solid rgba(128,128,128,.22);border-radius:10px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.35);min-width:${DEBUG_PANEL_MIN_W}px;min-height:${DEBUG_PANEL_MIN_H}px`
 
+      // 标题栏=拖动把手：按住拖动改位置、双击恢复自动跟随；右侧 ↺ 同效
+      const debugHeader = document.createElement('div')
+      debugHeader.style.cssText = 'display:flex;align-items:center;gap:6px;flex:0 0 auto;padding:6px 6px 6px 10px;background:rgba(255,255,255,.045);border-bottom:1px solid rgba(128,128,128,.16);cursor:move;user-select:none;-webkit-user-select:none;touch-action:none'
+      debugHeader.title = '拖动标题栏移动面板，拖四角改大小，双击标题栏回到自动跟随'
       const debugTitle = document.createElement('div')
-      debugTitle.style.cssText = 'font-size:12px;font-weight:600;color:#aeb8cc;letter-spacing:.3px;margin-bottom:2px'
+      debugTitle.style.cssText = 'flex:1 1 auto;min-width:0;font-size:12px;font-weight:600;color:#aeb8cc;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
       debugTitle.textContent = '调试面板'
-      debugEl.appendChild(debugTitle)
+      const debugReset = document.createElement('button')
+      debugReset.type = 'button'
+      debugReset.textContent = '↺'
+      debugReset.title = '恢复自动跟随（回到模型上方）'
+      debugReset.style.cssText = 'flex:0 0 auto;width:18px;height:18px;padding:0;display:grid;place-items:center;border:none;border-radius:5px;background:rgba(128,128,128,.16);color:#c8d1e2;font-size:12px;line-height:1;cursor:pointer;outline:none'
+      debugReset.onmouseenter = () => { debugReset.style.background = 'rgba(120,170,255,.28)' }
+      debugReset.onmouseleave = () => { debugReset.style.background = 'rgba(128,128,128,.16)' }
+      debugReset.onclick = () => { resetDebugPanelGeometry() }
+      // 双击标题栏 = 恢复自动跟随（拖一次就手动接管了，给一个不藏起来的手势）
+      debugHeader.ondblclick = () => { resetDebugPanelGeometry() }
+      debugHeader.appendChild(debugTitle)
+      debugHeader.appendChild(debugReset)
+      debugEl.appendChild(debugHeader)
+      bindDebugPanelPointer(debugHeader, 'move')
+
+      // 内容区：手动模式下高度被固定，内容自己滚动，标题栏不会跟着滚走
+      const debugBody = document.createElement('div')
+      debugBody.style.cssText = 'flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:8px 10px;box-sizing:border-box'
+      debugEl.appendChild(debugBody)
+
+      // 四角缩放把手（右下角有可见斜纹，其余三角透明但可拖）
+      for (const corner of ['nw', 'ne', 'sw', 'se'] as const) {
+        const grip = document.createElement('div')
+        const horizontal = corner === 'nw' || corner === 'sw' ? 'left' : 'right'
+        const vertical = corner === 'nw' || corner === 'ne' ? 'top' : 'bottom'
+        grip.style.cssText = `position:absolute;${horizontal}:0;${vertical}:0;width:14px;height:14px;z-index:6;cursor:${corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize'};touch-action:none`
+        grip.title = '拖动改面板大小'
+        if (corner === 'se') {
+          grip.style.background = 'linear-gradient(135deg,transparent 0 55%,rgba(150,180,230,.5) 55% 62%,transparent 62% 72%,rgba(150,180,230,.5) 72% 79%,transparent 79%)'
+        }
+        bindDebugPanelPointer(grip, corner)
+        debugEl.appendChild(grip)
+      }
 
       const sectionLabel = (text: string): HTMLDivElement => {
         const el = document.createElement('div')
@@ -2332,7 +2567,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
       // 状态演示：等宽按钮网格（六态两行三列）
       const demoLabel = sectionLabel('状态演示')
-      debugEl.appendChild(demoLabel)
+      debugBody.appendChild(demoLabel)
       const demoRow = document.createElement('div')
       demoRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px'
       for (const st of ['idle', 'thinking', 'waiting', 'done', 'delivered', 'error'] as const) {
@@ -2344,11 +2579,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         btn.onclick = () => { demoState = demoState === st ? null : st; applyState(view) }
         demoRow.appendChild(btn)
       }
-      debugEl.appendChild(demoRow)
+      debugBody.appendChild(demoRow)
 
       // 动画预览：原生动画下拉 + 播放按钮
       const motionLabel = sectionLabel('动画预览')
-      debugEl.appendChild(motionLabel)
+      debugBody.appendChild(motionLabel)
       const motionSelect = document.createElement('select')
       motionSelect.style.cssText = 'flex:1;min-width:0;background:#1c1e28;color:#e8eaf0;border:1px solid rgba(128,128,128,.3);border-radius:6px;font-size:12px;padding:4px 6px;outline:none'
       motionSelect.onchange = () => previewMotion(motionSelect.value)
@@ -2363,11 +2598,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       motionRow.appendChild(motionSelect)
       motionRow.appendChild(motionPlay)
       debugMotionSelect = motionSelect
-      debugEl.appendChild(motionRow)
+      debugBody.appendChild(motionRow)
 
       // 表情预览：点选即常驻（再点同一项取消）
       const exprLabel = sectionLabel('表情预览')
-      debugEl.appendChild(exprLabel)
+      debugBody.appendChild(exprLabel)
       const exprRow = document.createElement('div')
       exprRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px'
       const exprButtons: { id: string; btn: HTMLButtonElement }[] = []
@@ -2392,10 +2627,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         exprRow.appendChild(btn)
       }
       paintExprButtons()
-      debugEl.appendChild(exprRow)
+      debugBody.appendChild(exprRow)
 
       // 控制台（ADR-043）：开启后记录所有事件与 LLM/TTS 原始报文
-      debugEl.appendChild(sectionLabel('控制台'))
+      debugBody.appendChild(sectionLabel('控制台'))
       const conRow = document.createElement('div')
       conRow.style.cssText = 'display:flex;gap:6px;align-items:center'
       const conToggle = document.createElement('button')
@@ -2417,15 +2652,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       conRow.appendChild(conToggle)
       conRow.appendChild(conClear)
       conRow.appendChild(conState)
-      debugEl.appendChild(conRow)
+      debugBody.appendChild(conRow)
       conBody = document.createElement('div')
       conBody.style.cssText = 'margin-top:6px;max-height:200px;overflow-y:auto;overflow-x:hidden;background:rgba(0,0,0,.32);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:6px;font:11px/1.45 ui-monospace,monospace;color:#cfd6e6'
-      debugEl.appendChild(conBody)
+      debugBody.appendChild(conBody)
 
       // 状态信息：与上方区域分隔
       debugTextEl = document.createElement('div')
       debugTextEl.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
-      debugEl.appendChild(debugTextEl)
+      debugBody.appendChild(debugTextEl)
       syncDebugPanelWidth()
       refreshDebugMotionGroups()
       // 浮层挂在 petLayer 内（canvas 坐标系），绝对定位跟随模型包围盒，不占布局
@@ -2442,7 +2677,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugTextEl = null
       conBody = null
       conRecording = false
+      // 手动几何留在内存与 localStorage 里：下次开面板还回原位（ADR-044）
       debugPanelTopLogical = Number.NaN
+      debugPanelBottomLogical = Number.NaN
     } else if (show && debugEl && !debugEl.parentNode) {
       // 模型层重建/降级后浮层可能被摘掉：重新挂回（绝对定位不占布局）
       if (petLayer) petLayer.appendChild(debugEl)

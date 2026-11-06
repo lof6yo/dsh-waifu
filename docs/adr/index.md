@@ -49,3 +49,4 @@
 | 041 | [演出手势（动作 / 表情）期间暂停鼠标跟随](./041-pause-focus-during-performance.md) | 已采纳 |
 | 042 | [只在标签页隐藏时暂停渲染](./042-pause-render-only-when-hidden.md) | 已采纳 |
 | 043 | [调试控制台：事件 + 原始报文](./043-debug-console.md) | 已采纳 |
+| 044 | [调试面板自由摆放：拖动 / 缩放 / 本地记住](./044-draggable-debug-panel.md) | 已采纳 |
