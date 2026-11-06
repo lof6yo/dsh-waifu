@@ -2485,10 +2485,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (conBody.scrollHeight - conBody.scrollTop - conBody.clientHeight < 40) conBody.scrollTop = conBody.scrollHeight
   }
 
-  /** 「开始/停止记录」：停止时清空缓冲区与 DOM。 */
+  /** 「开始/停止记录」：停止只暂停追加，已记录内容保留（要清用「清空」按钮）。 */
   function setConsoleRecording(next: boolean): void {
     conRecording = next
-    if (!conRecording && conBody) conBody.textContent = ''
     clientLog('info', `console recording ${next ? 'on' : 'off'}`)
   }
 
@@ -2653,11 +2652,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       const paintConState = (): void => {
         conToggle.textContent = conRecording ? '停止记录' : '开始记录'
         conToggle.style.background = conRecording ? 'rgba(120,255,170,.26)' : 'rgba(120,170,255,.28)'
-        conState.textContent = conRecording ? '记录中（关闭即清除）' : '未记录'
+        // 停止记录只暂停追加：有内容时提示保留，避免误以为「停了就没了」
+        const hasLines = (conBody?.childElementCount ?? 0) > 0
+        conState.textContent = conRecording ? '记录中' : hasLines ? '已暂停（内容保留）' : '未记录'
       }
       paintConState()
       conToggle.onclick = () => { setConsoleRecording(!conRecording); paintConState() }
-      conClear.onclick = () => { if (conBody) conBody.textContent = '' }
+      conClear.onclick = () => { if (conBody) conBody.textContent = ''; paintConState() }
       conRow.appendChild(conToggle)
       conRow.appendChild(conClear)
       conRow.appendChild(conState)
