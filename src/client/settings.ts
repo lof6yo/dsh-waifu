@@ -378,6 +378,44 @@ function FormLabel(props: { title: string; hint?: ReactNode }): ReactElement {
   )
 }
 
+/** 卡片内的折叠块：头部一行（标题 + 右侧展开/收起），展开内容用左侧细线缩进。 */
+const foldHeadStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.sm,
+  minHeight: 26,
+}
+const foldTitleStyle: CSSProperties = {
+  flex: '1 1 auto',
+  minWidth: 0,
+  fontSize: 12,
+  color: C.textPrimary,
+  lineHeight: 1.5,
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+}
+const foldMetaStyle: CSSProperties = { fontSize: 11, color: C.textSecondary, flexShrink: 0 }
+const foldBodyStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: GAP.sm,
+  marginTop: GAP.xs,
+  marginLeft: 2,
+  paddingLeft: GAP.md,
+  borderLeft: `2px solid ${C.borderL1}`,
+}
+/** 折叠块右侧的展开/收起按钮：与卡片里的次级按钮同款，但更矮更轻。 */
+function FoldToggle(props: { open: boolean; disabled?: boolean; onClick: () => void }): ReactElement {
+  return createElement('button', {
+    type: 'button',
+    className: 'dsh-btn dsh-btn-secondary',
+    style: { ...buttonSecondaryStyle, height: 22, padding: '0 8px', fontSize: 11, lineHeight: 1, flexShrink: 0 },
+    disabled: props.disabled,
+    onClick: props.onClick,
+  }, props.open ? '收起' : '编辑')
+}
+
 function SectionHeader(props: { title: string; description?: ReactNode; action?: ReactNode }): ReactElement {
   const { title, description, action } = props
   return createElement('div', { style: sectionHeaderStyle },
@@ -1045,6 +1083,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       .catch(() => setMemoryStatus('保存失败'))
       .finally(() => setMemorySaving(false))
   }
+  const memoryLineCount = (memoryDraft ?? '').split('\n').filter((line) => line.trim() !== '').length
   // 设置页折叠态（ADR-039 之后不再写第二行小字，长内容一律折叠）
   const [openScenes, setOpenScenes] = useState<Record<string, boolean>>({})
   const [personaOpen, setPersonaOpen] = useState(false)
@@ -2171,6 +2210,20 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }, aiChecking ? '测试中…' : '测试'),
         ),
       ),
+        !!aiCheckStatus && createElement('div', { style: formRowStyle },
+          createElement(FormLabel, { title: '自检' }),
+          createElement('div', {
+            style: {
+              ...formControlStyle,
+              color: aiCheckStatus.ok ? C.success : C.error,
+              fontSize: 12,
+              lineHeight: 1.5,
+              wordBreak: 'break-all',
+              maxHeight: 96,
+              overflowY: 'auto',
+            },
+          }, aiCheckStatus.text),
+        ),
       ),
       createElement('div', { key: 'ai-context-card', style: rowStyle },
         createElement('div', { style: cardHeadingStyle }, '上下文'),
@@ -2340,14 +2393,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           title: '触发场景',
           hint: '打开的事件才会让角色反应；触摸与对话始终可触发。展开可改「这件事怎么描述给模型」，留空用内置文案',
         }),
-        createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+        createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
           TRIGGER_ORDER.map((event) => {
             const enabled = normalizeEventTriggers(value.eventTriggers)[event] !== false
             const custom = normalizeEventTexts(value.eventTexts)[event] ?? ''
             const open = openScenes[event] === true
             const preview = custom.trim() !== '' ? custom.trim() : (DEFAULT_EVENT_TEXTS[event] ?? event)
-            return createElement('div', { key: `trigger-${event}`, style: { display: 'flex', flexDirection: 'column' } },
-              createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+            return createElement('div', {
+              key: `trigger-${event}`,
+              style: { display: 'flex', flexDirection: 'column', paddingBottom: GAP.xs },
+            },
+              createElement('div', { style: foldHeadStyle },
                 createElement('label', {
                   style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap', cursor: 'pointer' },
                 },
@@ -2362,47 +2418,28 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                   }),
                   TRIGGER_EVENT_LABELS[event] ?? event,
                 ),
-                createElement('button', {
-                  type: 'button',
-                  style: { ...buttonBaseStyle, height: 20, padding: '0 6px', fontSize: 11, color: open ? C.brand : C.textSecondary },
-                  disabled: !writable,
-                  onClick: () => setOpenScenes((prev) => ({ ...prev, [event]: !open })),
-                }, open ? '收起' : '编辑'),
+                createElement('span', { style: foldMetaStyle }, custom.trim() !== '' ? '已自定义' : ''),
+                createElement(FoldToggle, { open, disabled: !writable, onClick: () => setOpenScenes((prev) => ({ ...prev, [event]: !open })) }),
               ),
-              open && createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0 8px 22px' } },
+              open && createElement('div', { style: foldBodyStyle },
                 createElement('input', {
                   type: 'text',
                   value: custom,
-                  placeholder: DEFAULT_EVENT_TEXTS[event] ?? '',
+                  placeholder: `内置：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
                   maxLength: EVENT_TEXT_MAX,
                   disabled: !writable,
-                  title: `内置文案：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
-                  style: { ...inputStyle, width: '100%', height: 26, fontSize: 11 },
+                  style: { ...inputStyle, width: '100%', height: 28, fontSize: 12 },
                   onChange: (e: ChangeEvent<HTMLInputElement>) => {
                     const next = e.target.value
                     enqueueWrite(() => [{ op: 'set', path: ['eventTexts', event], value: next }])
                   },
                 }),
-                createElement('div', { style: { fontSize: 11, color: C.textSecondary, lineHeight: 1.5, wordBreak: 'break-all' } },
+                createElement('div', { style: { fontSize: 11, color: C.textSecondary, lineHeight: 1.6, wordBreak: 'break-all' } },
                   `prompt 预览：${preview}`),
               ),
             )
           }),
         ),
-      ),
-      !!aiCheckStatus && createElement('div', { style: formRowStyle },
-        createElement(FormLabel, { title: '自检', hint: '刚发出去的那次真实请求的结果' }),
-        createElement('div', {
-          style: {
-            ...formControlStyle,
-            color: aiCheckStatus.ok ? C.success : C.error,
-            fontSize: 12,
-            lineHeight: 1.5,
-            wordBreak: 'break-all',
-            maxHeight: 96,
-            overflowY: 'auto',
-          },
-        }, aiCheckStatus.text),
       ),
       ),
       createElement('div', { key: 'ai-prompt-card', style: rowStyle },
@@ -2411,18 +2448,16 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         createElement('div', { style: formRowStartStyle },
           createElement(FormLabel, { title: '人设' }),
         createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
-          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
-            createElement('button', {
-              type: 'button',
-              style: { ...buttonBaseStyle, padding: '0 10px', color: personaOpen ? C.brand : C.textSecondary },
+          createElement('div', { style: foldHeadStyle },
+            createElement('span', { style: foldTitleStyle }, personaStatus ?? '保存后立即写入 persona.md，下一次触摸生效'),
+            createElement('span', { style: foldMetaStyle }, personaDraft === null ? '' : `${personaDraft.length} 字`),
+            createElement(FoldToggle, {
+              open: personaOpen,
               disabled: !writable || personaDraft === null,
               onClick: () => setPersonaOpen((prev) => !prev),
-            }, personaOpen ? '收起' : '展开编辑'),
-            personaStatus
-              ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, personaStatus)
-              : null,
+            }),
           ),
-          personaOpen && createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } },
+          personaOpen && createElement('div', { style: foldBodyStyle },
             createElement('textarea', {
               key: 'ai-persona',
               rows: 8,
@@ -2447,18 +2482,16 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       createElement('div', { style: formRowStartStyle },
         createElement(FormLabel, { title: '记忆' }),
         createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
-          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
-            createElement('button', {
-              type: 'button',
-              style: { ...buttonBaseStyle, padding: '0 10px', color: memoryOpen ? C.brand : C.textSecondary },
+          createElement('div', { style: foldHeadStyle },
+            createElement('span', { style: foldTitleStyle }, memoryStatus ?? 'AI 觉得值得记的事会带时间戳写进来'),
+            createElement('span', { style: foldMetaStyle }, memoryDraft === null ? '' : `${memoryLineCount} 条`),
+            createElement(FoldToggle, {
+              open: memoryOpen,
               disabled: !writable || memoryDraft === null,
               onClick: () => setMemoryOpen((prev) => !prev),
-            }, memoryOpen ? '收起' : '展开编辑'),
-            memoryStatus
-              ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, memoryStatus)
-              : null,
+            }),
           ),
-          memoryOpen && createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } },
+          memoryOpen && createElement('div', { style: foldBodyStyle },
             createElement('textarea', {
               key: 'ai-memory',
               rows: 8,
