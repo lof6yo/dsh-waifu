@@ -327,18 +327,22 @@ describe('PetService 变更订阅', () => {
 })
 
 describe('PetService 活动提示（ADR-036）', () => {
-  it('工具调用按名字归类，并在 700ms 内节流合并', () => {
+  it('工具调用按名字归类，同类 700ms 内只播一次（不同类互不压制）', () => {
     const { service, emit } = makeHarness()
     expect(service.snapshot().activity).toBeNull()
     emit('tools/pre-execute', { name: 'read' })
     const first = service.snapshot().activity
     expect(first?.kind).toBe('tool-read')
     const seq = first!.seq
-    emit('tools/pre-execute', { name: 'bash' })
+    // 同类再来一次：被节流
+    emit('tools/pre-execute', { name: 'read' })
     expect(service.snapshot().activity?.seq).toBe(seq)
-    vi.advanceTimersByTime(800)
+    // 不同类：立即播（否则派代理会吞掉紧随其后的 subagent/start）
     emit('tools/pre-execute', { name: 'bash' })
     expect(service.snapshot().activity).toMatchObject({ kind: 'tool-run', seq: seq + 1 })
+    vi.advanceTimersByTime(800)
+    emit('tools/pre-execute', { name: 'bash' })
+    expect(service.snapshot().activity?.seq).toBe(seq + 2)
   })
 
   it('写文件 / 派子代理 / 其它工具各自归类', () => {
@@ -349,8 +353,24 @@ describe('PetService 活动提示（ADR-036）', () => {
     emit('tools/pre-execute', { name: 'subagent' })
     expect(service.snapshot().activity?.kind).toBe('tool-agent')
     vi.advanceTimersByTime(800)
-    emit('tools/pre-execute', { name: 'todo_write' })
+    emit('tools/pre-execute', { name: 'image_generate' })
     expect(service.snapshot().activity?.kind).toBe('tool-other')
+  })
+
+  it('内部工具（压缩/记忆/待办/提问）不触发活动', () => {
+    const { service, emit } = makeHarness()
+    for (const name of ['compress', 'acp_status', 'todo_write', 'mnemon_recall', 'skill', 'ask_user_question']) {
+      emit('tools/pre-execute', { name })
+    }
+    expect(service.snapshot().activity).toBeNull()
+  })
+
+  it('派子代理的 tool-agent 不吞掉 subagent/start', () => {
+    const { service, emit, emitArgs } = makeHarness()
+    emit('tools/pre-execute', { name: 'subagent' })
+    expect(service.snapshot().activity?.kind).toBe('tool-agent')
+    emitArgs('subagent/start', { id: 'r2' })
+    expect(service.snapshot().activity?.kind).toBe('subagent-start')
   })
 
   it('审批结果：批准 → approval-granted，拒绝 → approval-denied', async () => {

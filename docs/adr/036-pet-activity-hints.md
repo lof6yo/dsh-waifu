@@ -55,3 +55,15 @@
 - 设置页「事件绑定」按 `EVENT_ORDER` 列出 17 张卡（状态 6 + 活动 11），可改动作/表情/台词，与状态事件完全一致。
 
 代价：事件绑定区变长；收益：活动不再只有哑动作，能说话、能按人设演。
+
+## 修订三（2026-11-06）：同类节流 + 静默内部工具
+
+实测两个噪音问题：
+
+1. 节流是**全局** 700ms：派代理时 `tool-agent` 刚推完，紧随其后的 `subagent/start` 就被吞掉，
+   日志里只看到 `subagent-end`。改成 `lastActivityAtByKind`（按 kind 记账），同类才节流。
+2. 一次 turn 里 `compress` / `acp_*` / `todo_write` / `mnemon_*` / `skill` / `present` /
+   `ask_user_question` 这些内部工具调用频繁，全都落到 `tool-other` 疯狂「顺手做了。」。
+   新增 `QUIET_TOOLS` 白名单式静默；`mcp__*` 与之前一样忽略。
+
+代价：同一类爆发仍会合并；收益：活动提示只对「真正做事」的工具与用户可见事件发声。
