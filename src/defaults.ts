@@ -120,6 +120,26 @@ export function normalizeEventTexts(raw: unknown): Record<string, string> {
 /** 动作/表情给模型的释义：字符上限（设置页输入框与归一化共用）。 */
 export const CATALOG_TEXT_MAX = 80
 
+/** 归一化「动作是否发给模型」：只留目录内 id，缺省为 true（默认全部可选）。 */
+export function normalizeMotionEnabled(raw: unknown): Record<string, boolean> {
+  return normalizeCatalogEnabled(raw, AI_MOTION_IDS)
+}
+
+/** 归一化「表情是否发给模型」：只留目录内 id（不含 none），缺省为 true。 */
+export function normalizeExpressionEnabled(raw: unknown): Record<string, boolean> {
+  return normalizeCatalogEnabled(raw, EXPRESSION_IDS.filter((id) => id !== 'none'))
+}
+
+function normalizeCatalogEnabled(raw: unknown, ids: readonly string[]): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  const record = raw as Record<string, unknown>
+  for (const id of ids) {
+    if (typeof record[id] === 'boolean') out[id] = record[id]
+  }
+  return out
+}
+
 /** 归一化「动作释义覆写」：只留目录内 id、压空白、截断；空串 = 用内置释义。 */
 export function normalizeMotionTexts(raw: unknown): Record<string, string> {
   return normalizeCatalogTexts(raw, AI_MOTION_IDS)
@@ -316,6 +336,10 @@ export const DEFAULT_SETTINGS = {
   motionTexts: {} as Record<string, string>,
   /** 表情释义覆写（空 = 用内置释义；键为表情 id）。 */
   expressionTexts: {} as Record<string, string>,
+  /** 动作是否发给模型供选择（缺省 = 全开；false = 不列进提示词、也不接受该标签）。 */
+  motionEnabled: {} as Record<string, boolean>,
+  /** 表情是否发给模型供选择（缺省 = 全开）。 */
+  expressionEnabled: {} as Record<string, boolean>,
   /** 待机小动作（偶尔偏头/抬眉/换重心/叹气），关掉后只有 Idle 循环。 */
   idleMotionEnabled: true,
   /** 交互条：模型上下的静音按钮 + 对话输入框。 */

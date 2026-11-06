@@ -24,6 +24,7 @@ import {
   sanitizeLine,
   savePersona,
   systemPrompt,
+  filterTags,
   streamReply,
   type AiHistoryEntry,
   type WaifuLlm,
@@ -98,9 +99,28 @@ describe('时区', () => {
   })
 })
 
-describe('systemPrompt（动作/表情释义可覆写，ADR-040）', () => {
+describe('systemPrompt（动作/表情释义可覆写 + 可关闭，ADR-040）', () => {
+  it('关掉的动作/表情不进目录，标签也会被过滤', () => {
+    const prompt = systemPrompt('你是简。', '', {
+      motionEnabled: { Nod: false },
+      expressionEnabled: { blush: false },
+    })
+    expect(prompt).not.toContain('- Nod（点头）')
+    expect(prompt).toContain('- ShakeHead（摇头）')
+    expect(prompt).not.toContain('- blush（脸红）')
+    expect(prompt).toContain('- angry（生气）')
+    const tags = filterTags({ expressions: ['blush', 'angry'], motions: ['Nod', 'Tilt'] }, {
+      motionEnabled: { Nod: false },
+      expressionEnabled: { blush: false },
+    })
+    expect(tags).toEqual({ expressions: ['angry'], motions: ['Tilt'] })
+  })
+
   it('覆写后目录行用自定义释义，未覆写仍用内置释义', () => {
-    const prompt = systemPrompt('你是简。', '', { Nod: '酷酷地点头' }, { blush: '羞到冒烟' })
+    const prompt = systemPrompt('你是简。', '', {
+      motionTexts: { Nod: '酷酷地点头' },
+      expressionTexts: { blush: '羞到冒烟' },
+    })
     expect(prompt).toContain('- Nod（点头）：酷酷地点头')
     expect(prompt).toContain('- blush（脸红）：羞到冒烟')
     expect(prompt).toContain('- ShakeHead（摇头）：拒绝、无奈、不敢相信')

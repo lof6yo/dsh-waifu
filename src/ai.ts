@@ -496,26 +496,50 @@ function stripLeadingTagStream(buffer: string): { resolved: boolean; expressions
  * 拼 system 提示词：人设 + 记忆 + 动作/表情目录 + 输出要求（标签流式）。
  * `memory` 是 memory.md 最近 N 条的注入文本（空串 = 没有记忆）。
  */
-export function systemPrompt(
-  persona: string,
-  memory = '',
-  motionTexts?: Record<string, string>,
-  expressionTexts?: Record<string, string>,
-): string {
+export interface CatalogOptions {
+  /** 动作释义覆写（空 = 内置释义）。 */
+  motionTexts?: Record<string, string>
+  /** 表情释义覆写（空 = 内置释义）。 */
+  expressionTexts?: Record<string, string>
+  /** 动作是否发给模型（缺省 = 全开；false = 不列出）。 */
+  motionEnabled?: Record<string, boolean>
+  /** 表情是否发给模型（缺省 = 全开）。 */
+  expressionEnabled?: Record<string, boolean>
+}
+
+/** 该 id 是否对模型开放（缺省开放）。 */
+function catalogAllowed(flags: Record<string, boolean> | undefined, id: string): boolean {
+  return flags?.[id] !== false
+}
+
+/** 过滤模型给出的标签：关掉的动作/表情即使被写出来也不生效。 */
+export function filterTags<T extends { expressions: string[]; motions: string[] }>(
+  tags: T,
+  options: CatalogOptions,
+): T {
+  return {
+    ...tags,
+    expressions: tags.expressions.filter((id) => catalogAllowed(options.expressionEnabled, id)),
+    motions: tags.motions.filter((id) => catalogAllowed(options.motionEnabled, id)),
+  }
+}
+
+export function systemPrompt(persona: string, memory = '', catalog: CatalogOptions = {}): string {
   const motionLines = AI_MOTIONS
-    .map((motion) => `- ${motion.id}（${motion.name}）：${motionTexts?.[motion.id] ?? motion.meaning}`)
+    .filter((motion) => catalogAllowed(catalog.motionEnabled, motion.id))
+    .map((motion) => `- ${motion.id}（${motion.name}）：${catalog.motionTexts?.[motion.id] ?? motion.meaning}`)
     .join('\n')
   const expressionLines = EXPRESSIONS
-    .filter((expression) => expression.id !== 'none')
-    .map((expression) => `- ${expression.id}（${expression.name}）：${expressionTexts?.[expression.id] ?? expression.meaning}`)
+    .filter((expression) => expression.id !== 'none' && catalogAllowed(catalog.expressionEnabled, expression.id))
+    .map((expression) => `- ${expression.id}（${expression.name}）：${catalog.expressionTexts?.[expression.id] ?? expression.meaning}`)
     .join('\n')
   const memoryBlock = memory ? `\n## 你记得的事\n${memory}\n` : ''
   return `${persona}${memoryBlock}
 ## 可选动作（一次最多选一个，写在台词开头的标签里）
-${motionLines}
+${motionLines || '（这次没有可用动作，不要写动作标签）'}
 
 ## 可选表情（可以选一到两个，写在动作标签后面）
-${expressionLines}
+${expressionLines || '（这次没有可用表情，不要写表情标签）'}
 
 输出要求（严格遵守）：
 1. 先写方括号标签再写台词，格式：[表情][动作] 台词。例如「[shy][ShakeHead] 别、别戳了啦」。
@@ -540,14 +564,13 @@ function assembleRequest(options: {
   memory: string
   context: ReplyContext
   eventTexts?: EventTexts
-  motionTexts?: Record<string, string>
-  expressionTexts?: Record<string, string>
+  catalog?: CatalogOptions
   history?: readonly AiHistoryEntry[]
   historyCount?: number
   memoryCount?: number
   onPayload?: (payload: AiPayload) => void
 }): { system: string; messages: Parameters<WaifuLlm['stream']>[0]['messages'] } {
-  const system = systemPrompt(options.persona, options.memory, options.motionTexts, options.expressionTexts)
+  const system = systemPrompt(options.persona, options.memory, options.catalog)
   const history = historyMessages(options.history ?? [], options.historyCount ?? 0, {
     provider: options.provider,
     model: options.model,
@@ -584,9 +607,8 @@ export async function generateReply(
     context: ReplyContext
     /** 事件文案覆写（ADR-039）。 */
     eventTexts?: EventTexts
-    /** 动作/表情释义覆写（ADR-040）。 */
-    motionTexts?: Record<string, string>
-    expressionTexts?: Record<string, string>
+    /** 动作/表情目录选项：释义覆写 + 是否发给模型（ADR-040）。 */
+    catalog?: CatalogOptions
     timeoutMs?: number
     history?: readonly AiHistoryEntry[]
     historyCount?: number
@@ -617,7 +639,7 @@ export async function generateReply(
       }
       // 记忆行剥掉，只留正文
       const { text: withoutMemory, note } = extractMemoryNote(text)
-      const tags = parseLeadingTags(withoutMemory)
+      const tags = filterTags(parseLeadingTags(withoutMemory), options.catalog ?? {})
       const line = sanitizeLine(tags.rest)
       if (line) {
         return {
@@ -676,9 +698,8 @@ export async function* streamReply(
     context: ReplyContext
     /** 事件文案覆写（ADR-039）。 */
     eventTexts?: EventTexts
-    /** 动作/表情释义覆写（ADR-040）。 */
-    motionTexts?: Record<string, string>
-    expressionTexts?: Record<string, string>
+    /** 动作/表情目录选项：释义覆写 + 是否发给模型（ADR-040）。 */
+    catalog?: CatalogOptions
     timeoutMs?: number
     history?: readonly AiHistoryEntry[]
     historyCount?: number
@@ -721,8 +742,9 @@ export async function* streamReply(
           const tag = stripLeadingTagStream(pending)
           if (!tag.resolved) continue
           sentTags = true
-          if (tag.expressions.length > 0 || tag.motions.length > 0) {
-            yield { type: 'tags', expressions: tag.expressions, motions: tag.motions }
+          const allowed = filterTags(tag, options.catalog ?? {})
+          if (allowed.expressions.length > 0 || allowed.motions.length > 0) {
+            yield { type: 'tags', expressions: allowed.expressions, motions: allowed.motions }
           }
           if (tag.rest === '') {
             // 到目前为止只有标签：继续攒，正文出现才进入转发模式
@@ -747,7 +769,7 @@ export async function* streamReply(
       sentMemory = true
       yield { type: 'memory', note }
     }
-    const tags = parseLeadingTags(withoutMemory)
+    const tags = filterTags(parseLeadingTags(withoutMemory), options.catalog ?? {})
     if (!sentTags && (tags.expressions.length > 0 || tags.motions.length > 0)) {
       yield { type: 'tags', expressions: tags.expressions, motions: tags.motions }
     }

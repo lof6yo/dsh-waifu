@@ -29,7 +29,7 @@ describe('默认值一致性', () => {
         continue
       }
       // eventTexts / motionTexts / expressionTexts 同理：覆写表由用户填写，schema 里没有该键
-      if (key === 'eventTexts' || key === 'motionTexts' || key === 'expressionTexts') {
+      if (key === 'eventTexts' || key === 'motionTexts' || key === 'expressionTexts' || key === 'motionEnabled' || key === 'expressionEnabled') {
         expect(value).toEqual({})
         continue
       }

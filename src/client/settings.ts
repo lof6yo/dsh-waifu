@@ -47,7 +47,9 @@ import {
   TTS_MODELS,
   normalizeEventTexts,
   normalizeEventTriggers,
+  normalizeExpressionEnabled,
   normalizeExpressionTexts,
+  normalizeMotionEnabled,
   normalizeMotionTexts,
   normalizeFocusRange,
   normalizeHistoryCount,
@@ -129,6 +131,10 @@ export interface PetSettingsValue {
   motionTexts: Record<string, string>
   /** 表情释义覆写（空 = 内置释义；ADR-040）。 */
   expressionTexts: Record<string, string>
+  /** 动作是否发给模型（缺省 = 全开；ADR-040）。 */
+  motionEnabled: Record<string, boolean>
+  /** 表情是否发给模型（缺省 = 全开；ADR-040）。 */
+  expressionEnabled: Record<string, boolean>
   /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
   ttsEnabled: boolean
   /** 语音模型 slug（OpenRouter speech 模型）。 */
@@ -2385,8 +2391,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         createElement('div', { style: cardHeadingStyle }, '动作与表情'),
         createElement('div', { style: formRowStartStyle },
           createElement(FormLabel, {
-            title: '给模型的释义',
-            hint: '这些是模型能选的全部动作与表情；展开可改「这个动作/表情是什么意思」，留空用内置释义',
+            title: '动作与表情',
+            hint: '勾选的才会发给模型挑选；展开可改「这个动作/表情是什么意思」给模型看，留空用内置释义',
           }),
           createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs } },
             ...[
@@ -2395,6 +2401,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 title: '动作',
                 items: AI_MOTIONS.map((motion) => ({ id: motion.id, name: motion.name, meaning: motion.meaning })),
                 custom: normalizeMotionTexts(value.motionTexts),
+                enabled: normalizeMotionEnabled(value.motionEnabled),
               },
               {
                 field: 'expressionTexts' as const,
@@ -2402,6 +2409,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 items: EXPRESSIONS.filter((expression) => expression.id !== 'none')
                   .map((expression) => ({ id: expression.id, name: expression.name, meaning: expression.meaning })),
                 custom: normalizeExpressionTexts(value.expressionTexts),
+                enabled: normalizeExpressionEnabled(value.expressionEnabled),
               },
             ].map((group) =>
               createElement('div', { key: `catalog-${group.field}`, style: { display: 'flex', flexDirection: 'column', gap: 2 } },
@@ -2411,13 +2419,27 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                   const key = `${group.field}:${item.id}`
                   const custom = group.custom[item.id] ?? ''
                   const open = openCatalog[key] === true
+                  const switchField = group.field === 'motionTexts' ? 'motionEnabled' : 'expressionEnabled'
+                  const enabled = group.enabled[item.id] !== false
                   return createElement('div', {
                     key,
                     style: { display: 'flex', flexDirection: 'column', paddingBottom: GAP.xs },
                   },
                     createElement('div', { style: foldHeadStyle },
-                      createElement('span', { style: { ...foldTitleStyle, flex: '1 1 auto', minWidth: 0 } },
-                        `${item.id}（${item.name}）`),
+                      createElement('label', {
+                        style: { display: 'inline-flex', alignItems: 'center', gap: 6, flex: '1 1 auto', minWidth: 0, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap', cursor: 'pointer' },
+                      },
+                        createElement('input', {
+                          type: 'checkbox',
+                          checked: enabled,
+                          disabled: !writable,
+                          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                            const next = e.target.checked
+                            enqueueWrite(() => [{ op: 'set', path: [switchField, item.id], value: next }])
+                          },
+                        }),
+                        `${item.id}（${item.name}）`,
+                      ),
                       createElement('span', { style: foldMetaStyle }, (catalogDrafts[key] ?? custom).trim() !== '' ? '已自定义' : ''),
                       createElement(FoldToggle, {
                         open,

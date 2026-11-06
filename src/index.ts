@@ -125,7 +125,7 @@ export const name = 'dsh-waifu'
 export type MaxFpsOption = 30 | 60 | 0
 
 /** 插件配置（cordis.patch.yml 的 config 是 base 层；用户改动落插件私有设置文件，ADR-013）。 */
-export interface Config extends Omit<PetSettings, 'maxFps' | 'eventTriggers' | 'eventTexts' | 'motionTexts' | 'expressionTexts'> {
+export interface Config extends Omit<PetSettings, 'maxFps' | 'eventTriggers' | 'eventTexts' | 'motionTexts' | 'expressionTexts' | 'motionEnabled' | 'expressionEnabled'> {
   /** 渲染帧率档（30 / 60 / 0=不限制；Schema 层用字面量联合校验）。 */
   maxFps: MaxFpsOption
 }
@@ -234,6 +234,8 @@ export function apply(ctx: Context, config: Config): void {
     eventTexts: {},
     motionTexts: {},
     expressionTexts: {},
+    motionEnabled: {},
+    expressionEnabled: {},
     barPosition: config.barPosition,
     barOffset: config.barOffset,
     ttsEnabled: config.ttsEnabled,
@@ -318,8 +320,12 @@ export function apply(ctx: Context, config: Config): void {
       memory: memoryContext(memories, settings.aiMemoryCount),
       context,
       eventTexts: settings.eventTexts,
-      motionTexts: settings.motionTexts,
-      expressionTexts: settings.expressionTexts,
+      catalog: {
+        motionTexts: settings.motionTexts,
+        expressionTexts: settings.expressionTexts,
+        motionEnabled: settings.motionEnabled,
+        expressionEnabled: settings.expressionEnabled,
+      },
       history: aiHistory,
       historyCount: settings.aiHistoryCount,
       onPayload,
