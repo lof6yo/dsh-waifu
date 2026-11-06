@@ -407,11 +407,10 @@ export function normalizeEmotion(raw: string | undefined | null): Emotion | null
  * 标签是给前端的控制信号，绝不能显示给用户，也不能念出来。
  */
 export function parseEmotionTag(text: string): { emotion: Emotion | null; rest: string } {
-  const match = /^\s*[[【(（]\s*([A-Za-z\u4e00-\u9fa5]{1,8})\s*[\]】)）]\s*/.exec(text)
+  const match = /^\s*[[【(（]\s*([A-Za-z\u4e00-\u9fa5]{1,16})\s*[\]】)）]\s*/.exec(text)
   if (!match) return { emotion: null, rest: text }
-  const emotion = normalizeEmotion(match[1])
-  if (!emotion) return { emotion: null, rest: text }
-  return { emotion, rest: text.slice(match[0].length) }
+  // 认不出的标签也剥掉：它一定是模型写给前端的控制信号，绝不该念给用户听
+  return { emotion: normalizeEmotion(match[1]), rest: text.slice(match[0].length).trimStart() }
 }
 
 /**
@@ -419,13 +418,11 @@ export function parseEmotionTag(text: string): { emotion: Emotion | null; rest: 
  * 返回 `resolved=false` 表示它可能还是标签前缀（例如刚读到 `[sh`），继续攒着别发。
  */
 function stripLeadingTagStream(buffer: string): { resolved: boolean; emotion: Emotion | null; rest: string } {
-  const match = /^\s*[[【(（]\s*([A-Za-z\u4e00-\u9fa5]{1,8})\s*[\]】)）]\s*/.exec(buffer)
+  const match = /^\s*[[【(（]\s*([A-Za-z\u4e00-\u9fa5]{1,16})\s*[\]】)）]\s*/.exec(buffer)
   if (match) {
-    const emotion = normalizeEmotion(match[1])
-    if (emotion) return { resolved: true, emotion, rest: buffer.slice(match[0].length) }
-    return { resolved: true, emotion: null, rest: buffer }
+    return { resolved: true, emotion: normalizeEmotion(match[1]), rest: buffer.slice(match[0].length) }
   }
-  if (/^\s*[[【(（]\s*[A-Za-z\u4e00-\u9fa5]{0,8}$/.test(buffer)) {
+  if (/^\s*[[【(（]\s*[A-Za-z\u4e00-\u9fa5]{0,16}$/.test(buffer)) {
     return { resolved: false, emotion: null, rest: '' }
   }
   return { resolved: true, emotion: null, rest: buffer }

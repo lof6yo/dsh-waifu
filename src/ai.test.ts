@@ -328,9 +328,12 @@ describe('情绪标签', () => {
     expect(parseEmotionTag('【害羞】别看了')).toEqual({ emotion: 'shy', rest: '别看了' })
     expect(parseEmotionTag('(angry)喂！')).toEqual({ emotion: 'angry', rest: '喂！' })
   })
-  it('没有标签或标签不认识时原样返回', () => {
+  it('没有标签时原样返回；认不出的标签也剥掉（它是控制信号，不能念出来）', () => {
     expect(parseEmotionTag('别看了啦')).toEqual({ emotion: null, rest: '别看了啦' })
-    expect(parseEmotionTag('[dunno] 喂')).toEqual({ emotion: null, rest: '[dunno] 喂' })
+    expect(parseEmotionTag('[dunno] 喂')).toEqual({ emotion: null, rest: '喂' })
+  })
+  it('长标签（surprised）也能识别', () => {
+    expect(parseEmotionTag('[surprised] 呀！你干嘛')).toEqual({ emotion: 'surprised', rest: '呀！你干嘛' })
   })
   it('生成结果带上情绪', async () => {
     const llm = fakeLlm(['[smug] 就这点本事？'])
