@@ -415,6 +415,53 @@ describe('最近对话注入（ADR-030）', () => {
   })
 })
 
+describe('链路记录（ADR-043）', () => {
+  it('流式：onReply 给出模型完整原始输出（含标签与 [记] 行）与 finish 原因', async () => {
+    const llm = fakeLlm(['[blush][Tilt] 呜', '…别摸啦', '\n[记] 主人手劲大'])
+    const replies: { raw: string; finish?: string; error?: string }[] = []
+    for await (const _chunk of streamReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头' },
+      onReply: (trace) => replies.push(trace),
+    })) { /* 消费流 */ }
+    expect(replies).toHaveLength(1)
+    expect(replies[0].raw).toBe('[blush][Tilt] 呜…别摸啦\n[记] 主人手劲大')
+    expect(replies[0].error).toBeUndefined()
+  })
+
+  it('一次性：onReply 只在最终结果上报一次，带原始文本', async () => {
+    const llm = fakeLlm(['[Nod] 好呀'])
+    const replies: { raw: string; finish?: string; error?: string }[] = []
+    const payloads: { temperature?: number; maxTokens?: number }[] = []
+    await generateReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '脸' },
+      onPayload: (payload) => payloads.push(payload),
+      onReply: (trace) => replies.push(trace),
+    })
+    expect(replies).toHaveLength(1)
+    expect(replies[0].raw).toBe('[Nod] 好呀')
+    // 请求报文里带上采样参数，控制台能完整复现这次请求
+    expect(payloads[0].temperature).toBe(1)
+    expect(payloads[0].maxTokens).toBe(160)
+  })
+
+  it('失败：onReply 带 error，且不重复上报', async () => {
+    const llm: WaifuLlm = {
+      stream() {
+        return (async function* () {
+          throw new Error('boom')
+        })()
+      },
+    }
+    const replies: { raw: string; finish?: string; error?: string }[] = []
+    for await (const _chunk of streamReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '脸' },
+      onReply: (trace) => replies.push(trace),
+    })) { /* 消费流 */ }
+    expect(replies).toHaveLength(1)
+    expect(replies[0].error).toBe('boom')
+  })
+})
+
 describe('streamReply（ADR-037 标签流式）', () => {
   it('标签先于正文下发；[记] 行单独成 memory 事件；done 带整句', async () => {
     const llm = fakeLlm(['[blush]', '[Tilt] 呜', '…别摸啦', '\n[记] 主人手劲大'])

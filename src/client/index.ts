@@ -310,6 +310,25 @@ interface TriggerBody {
   tz?: string
 }
 
+/** `/interact` 的响应（语音关闭时的一次性回复路径）。 */
+interface InteractResult {
+  ok: boolean
+  text?: string
+  expressions?: string[]
+  motions?: string[]
+  error?: string
+  /** Host 的链路记录（ADR-043）：LLM 请求/回复，按发生顺序。 */
+  trace?: DebugTraceStep[]
+}
+
+/** Host 链路记录的一条（`/speak` 的 SSE `debug` 帧与 `/interact` 的 `trace` 同构）。 */
+interface DebugTraceStep {
+  phase: string
+  /** 发生时刻（Host 时钟，epoch ms）。 */
+  at?: number
+  data: unknown
+}
+
 const api = {
   state: (): Promise<PetStateView> => fetch(`${PET_API}/state`).then((res) => readJson<PetStateView>(res)),
   /** SSE 状态订阅（ADR-006）：每次推送回调最新快照；断线由 EventSource
@@ -327,12 +346,12 @@ const api = {
     return () => es.close()
   },
   /** AI 回复（ADR-037）：上报触发场景，拿回台词 + 表情/动作 + 记忆（失败返回 ok:false）。 */
-  interact: (body: TriggerBody): Promise<{ ok: boolean; text?: string; expressions?: string[]; motions?: string[]; error?: string }> =>
+  interact: (body: TriggerBody): Promise<InteractResult> =>
     fetch(`${PET_API}/interact`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-    }).then((res) => readJson<{ ok: boolean; text?: string; error?: string }>(res)),
+    }).then((res) => readJson<InteractResult>(res)),
   /**
    * 流式演绎（ADR-033）：POST /speak 走 SSE，逐条回调 `text`/`clause`/`audio`/`done`/`error`。
    * 用 fetch + ReadableStream 手动解帧（EventSource 不支持 POST 带 body）。
@@ -378,7 +397,6 @@ const api = {
     }
   },
   /** 排查用（ADR-043）：最近一次 LLM / TTS 请求报文与历史。 */
-  aiDebug: (): Promise<unknown> => fetch(`${PET_API}/ai-debug`).then((res) => readJson<unknown>(res)),
   setDisplay: (patch: { right?: number; bottom?: number }): Promise<{ ok: boolean }> =>
     fetch(`${PET_API}/set-display`, {
       method: 'POST',
@@ -1063,26 +1081,27 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /** 解码并播放一段音频（mp3 整段解码 → 播放 → 结束回调）。 */
-  function playClip(base64: string, _mime: string): Promise<void> {
+  /** 播一段音频（驱动口型）。resolve 出这段的实际时长（秒）；播不了给 null。 */
+  function playClip(base64: string, _mime: string): Promise<number | null> {
     const ctx = ensureAudio()
     const analyser = lipsyncAnalyser
-    if (!ctx || !analyser) return Promise.resolve()
+    if (!ctx || !analyser) return Promise.resolve(null)
     const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0))
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-    return new Promise<void>((resolve) => {
-      const finish = () => { try { analyser.disconnect() } catch { /* 已断开 */ } resolve() }
+    return new Promise<number | null>((resolve) => {
+      const finish = (seconds: number | null) => { try { analyser.disconnect() } catch { /* 已断开 */ } resolve(seconds) }
       ctx.decodeAudioData(buffer, (decoded) => {
         try {
           const source = ctx.createBufferSource()
           source.buffer = decoded
           source.connect(analyser)
           analyser.connect(ctx.destination)
-          source.onended = finish
+          source.onended = () => finish(decoded.duration)
           source.start()
         } catch {
-          finish()
+          finish(null)
         }
-      }, () => resolve())
+      }, () => resolve(null))
     })
   }
 
@@ -1226,6 +1245,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       }
       pendingTrigger = null
     }
+    // 控制台第一行永远是「这轮是什么触发的」（ADR-043）
+    conPushJson('trigger', input)
     if (triggerMode === 'interrupt') {
       stopSpeaking()
       speakSeq += 1
@@ -2460,8 +2481,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let conBody: HTMLDivElement | null = null
   /** 记录行上限：超出从头部丢弃，避免长时间开启吃内存。 */
   const CON_MAX_LINES = 300
-  /** 单行原文字符上限（payload 可能上万字符）。 */
-  const CON_LINE_MAX = 4000
+  /** 单行原文字符上限（完整请求报文含 system 提示词，可能上万字符）。 */
+  const CON_LINE_MAX = 20_000
   /** 控制台可视高度：固定 20 行，超出滚动。 */
   const CON_VIEW_LINES = 20
   /** 控制台行高（px）：font 11px 与 scrollTop 计算共用同一值。 */
@@ -2534,24 +2555,42 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     return lines.join('\n')
   }
 
-  /** 拉一次 /ai-debug，把这一轮的 LLM 与 TTS 原始请报落进控制台。 */
-  async function dumpAiPayloads(): Promise<void> {
-    if (!conRecording) return
+  /** 追加一条报文（JSON 两空格缩进：自读，也方便整段复制出去比对）。 */
+  function conPushJson(tag: string, value: unknown): void {
+    let text: string
     try {
-      const debug = await api.aiDebug() as { lastPayload?: unknown; lastTtsPayload?: unknown; lastSpeakPayload?: unknown }
-      const payload = debug.lastPayload as { provider?: string; model?: string; system?: string; messages?: { role?: string; content?: string }[] } | null
-      if (payload) {
-        conPush('llm', `provider=${payload.provider ?? '?'} model=${payload.model ?? '?'} system=${(payload.system ?? '').length}字 messages=${payload.messages?.length ?? 0}`)
-        if (payload.system) conPush('llm.system', payload.system)
-        for (const [index, message] of (payload.messages ?? []).entries()) {
-          conPush(`llm.${message.role ?? '?'}#${index}`, message.content ?? '')
-        }
-      }
-      const tts = (debug.lastSpeakPayload ?? debug.lastTtsPayload) as { endpoint?: string; body?: unknown; cached?: boolean } | null
-      if (tts) conPush('tts', `cached=${tts.cached === true} ${JSON.stringify(tts.body)}`)
-    } catch (error) {
-      clientLog('warn', 'ai-debug fetch failed', error)
+      text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+    } catch {
+      text = String(value)
     }
+    conPush(tag, text)
+  }
+
+  /**
+   * SSE 帧 → 控制台一行（ADR-043）：顺序即到达顺序，也就是真实发生顺序。
+   * `debug` 帧由 Host 在「请求发出 / 回复收全 / 合成返回」的时刻推来，原样展开；
+   * 音频帧只报大小（完整 base64 没有可读性）。
+   */
+  function conPushFrame(event: string, data: unknown): void {
+    if (!conRecording) return
+    // 逐字增量没有独立信息量：完整回复在 llm.reply 里已整段给出
+    if (event === 'text') return
+    if (event === 'debug') {
+      const step = data as Partial<DebugTraceStep> | null
+      if (step && typeof step.phase === 'string') {
+        conPushJson(step.phase, step.data ?? step)
+        return
+      }
+      conPushJson('debug', data)
+      return
+    }
+    if (event === 'audio') {
+      const item = data as { index?: unknown; mime?: unknown; data?: unknown }
+      const bytes = typeof item.data === 'string' ? Math.round((item.data.length * 3) / 4) : 0
+      conPushJson('tts.audio.delta', { index: item.index, mime: item.mime, bytes })
+      return
+    }
+    conPushJson(event, data)
   }
 
   /** 调试面板动态开关（spec §2）。 */
@@ -3084,7 +3123,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const seq = ++aiRequestSeq
     try {
       const result = await api.interact(input)
-      if (conRecording) { conPush('interact', JSON.stringify(result)); void dumpAiPayloads() }
+      if (conRecording) {
+        // 一次性响应：链路记录随响应回带，按数组顺序补进控制台（ADR-043）
+        for (const step of result.trace ?? []) conPushJson(step.phase, step.data)
+        conPushJson('interact.result', { ok: result.ok, text: result.text, error: result.error })
+      }
       if (seq !== aiRequestSeq) return null
       if (!result.ok || !result.text) return null
       applyTags(result.expressions, result.motions)
@@ -3116,12 +3159,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     let sawClause = false
     try {
       await api.speak(withTz, (event, data) => {
-        if (conRecording) {
-          const raw = event === 'audio' && data && typeof data === 'object' && typeof (data as { data?: unknown }).data === 'string'
-            ? { ...(data as Record<string, unknown>), data: `<base64 ${Math.round(String((data as { data: string }).data).length * 3 / 4 / 1024)} KB>` }
-            : data
-          conPush('sse', `${event} ${JSON.stringify(raw)}`)
-        }
+        conPushFrame(event, data)
         if (seq !== speakSeq) return
         if (event === 'clause') {
           const item = data as { index?: unknown; text?: unknown }
@@ -3139,7 +3177,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           speakChain = speakChain.then(async () => {
             if (seq !== speakSeq) return
             revealClausesUntil(index)
-            await playClip(item.data as string, mime)
+            const seconds = await playClip(item.data as string, mime)
+            conPushJson('play.audio', {
+              index,
+              mime,
+              seconds: seconds === null ? null : Math.round(seconds * 100) / 100,
+            })
           })
           return
         }
@@ -3169,7 +3212,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     if (seq !== speakSeq) return null
     await speakChain.catch(() => undefined)
-    if (conRecording) void dumpAiPayloads()
     if (seq !== speakSeq) return null
     if (!sawClause && finalText === null) {
       // 失败/零文本 = 完全静默（ADR-037）：不回落固定台词（已不存在）
@@ -3196,6 +3238,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       : []
     if (list.length > 0) {
       clientLog('info', 'ai expressions', list.join('+'))
+      conPushJson('play.expression', { applied: list })
       holdTemporaryExpression(list)
     }
     const motionList = Array.isArray(motions)
@@ -3203,6 +3246,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       : []
     if (motionList.length > 0 && model && !dragging && !previewActive && !hidden) {
       clientLog('info', 'ai motions', motionList.join('+'))
+      conPushJson('play.motion', { applied: motionList })
       void playInteractionMotion(motionList)
     }
   }

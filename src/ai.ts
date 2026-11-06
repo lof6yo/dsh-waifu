@@ -393,8 +393,23 @@ export interface ReplyAttempt {
 export interface AiPayload {
   provider: string
   model: string
+  /** 采样参数：原样记录，方便对照实际请求。 */
+  temperature?: number
+  maxTokens?: number
+  /** system 提示词（人设 + 记忆 + 目录说明）。 */
   system: string
+  /** 依次发出的 messages（content 已展开成纯文本）。 */
   messages: { role: string; content: string }[]
+}
+
+/** 一次模型调用的完整回复（调试控制台按发生顺序展示，ADR-043）。 */
+export interface AiReplyTrace {
+  /** 模型原始输出（含 `[表情][动作]` 标签与 `[记]` 行，未清洗）。 */
+  raw: string
+  /** 结束原因（`stop` / `length` / 失败描述）。 */
+  finish?: string
+  /** 失败原因（成功时不带）。 */
+  error?: string
 }
 
 /** 把 `finish.reason`（`{ kind, failure }` 或字符串）压成一句可读原因。 */
@@ -582,6 +597,8 @@ function assembleRequest(options: {
   options.onPayload?.({
     provider: options.provider,
     model: options.model,
+    temperature: TEMPERATURE,
+    maxTokens: MAX_TOKENS,
     system,
     messages: messages.map((message) => ({
       role: message.role,
@@ -613,9 +630,13 @@ export async function generateReply(
     history?: readonly AiHistoryEntry[]
     historyCount?: number
     onPayload?: (payload: AiPayload) => void
+    /** 完整回复原文（调试控制台用；重试时以最后一次实际发出的请求为准）。 */
+    onReply?: (trace: AiReplyTrace) => void
   },
 ): Promise<ReplyAttempt> {
   const timeoutMs = options.timeoutMs ?? 15_000
+  /** 最近一次尝试的原始输出（onReply 报它，便于看清模型到底回了什么）。 */
+  let lastRaw = ''
   const attempt = async (reasoningEffort?: string): Promise<ReplyAttempt> => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -637,6 +658,7 @@ export async function generateReply(
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
         else if (chunk.type === 'finish') finish = describeFinish((chunk as { reason?: unknown }).reason)
       }
+      lastRaw = text
       // 记忆行剥掉，只留正文
       const { text: withoutMemory, note } = extractMemoryNote(text)
       const tags = filterTags(parseLeadingTags(withoutMemory), options.catalog ?? {})
@@ -661,11 +683,16 @@ export async function generateReply(
     }
   }
 
+  /** 报一次完整回复并交回结果（只在最终结果上报一次，重试过程不刷屏）。 */
+  const settle = (result: ReplyAttempt): ReplyAttempt => {
+    options.onReply?.({ raw: lastRaw, ...(result.error === undefined ? {} : { error: result.error }) })
+    return result
+  }
   const first = await attempt()
-  if (first.text !== null) return first
-  if (!first.error?.startsWith('empty')) return first
+  if (first.text !== null) return settle(first)
+  if (!first.error?.startsWith('empty')) return settle(first)
   const retry = await attempt('off')
-  return retry.text === null ? first : retry
+  return settle(retry.text === null ? first : retry)
 }
 
 /** 流式回复的一块：标签（表情/动作）、文本增量、记忆、或收尾。 */
@@ -704,6 +731,8 @@ export async function* streamReply(
     history?: readonly AiHistoryEntry[]
     historyCount?: number
     onPayload?: (payload: AiPayload) => void
+    /** 完整回复原文（流结束后一次性报；失败时带 error）。 */
+    onReply?: (trace: AiReplyTrace) => void
     signal?: AbortSignal
   },
 ): AsyncGenerator<ReplyChunk> {
@@ -715,6 +744,8 @@ export async function* streamReply(
   let raw = ''
   let sentTags = false
   let sentMemory = false
+  /** 已经报过完整回复（成功路径报一次，catch 里不重复报）。 */
+  let replyReported = false
   try {
     const { system, messages } = assembleRequest({ ...options, memory: options.memory ?? '' })
     const stream = llm.stream({
@@ -763,6 +794,9 @@ export async function* streamReply(
         finish = describeFinish((chunk as { reason?: unknown }).reason)
       }
     }
+    // 完整回复原文：流一结束就报，控制台里它在 tts.* 之前（ADR-043）
+    replyReported = true
+    options.onReply?.({ raw, ...(finish === undefined ? {} : { finish }) })
     // 收尾：从原始全文里剥记忆行（流式期间可能已经吐进 visible，这里再剥一次）
     const { note, text: withoutMemory } = extractMemoryNote(raw)
     if (!sentMemory && note) {
@@ -778,6 +812,7 @@ export async function* streamReply(
     else yield { type: 'error', error: raw ? 'empty-after-sanitize' : `empty-stream${finish === undefined ? '' : ` (${finish})`}` }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
+    if (!replyReported) options.onReply?.({ raw, error: reason.slice(0, 200) || 'stream-failed' })
     yield { type: 'error', error: reason.slice(0, 200) || 'stream-failed' }
   } finally {
     clearTimeout(timer)

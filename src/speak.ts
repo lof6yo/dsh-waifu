@@ -22,7 +22,10 @@ import type { ReplyChunk } from './ai.ts'
 export const SPEAK_MAX_CHARS = 400
 
 /** 事件下发函数（由路由层转成 SSE 帧）。 */
-export type SpeakEmit = (event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error', data: unknown) => void
+export type SpeakEmit = (
+  event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error' | 'debug',
+  data: unknown,
+) => void
 
 /** 管线依赖：假实现即可测试（见 speak.test.ts）。 */
 export interface SpeakPipelineOptions {

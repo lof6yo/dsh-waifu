@@ -6,6 +6,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { TraceStep } from './trace.ts'
 import { readFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -271,6 +272,8 @@ export interface InteractRoutesApi {
     /** 模型要记住的事（写 memory.md）。 */
     memory?: string
     error?: string
+    /** 这一次调用的链路记录（ADR-043）：LLM 请求 / LLM 回复，按发生顺序。 */
+    trace?: TraceStep[]
   }>
 }
 
@@ -284,7 +287,10 @@ export interface SpeakRoutesApi {
    */
   stream(
     input: TriggerInput,
-    emit: (event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error', data: unknown) => void,
+    emit: (
+      event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error' | 'debug',
+      data: unknown,
+    ) => void,
     signal: AbortSignal,
   ): Promise<void>
   /** 单段合成（排查用）：直接回一段音频字节。 */

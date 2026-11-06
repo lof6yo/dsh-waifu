@@ -180,14 +180,21 @@ export class OpenRouterTtsEngine implements TtsEngine {
     private readonly onPayload?: (payload: TtsPayload) => void,
   ) {}
 
-  async synthesize(text: string, options: TtsVoiceOptions, signal?: AbortSignal): Promise<TtsAudio> {
+  async synthesize(
+    text: string,
+    options: TtsVoiceOptions,
+    signal?: AbortSignal,
+    /** 本次调用的报文钩子（覆盖构造时的全局钩子）：调试控制台按发生顺序记。 */
+    onPayload?: (payload: TtsPayload) => void,
+  ): Promise<TtsAudio> {
+    const report = onPayload ?? this.onPayload
     const trimmed = text.trim()
     if (!trimmed) throw new Error('empty-text')
     const key = ttsCacheKey(trimmed, options)
     const dir = ttsCacheDir(this.cacheHome)
     const hit = await readCache(dir, key)
     if (hit) {
-      this.onPayload?.({
+      report?.({
         endpoint: this.endpoint,
         body: { model: options.model, input: trimmed, response_format: 'mp3', ...(options.voice ? { voice: options.voice } : {}) },
         cached: true,
@@ -209,7 +216,7 @@ export class OpenRouterTtsEngine implements TtsEngine {
         response_format: 'mp3',
       }
       if (options.voice) body.voice = options.voice
-      this.onPayload?.({ endpoint: this.endpoint, body: body as TtsPayload['body'], cached: false })
+      report?.({ endpoint: this.endpoint, body: body as TtsPayload['body'], cached: false })
       const response = await this.fetcher(this.endpoint, {
         method: 'POST',
         headers: {

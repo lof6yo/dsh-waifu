@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runSpeakPipeline } from '../src/speak.ts'
+import { runSpeakPipeline, type SpeakEmit } from '../src/speak.ts'
 import type { ReplyChunk } from '../src/ai.ts'
 
 /** 把若干分块包成异步迭代器（模拟 LLM 流）。 */
@@ -10,7 +10,7 @@ async function* fromChunks(chunks: ReplyChunk[]): AsyncGenerator<ReplyChunk> {
   }
 }
 
-function collector(): { events: { event: string; data: unknown }[]; emit: (event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error', data: unknown) => void } {
+function collector(): { events: { event: string; data: unknown }[]; emit: SpeakEmit } {
   const events: { event: string; data: unknown }[] = []
   return { events, emit: (event, data) => { events.push({ event, data }) } }
 }

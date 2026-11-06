@@ -72,6 +72,7 @@ import {
   savePersona,
   type AiHistoryEntry,
   type AiPayload,
+  type AiReplyTrace,
   type ReplyContext,
 } from './ai.ts'
 import {
@@ -81,6 +82,7 @@ import {
   memoryContext,
   memoryPath,
 } from './memory.ts'
+import { traceStep, type TraceStep } from './trace.ts'
 import {
   defaultModelId,
   listBuiltinPresets,
@@ -311,6 +313,7 @@ export function apply(ctx: Context, config: Config): void {
     context: ReplyContext,
     onPayload: (payload: AiPayload) => void,
     signal?: AbortSignal,
+    onReply?: (trace: AiReplyTrace) => void,
   ) => {
     const memories = loadMemory(waifuHome).entries
     return {
@@ -329,6 +332,7 @@ export function apply(ctx: Context, config: Config): void {
       history: aiHistory,
       historyCount: settings.aiHistoryCount,
       onPayload,
+      onReply,
       signal,
     }
   }
@@ -360,8 +364,13 @@ export function apply(ctx: Context, config: Config): void {
     reply: async (input) => {
       const turn = beginAiTurn(input)
       if (!turn.ok) return { ok: false, error: turn.error }
+      // 一次性响应没有流：链路记录随响应回带，客户端按数组顺序展出（ADR-043）
+      const trace: TraceStep[] = []
       const attempt = await generateReply(ctx.llm, aiRequest(turn.settings, turn.context, (payload) => {
         lastAiPayload = payload
+        trace.push(traceStep('llm.request', payload))
+      }, undefined, (reply: AiReplyTrace) => {
+        trace.push(traceStep('llm.reply', reply))
       }))
       if (attempt.text) {
         recordAiTurn(turn.context, attempt.text, turn.settings)
@@ -372,10 +381,11 @@ export function apply(ctx: Context, config: Config): void {
           expressions: attempt.expressions,
           motions: attempt.motions,
           memory: attempt.memory,
+          trace,
         }
       }
       // 失败原因回传（ADR-028）：设置页/排查时能直接看到是「没配 provider」还是「模型空回复」
-      return { ok: false, error: `no-reply: ${attempt.error ?? 'unknown'}` }
+      return { ok: false, error: `no-reply: ${attempt.error ?? 'unknown'}`, trace }
     },
   }
 
@@ -472,16 +482,39 @@ export function apply(ctx: Context, config: Config): void {
       }
       const { settings, context } = turn
       const speakOn = settings.ttsEnabled && settings.ttsModel.trim().length > 0
+      // 链路记录（ADR-043）：请求/回复在真正发生的时刻发成 SSE `debug` 帧，
+      // 客户端按到达顺序落进控制台，于是顺序永远等于真实顺序。
       const chunks = streamReply(ctx.llm, aiRequest(settings, context, (payload) => {
         lastAiPayload = payload
-      }, signal))
+        emit('debug', traceStep('llm.request', payload))
+      }, signal, (reply: AiReplyTrace) => {
+        emit('debug', traceStep('llm.reply', reply))
+      }))
       const speakOptions = voiceOptions()
       payloadSink = 'speak'
       const synthesize = async (text: string): Promise<TtsAudio | null> => {
         if (!speakOn || signal.aborted) return null
+        const startedAt = Date.now()
         try {
-          return await ttsEngine.synthesize(text, speakOptions, signal)
-        } catch {
+          const audio = await ttsEngine.synthesize(text, speakOptions, signal, (payload) => {
+            lastSpeakPayload = payload
+            emit('debug', traceStep('tts.request', payload))
+          })
+          // 回复只报摘要：完整音频字节没有任何可读性（ADR-043）
+          emit('debug', traceStep('tts.reply', {
+            ok: true,
+            bytes: audio.audio.length,
+            mime: audio.mime,
+            cached: audio.cached,
+            ms: Date.now() - startedAt,
+          }))
+          return audio
+        } catch (error) {
+          emit('debug', traceStep('tts.reply', {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            ms: Date.now() - startedAt,
+          }))
           // 合成失败不让气泡断掉：这一段没声音，文字照常上屏
           return null
         }

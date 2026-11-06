@@ -96,6 +96,23 @@ describe('OpenRouterTtsEngine', () => {
 })
 
 describe('onPayload 排查钩子', () => {
+  it('每次调用的钩子覆盖构造钩子：控制台按发生顺序记录（ADR-043）', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-waifu-tts-trace-'))
+    tmpDirs.push(home)
+    const global: TtsPayload[] = []
+    const perCall: TtsPayload[] = []
+    const fetcher = (async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch
+    const engine = new OpenRouterTtsEngine(async () => 'k', home, fetcher, undefined, (p) => global.push(p))
+    try {
+      await engine.synthesize('哼。', { model: 'm', voice: 'v' }, undefined, (p) => perCall.push(p))
+      expect(perCall).toHaveLength(1)
+      expect(global).toHaveLength(0)
+      expect(perCall[0].body.input).toBe('哼。')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   it('发请求前回报 body（含 model/voice/input），命中缓存标 cached', async () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-waifu-tts-payload-'))
     const seen: TtsPayload[] = []
