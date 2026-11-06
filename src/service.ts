@@ -65,6 +65,8 @@ export interface PetStateView {
     interactionMode: string
     /** 交互条位置：`top` | `bottom`。 */
     barPosition: string
+    /** 交互条额外偏移（px，正数远离模型）。 */
+    barOffset: number
     /** AI 回复用的 provider 路由与模型 id（设置页下拉选中的值，快照透传给宠物半边）。 */
     aiProvider: string
     aiModel: string
@@ -245,6 +247,7 @@ export class PetService {
         aiTakeover: settings.aiTakeover,
         interactionMode: settings.interactionMode,
         barPosition: settings.barPosition,
+        barOffset: settings.barOffset,
         aiProvider: settings.aiProvider,
         aiModel: settings.aiModel,
         aiHistoryCount: settings.aiHistoryCount,

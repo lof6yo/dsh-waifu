@@ -23,6 +23,8 @@ import {
   DEFAULT_AI_HISTORY,
   DEFAULT_AI_MODEL,
   DEFAULT_AI_PROVIDER,
+  BAR_OFFSET_LIMITS,
+  DEFAULT_BAR_OFFSET,
   DEFAULT_BAR_POSITION,
   DEFAULT_INTERACTION_MODE,
   DEFAULT_BUBBLE_BG_COLOR,
@@ -150,6 +152,8 @@ export const Config: Schema<Config> = Schema.object({
     Schema.const('top'),
     Schema.const('bottom'),
   ]).default(DEFAULT_BAR_POSITION),
+  /** 交互条沿吸附边的额外偏移（px，正数远离模型）。 */
+  barOffset: Schema.number().min(BAR_OFFSET_LIMITS.min).max(BAR_OFFSET_LIMITS.max).default(DEFAULT_BAR_OFFSET),
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
   aiHistoryCount: Schema.number().min(0).max(50).default(DEFAULT_AI_HISTORY),
   // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
@@ -203,6 +207,7 @@ export function apply(ctx: Context, config: Config): void {
     aiModel: config.aiModel,
     interactionMode: config.interactionMode,
     barPosition: config.barPosition,
+    barOffset: config.barOffset,
     aiHistoryCount: config.aiHistoryCount,
     thinkingAiDelay: config.thinkingAiDelay,
     thinkingAiInterval: config.thinkingAiInterval,

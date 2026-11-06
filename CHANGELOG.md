@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-
+- 交互条支持位置偏移 `barOffset`（px，-200..200，设置页「显示 → 交互条」），可把整条推远或压到模型边缘
 - **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
 - 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
 - **AI 请求注入时间**：当前情景带上「现在是 X月X日 周X HH:MM」，注入历史每条带 `[HH:MM]`（跨天 `[M/D HH:MM]`）时间戳，模型可判断两次互动隔了多久（ADR-030 修订）。
@@ -12,6 +12,8 @@
 - `/api/dsh-waifu/ai-debug` 增加 `lastTtsPayload` / `lastSpeakPayload`：分别记录最近一次「试听合成」与「对话流式合成」实际发给供应商的 body（model / input / voice / response_format / 是否命中缓存），方便对照同一次调用的 LLM 载荷排查。
 
 ### Changed
+- 交互条静音按钮改用内联 SVG 描边图标（不再用 emoji，各平台字体下大小与基线不一致）
+- 设置页各设置项行间距统一为 10px（原先逐行覆盖 margin，行与行松紧不一）
 
 - 设置页的说明文字一律挂在 **label 下方**（`FormLabel` 的 `hint`），不再跟在输入框 / 开关 / 下拉后面：仅触摸、全 AI 接管、音色、口型跟随、试听、人设六处（控件的实时值/状态仍留在控件旁）
 - **默认值跟维护者日常配置对齐**：尺寸 300、中心距 12% / 31%、全 AI 接管默认开启、`openrouter` + `google/gemma-4-31b-it`、注入历史 20 条、等确认节奏 5s / 20s / 3 次、语音 `qwen/qwen-audio-3.0-tts-flash` + `longanxiaoxin`、口型强度 140%、开发者选项默认关闭、默认触摸部位直接用维护者当前的 10 个部位（含「私处」）与其台词/动作，默认事件绑定也换成当前一套（出错 = 摇头 + 白眼 + 脸黑、完成 = 点头 + 星星眼、交付 = 歪头 + 星星眼）。

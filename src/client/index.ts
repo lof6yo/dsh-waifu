@@ -58,7 +58,9 @@ import {
   DEFAULT_HOME_BOTTOM,
   DEFAULT_HOME_RIGHT,
   DEFAULT_MAX_FPS,
+  DEFAULT_BAR_OFFSET,
   DEFAULT_BAR_POSITION,
+  BAR_OFFSET_LIMITS,
   DEFAULT_INTERACTION_MODE,
   normalizeBarPosition,
   type BarPosition,
@@ -80,6 +82,12 @@ const TAP_DEBOUNCE_MS = 80
  * 触屏/触控板按一下常带 6–10px 抖动，若按 `DRAG_THRESHOLD` 直接算拖拽，点击就会被吞掉。
  */
 const TAP_SLOP_PX = 12
+/**
+ * 交互条静音按钮的图标：内联 SVG（`currentColor` 描边）。
+ * 不用 emoji——各平台字体渲染差异太大、大小也对不齐。
+ */
+const ICON_SPEAKER_ON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>'
+const ICON_SPEAKER_OFF = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16.5 9.5 5 5"/><path d="m21.5 9.5-5 5"/></svg>'
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
 /** 气泡最长连续可见时长兜底（秒）：默认 30；0 = 不限（spec §3，ADR-027）。 */
@@ -530,6 +538,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let interactionMode: InteractionMode = DEFAULT_INTERACTION_MODE
   /** 交互条（模型上下的静音按钮 + 对话输入框）位置与 DOM。 */
   let barPosition: BarPosition = DEFAULT_BAR_POSITION
+  let barOffset = DEFAULT_BAR_OFFSET
   let barEl: HTMLDivElement | null = null
   let barMuteEl: HTMLButtonElement | null = null
   let barInputEl: HTMLInputElement | null = null
@@ -782,7 +791,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function syncBarVisual(): void {
     if (!barMuteEl || !barInputEl) return
     const muted = !ttsEnabled
-    barMuteEl.textContent = muted ? '🔇' : '🔊'
+    barMuteEl.innerHTML = muted ? ICON_SPEAKER_OFF : ICON_SPEAKER_ON
     barMuteEl.setAttribute('aria-pressed', muted ? 'true' : 'false')
     barMuteEl.title = muted ? '取消静音' : '静音'
     const canChat = aiEnabled
@@ -839,9 +848,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 别跑出视口左边/右边
     left = Math.max(left, 8 - layerLeft)
     left = Math.min(left, viewportW - 8 - barW - layerLeft)
+    // 偏移：正数往「远离模型」的方向推，负数可以压住模型边缘
     const top = barPosition === 'top'
-      ? bounds.y - barH - 8
-      : bounds.y + bounds.height + 8
+      ? bounds.y - barH - 8 - barOffset
+      : bounds.y + bounds.height + 8 + barOffset
     barEl.style.left = `${Math.round(left)}px`
     barEl.style.top = `${Math.round(top)}px`
   }
@@ -1705,7 +1715,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     updateBubblePosition(bounds)
     // 交互条只在包围盒/位置/尺寸变化时重排，静止时整帧跳过
     if (barEl) {
-      const barSig = `${key}|${barPosition}|${pos.size}|${barW}x${barH}`
+      const barSig = `${key}|${barPosition}|${barOffset}|${pos.size}|${barW}x${barH}`
       if (barSig !== barKey) {
         barKey = barSig
         updateBarPosition(bounds)
@@ -2348,6 +2358,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     aiTakeover = cfg.aiTakeover === true
     ttsEnabled = cfg.ttsEnabled !== false
     barPosition = normalizeBarPosition(cfg.barPosition, DEFAULT_BAR_POSITION)
+    barOffset = Number.isFinite(cfg.barOffset)
+      ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, cfg.barOffset)))
+      : DEFAULT_BAR_OFFSET
     if (barEl) {
       barKey = ''
       syncBarVisual()
@@ -2648,6 +2661,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         aiTakeover = view.config.aiTakeover === true
         ttsEnabled = view.config.ttsEnabled !== false
         barPosition = normalizeBarPosition(view.config.barPosition, DEFAULT_BAR_POSITION)
+        barOffset = Number.isFinite(view.config.barOffset)
+          ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, view.config.barOffset)))
+          : DEFAULT_BAR_OFFSET
         lipsyncEnabled = view.config.lipsyncEnabled !== false
         lipsyncGain = Number.isFinite(view.config.lipsyncGain)
           ? view.config.lipsyncGain!

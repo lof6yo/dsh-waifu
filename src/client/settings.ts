@@ -46,6 +46,7 @@ import {
   LIPSYNC_GAIN_LIMITS,
   normalizeHistoryCount,
   normalizeLipsyncGain,
+  BAR_OFFSET_LIMITS,
   TTS_MODELS,
   ttsDefaultVoice,
   ttsModelOption,
@@ -106,6 +107,8 @@ export interface PetSettingsValue {
   interactionMode: InteractionMode
   /** 交互条位置（模型上方 / 下方）。 */
   barPosition: BarPosition
+  /** 交互条额外偏移（px，正数远离模型）。 */
+  barOffset: number
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10，ADR-030）。 */
   aiHistoryCount: number
   /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
@@ -653,12 +656,14 @@ const chipStyle: CSSProperties = {
 }
 const statusTextStyle: CSSProperties = { fontSize: 12, lineHeight: 1.5 }
 /** 表单行：grid 96px label + 1fr 控件；行距 8；textarea 行顶部对齐。 */
+/** 设置项行与下一行之间的统一间距（所有表单行共用，别再逐行覆盖 marginBottom）。 */
+const ROW_GAP = 10
 const formRowStyle: CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '96px minmax(0,1fr)',
   alignItems: 'center',
   columnGap: GAP.md,
-  marginBottom: GAP.sm,
+  marginBottom: ROW_GAP,
 }
 const formRowStartStyle: CSSProperties = { ...formRowStyle, alignItems: 'start' }
 const formLabelStyle: CSSProperties = { fontSize: 12, color: C.textSecondary, lineHeight: 1.5 }
@@ -672,7 +677,7 @@ const formRowInlineStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: GAP.md,
-  marginBottom: GAP.sm,
+  marginBottom: ROW_GAP,
 }
 const formLabelInlineStyle: CSSProperties = {
   flex: '1 1 auto',
@@ -1896,7 +1901,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       expanded && createElement('div', { style: cardBodyStyle },
-        createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+        createElement('div', { style: formRowStyle },
           createElement('span', { style: formLabelStyle }, '动作 / 表情'),
           createElement(ThemeMultiSelect, {
             value: binding.motions,
@@ -1916,7 +1921,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ...stages.map((stageLabel, stage) => {
           const draftKey = `${event}:${stage}`
           const pool = binding.lines[stage] ?? []
-          return createElement('div', { key: `stage-${stage}`, style: { ...formRowStartStyle, marginBottom: 0 } },
+          return createElement('div', { key: `stage-${stage}`, style: formRowStartStyle },
             createElement('span', { style: formLabelStartStyle }, `台词池 · ${stageLabel}`),
             createElement('textarea', {
               style: textareaStyle,
@@ -2040,7 +2045,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         createElement('div', { style: hintStyle },
           '原点在角色左下角（0–100%）：调大「上」= 往上长，调小「下」= 往下长；多个 box 命中任一即算该部位。'),
         part.boxes.length === 0
-          ? createElement('div', { style: { ...hintStyle, marginBottom: GAP.sm } }, '还没有 box，点「+ 添加 box」画出点击区域。')
+          ? createElement('div', { style: hintStyle }, '还没有 box，点「+ 添加 box」画出点击区域。')
           : createElement('div', { key: 'box-table', style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: GAP.sm } },
             createElement('div', { key: 'box-head', style: { ...boxGridStyle, padding: '0 2px' } },
               createElement('span', { style: boxHeaderCellStyle }, '#'),
@@ -2077,7 +2082,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           disabled: readOnly || part.boxes.length >= MAX_BOXES_PER_PART,
           onClick: () => addBox(part.id),
         }, part.boxes.length >= MAX_BOXES_PER_PART ? `box 已达上限（${MAX_BOXES_PER_PART}）` : '+ 添加 box'),
-        createElement('div', { key: 'part-lines', style: { ...formRowStartStyle, marginBottom: 0 } },
+        createElement('div', { key: 'part-lines', style: formRowStartStyle },
           createElement('span', { style: formLabelStartStyle }, '台词'),
           createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: GAP.xs, minWidth: 0 } },
             createElement('div', { style: hintStyle }, '一行一条；留空 = 使用全局默认台词池'),
@@ -2105,7 +2110,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 : `最多 ${MAX_LINES_PER_PART} 条 × ${MAX_LINE_LENGTH} 字`),
           ),
         ),
-        createElement('div', { key: 'part-motions', style: { ...formRowStyle, marginBottom: 0 } },
+        createElement('div', { key: 'part-motions', style: formRowStyle },
           createElement('span', { style: formLabelStyle }, '动作 / 表情'),
           createElement(ThemeMultiSelect, {
             value: part.motions,
@@ -2238,7 +2243,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           createElement('span', { style: { width: 56, textAlign: 'right', color: C.textSecondary, fontSize: 12 } }, `${size}px`),
         ),
       ),
-      createElement('div', { style: { ...formRowStyle, marginBottom: 0 } },
+      createElement('div', { style: formRowStyle },
         createElement('span', { style: formLabelStyle }, '渲染帧率'),
         createElement('div', { style: formControlStyle },
           createElement(ThemeRadioGroup, {
@@ -2310,7 +2315,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: { ...formRowInlineStyle, marginBottom: GAP.sm } },
+      createElement('div', { style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '中心距下（% 窗口高）'),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
@@ -2454,7 +2459,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       // 打断优先级（ADR-032）：触摸互动与状态事件抢同一条「气泡 + 动作 + AI 演绎」通道
-      createElement('div', { key: 'interaction-mode', style: { ...formRowInlineStyle, marginBottom: 0 } },
+      createElement('div', { key: 'interaction-mode', style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '打断优先级'),
         createElement('div', { style: formControlInlineStyle },
           createElement('select', {
@@ -2472,8 +2477,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           ),
         ),
       ),
-      // 交互条：模型上下的「静音 + 对话输入」条（贴哪一侧由这里决定）
-      createElement('div', { key: 'bar-position', style: { ...formRowInlineStyle, marginBottom: 0 } },
+      // 交互条：模型上下的「静音 + 对话输入」条（贴哪一侧 + 额外偏移都在这里）
+      createElement('div', { key: 'bar-position', style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '交互条'),
         createElement('div', { style: formControlInlineStyle },
           createElement('select', {
@@ -2488,6 +2493,25 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             createElement('option', { value: 'bottom' }, '模型下方'),
             createElement('option', { value: 'top' }, '模型上方'),
           ),
+          createElement('input', {
+            type: 'number',
+            title: '偏移（px）：正数离模型更远，负数贴近/压住模型',
+            min: BAR_OFFSET_LIMITS.min,
+            max: BAR_OFFSET_LIMITS.max,
+            step: 1,
+            defaultValue: value.barOffset,
+            disabled: !writable,
+            style: numberInputStyle,
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              const parsed = Number.parseInt(e.target.value, 10)
+              const next = Number.isFinite(parsed)
+                ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, parsed)))
+                : 0
+              e.target.value = String(next)
+              if (next === value.barOffset) return
+              enqueueWrite(() => [{ op: 'set', path: ['barOffset'], value: next }])
+            },
+          }),
         ),
       ),
     ),

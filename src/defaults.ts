@@ -136,6 +136,9 @@ export const DEFAULT_INTERACTION_MODE: InteractionMode = 'touch-first'
 export const BAR_POSITIONS = ['top', 'bottom'] as const
 export type BarPosition = (typeof BAR_POSITIONS)[number]
 export const DEFAULT_BAR_POSITION: BarPosition = 'bottom'
+/** 交互条沿「吸附边」的额外偏移（px，正数 = 远离模型；默认 0）。 */
+export const DEFAULT_BAR_OFFSET = 0
+export const BAR_OFFSET_LIMITS = { min: -200, max: 200 } as const
 
 /** 归一化交互条位置：未知值回退默认。 */
 export function normalizeBarPosition(value: unknown, fallback: BarPosition): BarPosition {
@@ -178,6 +181,7 @@ export const DEFAULT_SETTINGS = {
   interactionMode: DEFAULT_INTERACTION_MODE,
   /** 交互条：模型上下的静音按钮 + 对话输入框。 */
   barPosition: DEFAULT_BAR_POSITION,
+  barOffset: DEFAULT_BAR_OFFSET,
   ttsEnabled: DEFAULT_TTS_ENABLED,
   ttsEngine: DEFAULT_TTS_ENGINE,
   ttsModel: DEFAULT_TTS_MODEL,
