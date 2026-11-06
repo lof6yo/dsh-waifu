@@ -250,6 +250,10 @@ export interface AiRoutesApi {
 export interface TriggerInput {
   kind: 'tap' | 'event' | 'chat' | 'idle'
   part?: string
+  /** 部位自定义交互名（ADR-038）：场景句以它描述主人做了什么。 */
+  interaction?: string
+  /** 「停留」交互为悬停触发（ADR-038 修订）：无按压。 */
+  hover?: boolean
   tapKind?: 'light' | 'poke' | 'stroke'
   durationMs?: number
   event?: string
@@ -307,6 +311,8 @@ function parseTriggerInput(record: Record<string, unknown>): TriggerInput {
   return {
     kind,
     part: typeof record.part === 'string' ? record.part.slice(0, 40) : undefined,
+    interaction: typeof record.interaction === 'string' ? record.interaction.slice(0, 20) : undefined,
+    hover: record.hover === true,
     tapKind,
     durationMs: typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)
       ? Math.max(0, Math.min(600_000, Math.round(record.durationMs)))

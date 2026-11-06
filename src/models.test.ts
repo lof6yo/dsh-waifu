@@ -31,6 +31,7 @@ import {
   pointToBoundsRatio,
   stripTimestamps,
   type TouchPart,
+  pickTapInteraction,
 } from './models.ts'
 
 describe('listBuiltinPresets', () => {
@@ -219,6 +220,27 @@ describe('事件目录', () => {
   it('状态位 + 活动事件合成 PET_EVENTS，与触发开关同源', () => {
     expect(ANIMATION_SLOTS).toEqual(['idle', 'thinking', 'error', 'done', 'waiting', 'delivered'])
     expect(ACTIVITY_EVENTS.length).toBe(11)
+  })
+})
+
+describe('pickTapInteraction（按压路径只挑单击/双击，ADR-038 修订）', () => {
+  const part: TouchPart = {
+    id: 'p1', name: '脸', boxes: [{ left: 0, top: 0, right: 1, bottom: 1 }],
+    interactions: [
+      { id: 'i1', name: '轻碰', trigger: 'tap', holdMs: 3000 },
+      { id: 'i2', name: '捏一下', trigger: 'double', holdMs: 3000 },
+      { id: 'i3', name: '抚摸', trigger: 'hold', holdMs: 3000 },
+    ],
+  }
+  it('单击挑 tap 交互，即使部位还定义了 hold（hold 已由悬停负责）', () => {
+    expect(pickTapInteraction(part, 1)?.name).toBe('轻碰')
+  })
+  it('双击挑 double 交互', () => {
+    expect(pickTapInteraction(part, 2)?.name).toBe('捏一下')
+  })
+  it('没定义 tap 时单击返回 undefined（不回落 hold）', () => {
+    const onlyHold: TouchPart = { id: 'p2', name: '腰', boxes: [], interactions: [{ id: 'h', name: '抚摸', trigger: 'hold', holdMs: 3000 }] }
+    expect(pickTapInteraction(onlyHold, 1)).toBeUndefined()
   })
 })
 

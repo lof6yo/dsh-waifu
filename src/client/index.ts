@@ -28,7 +28,7 @@ import type { ReactNode } from 'react'
 import type { PetState, PetStateView } from '../service.ts'
 import { PetSettingsSection } from './settings.ts'
 import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
-import { stripTimestamps, hasDoubleInteraction, pickInteraction, DOUBLE_TAP_MS } from '../models.ts'
+import { stripTimestamps, hasDoubleInteraction, pickTapInteraction, DOUBLE_TAP_MS } from '../models.ts'
 import { clientLog } from './client-log.ts'
 import {
   EXPRESSIONS,
@@ -278,6 +278,8 @@ interface TriggerBody {
   part?: string
   /** 部位自定义交互名（ADR-038）：场景句用它描述「主人做了什么」。 */
   interaction?: string
+  /** 「停留」交互为悬停触发（ADR-038 修订）。 */
+  hover?: boolean
   durationMs?: number
   event?: string
   text?: string
@@ -413,7 +415,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let disposed = false
   pushCleanup(() => { disposed = true })
   // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
-  pushCleanup(() => { clearIdleTimer(); clearBubbleHideTimer(); clearPendingTap(); stopSpeaking() })
+  pushCleanup(() => { clearIdleTimer(); clearBubbleHideTimer(); clearPendingTap(); clearHover(); stopSpeaking() })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
@@ -593,6 +595,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let pendingTapTimer: number | undefined
   /** 部位定义了双击交互时，单击要等一个双击窗口再结算（ADR-038）。 */
   let pendingDoublePart: { id: string; timer: number; flush: () => void } | null = null
+  // 悬停（ADR-038 修订）：鼠标停在 box 内不点击，到时触发一次「停留」交互；
+  // 移出 box（或按下/开始拖动）就清掉，回来重新计时。窗口期内只触发一次。
+  let hoverState: { partId: string; timer: number; fired: boolean } | null = null
+
+  const clearHover = (): void => {
+    if (hoverState !== null) window.clearTimeout(hoverState.timer)
+    hoverState = null
+  }
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
   let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
@@ -1917,11 +1927,38 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /** 指针事件统一挂在命中 div 上（canvas 已 pointer-events:none，命中层外事件穿透下层 UI）。 */
-  function bindHitEvents(el: HTMLDivElement): void {
+  function bindHitEvents(el: HTMLDivElement, part: TouchPart): void {
     el.addEventListener('pointerdown', handlePointerDown)
     el.addEventListener('pointermove', handlePointerMove)
     el.addEventListener('pointerup', handlePointerUp)
     el.addEventListener('pointercancel', () => { down = null; dragging = false })
+    // 悬停（ADR-038 修订）：鼠标停在该部位 box 内 ≥ holdMs 自动触发「停留」交互；
+    // 按下（可能要拖动）或移出都清计时；同一趟悬停只触发一次，移出再回来重新计。
+    el.addEventListener('pointerenter', () => beginHover(part))
+    el.addEventListener('pointerleave', clearHover)
+  }
+
+  function beginHover(part: TouchPart): void {
+    const holds = (part.interactions ?? []).filter((item) => item.trigger === 'hold')
+    if (holds.length === 0) return
+    clearHover()
+    const holdMs = Math.max(...holds.map((item) => item.holdMs))
+    const timer = window.setTimeout(() => {
+      if (hoverState === null) return
+      hoverState = null
+      // 多个 hold 交互取「最容易达成」的那个（holdMs 最短）；都达不成时不会走到这
+      const hold = [...holds].sort((a, b) => a.holdMs - b.holdMs)[0]
+      if (aiEnabled && ttsEnabled) ensureAudio()
+      clientLog('info', `tap | ${part.name} | ${hold.name}(hold 悬停) ${holdMs}ms`)
+      fireTrigger({
+        kind: 'tap',
+        part: part.name,
+        interaction: hold.name,
+        hover: true,
+        durationMs: holdMs,
+      })
+    }, holdMs)
+    hoverState = { partId: part.id, timer, fired: false }
   }
 
   /** 按当前部位 box 重建命中层 div；无任何 box 时回退为覆盖模型包围盒的一个命中区。 */
@@ -1929,15 +1966,21 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!hitLayer) return
     hitLayer.textContent = ''
     hitBoxEntries = []
-    const boxes: TouchBox[] = activeTouchParts().flatMap((part) => part.boxes)
+    clearHover()
+    // 一个 box 对应一个部位（部位可能多 box）；命中层 div 与部位关联，
+    // 悬停（ADR-038 修订）需要知道「停在了谁的 box 上」。
+    const entries: Array<{ part: TouchPart; box: TouchBox }> = []
+    for (const part of activeTouchParts()) {
+      for (const box of part.boxes) entries.push({ part, box })
+    }
     // 部位为空（或都没有 box）→ 覆盖模型包围盒的兜底命中区，保证仍能拖动/点击（spec §4）
-    if (boxes.length === 0) boxes.push({ left: 0, top: 0, right: 1, bottom: 1 })
-    for (const box of boxes) {
+    if (entries.length === 0) entries.push({ part: { id: '', name: '', boxes: [] }, box: { left: 0, top: 0, right: 1, bottom: 1 } })
+    for (const entry of entries) {
       const el = document.createElement('div')
       el.style.cssText = 'position:absolute;pointer-events:auto;background:transparent;touch-action:none'
-      bindHitEvents(el)
+      bindHitEvents(el, entry.part)
       hitLayer.appendChild(el)
-      hitBoxEntries.push({ el, box, last: '' })
+      hitBoxEntries.push({ el, box: entry.box, last: '' })
     }
     updateHitBoxPositions()
   }
@@ -2492,6 +2535,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let dragging = false
 
   function handlePointerDown(e: PointerEvent): void {
+    clearHover()
     down = { x: e.clientX, y: e.clientY, startRight: pos.right, startBottom: pos.bottom }
     dragging = false
     tapDownAt = Date.now()
@@ -2703,7 +2747,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 触摸交互（ADR-038）：部位自定义交互优先，没配则回落到时长三档（ADR-037）。
       const durationMs = tapDownAt > 0 ? Math.max(0, now - tapDownAt) : 0
       const fireTap = (clickCount: number): void => {
-        const picked = pickInteraction(part, durationMs, clickCount)
+        const picked = pickTapInteraction(part, clickCount)
         // 部位没配交互 = 这个部位不参与互动（ADR-038 修订）：不再回落到时长三档
         if (!picked) {
           clientLog('info', `tap | ${part.name} | 没有匹配的交互，忽略 ${durationMs}ms`)
@@ -2719,9 +2763,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         // 触摸必触发（不受事件开关/最小间隔限制），冷却由 fireTrigger 内部处理
         fireTrigger(input)
       }
-      // 停留类交互（按住够久）与「没配双击的部位」都立即结算，保证跟手
-      const holding = pickInteraction(part, durationMs, 1)
-      if ((holding && holding.trigger === 'hold') || !hasDoubleInteraction(part)) {
+      // 「停留」交互改由悬停触发（ADR-038 修订）：按压只结算单击/双击；
+      // 没配双击的部位立即结算，保证跟手
+      if (!hasDoubleInteraction(part)) {
         fireTap(1)
         return
       }

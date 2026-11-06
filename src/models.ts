@@ -211,7 +211,7 @@ export interface TouchBox {
  * 名字用于向模型描述「主人碰了你哪里」，box 只做命中判定；反应交给 AI。
  * 图层：parts 数组顺序即图层顺序，**第 0 项为最上层**，box 重叠时上层部位生效。
  */
-/** 交互触发条件（ADR-038）：单击 / 双击 / 按住停留。 */
+/** 交互触发条件（ADR-038）：单击 / 双击 / 悬停停留（鼠标停在 box 内，无需按下）。 */
 export type InteractionTrigger = 'tap' | 'double' | 'hold'
 
 /** 全部触发条件（设置页下拉顺序）。 */
@@ -221,14 +221,14 @@ export const INTERACTION_TRIGGERS: readonly InteractionTrigger[] = ['tap', 'doub
 export const INTERACTION_TRIGGER_LABELS: Record<InteractionTrigger, string> = {
   tap: '单击',
   double: '双击',
-  hold: '停留',
+  hold: '悬停',
 }
 
 /** 单个部位最多交互数（防止配置失控；设置页同步限制）。 */
 export const MAX_INTERACTIONS_PER_PART = 8
 /** 交互名最大长度（更长的截断）。 */
 export const INTERACTION_NAME_MAX = 20
-/** 「停留」默认时长与允许范围（ms）。 */
+/** 「悬停停留」默认时长与允许范围（ms）：鼠标停在部位 box 内多久触发。 */
 export const TOUCH_HOLD_DEFAULT_MS = 3000
 export const TOUCH_HOLD_LIMITS = { min: 300, max: 10000 } as const
 /** 双击判定窗口（ms）：两次点击间隔小于它算双击。 */
@@ -242,7 +242,7 @@ export interface TouchInteraction {
   id: string
   name: string
   trigger: InteractionTrigger
-  /** 仅 `hold` 有意义：按住多久算「停留」（ms）。 */
+  /** 仅 `hold` 有意义：鼠标悬停多久算「停留」（ms）。 */
   holdMs: number
 }
 
@@ -323,6 +323,20 @@ export function normalizeInteractions(raw: unknown): TouchInteraction[] {
 /** 该部位是否定义了双击交互（决定单击要不要等 300ms 判双）。 */
 export function hasDoubleInteraction(part: TouchPart): boolean {
   return (part.interactions ?? []).some((item) => item.trigger === 'double')
+}
+
+/**
+ * 按压（点击）路径挑交互（ADR-038 修订）：「停留」已改成鼠标悬停触发，
+ * 不再参与按压判定；这里只看单击/双击。
+ */
+export function pickTapInteraction(part: TouchPart, clickCount: number): TouchInteraction | undefined {
+  const list = part.interactions ?? []
+  if (list.length === 0) return undefined
+  if (clickCount >= 2) {
+    const double = list.find((item) => item.trigger === 'double')
+    if (double) return double
+  }
+  return list.find((item) => item.trigger === 'tap')
 }
 
 /**

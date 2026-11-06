@@ -100,6 +100,10 @@ describe('时区', () => {
 describe('buildSceneMessage（ADR-037 场景描述）', () => {
   it('部位自定义交互名优先于时长三档（ADR-038）', () => {
     const scene = buildSceneMessage({ kind: 'tap', part: '脸', tapKind: 'poke', interaction: '抚摸', durationMs: 3200, tz: 'Asia/Shanghai' })
+    // 「停留」交互（悬停触发，ADR-038 修订）：不用「按了约 N 秒」的按压措辞
+    const hoverScene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', hover: true, tz: 'Asia/Shanghai' })
+    expect(hoverScene).toContain('（鼠标一直停在那里）')
+    expect(hoverScene).not.toContain('按了约')
     expect(scene).toContain('主人抚摸你的「脸」')
     expect(scene).not.toContain('戳了戳')
     expect(scene).toContain('按了约 3.2 秒')
@@ -120,6 +124,9 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
 
   it('历史只记最短事实，不重复整段场景句（ADR-039）', () => {
     const tap = historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸', durationMs: 3200 })
+    // 悬停触发的「停留」交互：历史短句不带秒数（那会被模型读成「戳了 N 秒」）
+    const hovered = historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸', hover: true, durationMs: 3000 })
+    expect(hovered).toBe('主人抚摸「脸」')
     expect(tap).toBe('主人抚摸「脸」（3.2s）')
     expect(historySceneText({ kind: 'chat', text: '你在干嘛' })).toBe('主人说「你在干嘛」')
     expect(historySceneText({ kind: 'idle' })).toBe('一阵子没动静')

@@ -292,6 +292,8 @@ export function apply(ctx: Context, config: Config): void {
     const context: ReplyContext = {
       kind: input.kind,
       part: input.part,
+      interaction: input.interaction,
+      hover: input.hover,
       tapKind: input.tapKind,
       durationMs: input.durationMs,
       event: input.event,

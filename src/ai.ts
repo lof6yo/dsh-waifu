@@ -101,6 +101,8 @@ export interface ReplyContext {
   tapKind?: TapKind
   /** 部位自定义交互名（ADR-038，如「抚摸」「捏脸」）；有值时以它为准，`tapKind` 不再进场景句。 */
   interaction?: string
+  /** 「停留」交互（ADR-038 修订）：由鼠标悬停 box 触发（无按压）。场景句用悬停语义。 */
+  hover?: boolean
   /** 触摸按住时长（ms，`kind: 'tap'`）。 */
   durationMs?: number
   /** 用户输入的原话（`kind: 'chat'`，已单行化并截断）。 */
@@ -333,11 +335,19 @@ export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts
     const said = (context.text ?? '').replace(/\s+/g, ' ').trim()
     where = `主人刚对你说「${said || '（没说话）'}」`
   } else if (context.kind === 'tap') {
-    const duration = context.durationMs !== undefined ? `，按了约 ${(context.durationMs / 1000).toFixed(1)} 秒` : ''
-    // ADR-038：部位自定义交互名优先（用户起的名就是语义），没有才回落到时长三档
+    // ADR-038 修订：「停留」= 鼠标悬停（hover），不是按压——场景句用悬停语义，
+    // 时长半句只对 tap/double 交互保留（按压类交互仍需要「按了多久」）。
     const custom = (context.interaction ?? '').trim().slice(0, 20)
-    const action = custom || TAP_KIND_SCENES[context.tapKind ?? 'poke']
-    where = `主人${action}你的「${context.part || '身体'}」${duration}`
+    const isHold = custom !== '' && context.hover === true
+    if (isHold) {
+      where = `主人${custom}你的「${context.part || '身体'}」（鼠标一直停在那里）`
+    } else {
+      const duration = context.durationMs !== undefined && context.durationMs > 0
+        ? `，按了约 ${(context.durationMs / 1000).toFixed(1)} 秒`
+        : ''
+      const action = custom || TAP_KIND_SCENES[context.tapKind ?? 'poke']
+      where = `主人${action}你的「${context.part || '身体'}」${duration}`
+    }
   } else if (context.kind === 'idle') {
     where = '有一阵子没人理你，也没发生什么事'
   } else {
@@ -365,6 +375,7 @@ export function historySceneText(context: ReplyContext, eventTexts?: EventTexts)
   if (context.kind === 'tap') {
     const custom = (context.interaction ?? '').trim().slice(0, 20)
     const part = context.part || '身体'
+    if (custom !== '' && context.hover === true) return `主人${custom}「${part}」`
     const seconds = context.durationMs !== undefined && context.durationMs >= 1000
       ? `（${(context.durationMs / 1000).toFixed(1)}s）`
       : ''

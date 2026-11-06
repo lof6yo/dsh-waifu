@@ -13,7 +13,7 @@
  */
 
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, ChangeEvent, FocusEvent, ReactNode, ReactElement } from 'react'
+import type { CSSProperties, ChangeEvent, FocusEvent, KeyboardEvent, ReactNode, ReactElement } from 'react'
 import type { InteractionTrigger, TouchBox, TouchInteraction, TouchPart } from '../models.ts'
 import {
   ACTIVITY_EVENTS,
@@ -943,6 +943,23 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     setDraftSize(null)
   }
 
+  // 数字输入框「回车/失焦即保存」：键入先落本地草稿，提交时才写盘。
+  // 草稿按「设置键」记录，服务端值变化（别处写入）时自动丢弃本地草稿。
+  const [numDrafts, setNumDrafts] = useState<Record<string, string>>({})
+  const numDraftRef = useRef<Record<string, string>>({})
+  const setNumDraft = (key: string, raw: string): void => {
+    numDraftRef.current = { ...numDraftRef.current, [key]: raw }
+    setNumDrafts(numDraftRef.current)
+  }
+  /** 回车/失焦提交：先删草稿（让服务端回写的新值生效）再写盘；值没变就只删草稿。 */
+  const commitNumDraft = (key: string, ops: () => SettingsOp[]): void => {
+    const next = { ...numDraftRef.current }
+    delete next[key]
+    numDraftRef.current = next
+    setNumDrafts(next)
+    const list = ops()
+    if (list.length > 0) enqueueWrite(() => list)
+  }
   // 归位提示（约 2 秒后消失）
   const [resetNotice, setResetNotice] = useState<string | null>(null)
   const resetNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1086,6 +1103,24 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const memoryLineCount = (memoryDraft ?? '').split('\n').filter((line) => line.trim() !== '').length
   // 设置页折叠态（ADR-039 之后不再写第二行小字，长内容一律折叠）
   const [openScenes, setOpenScenes] = useState<Record<string, boolean>>({})
+  // 场景文案草稿（回车/失焦即保存；每键写盘会互相覆盖导致「编辑框一直自动刷已保存」）
+  const [sceneDrafts, setSceneDrafts] = useState<Record<string, string>>({})
+  const sceneDraftRef = useRef<Record<string, string>>({})
+  const setSceneDraft = (event: string, raw: string): void => {
+    sceneDraftRef.current = { ...sceneDraftRef.current, [event]: raw }
+    setSceneDrafts(sceneDraftRef.current)
+  }
+  const dropSceneDraft = (event: string): void => {
+    if (!(event in sceneDraftRef.current)) return
+    const next = { ...sceneDraftRef.current }
+    delete next[event]
+    sceneDraftRef.current = next
+    setSceneDrafts(next)
+  }
+  const commitSceneDraft = (event: string, raw: string): void => {
+    dropSceneDraft(event)
+    enqueueWrite(() => [{ op: 'set', path: ['eventTexts', event], value: raw }])
+  }
   const [personaOpen, setPersonaOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const modelDraftRef = useRef('')
@@ -1606,14 +1641,14 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 style: { ...selectStyle, width: 108 },
                 onChange: (e: ChangeEvent<HTMLSelectElement>) => setInteractionTrigger(part.id, item.id, e.target.value as InteractionTrigger),
               }, INTERACTION_TRIGGERS.map((trigger) => createElement('option', { key: trigger, value: trigger },
-                trigger === 'hold' ? '停留' : INTERACTION_TRIGGER_LABELS[trigger]))),
+                trigger === 'hold' ? '悬停' : INTERACTION_TRIGGER_LABELS[trigger]))),
               item.trigger === 'hold'
                 ? createElement('input', {
                   type: 'number',
-                  'aria-label': '停留时长（毫秒）',
+                  'aria-label': '悬停时长（毫秒）',
                   min: TOUCH_HOLD_LIMITS.min,
                   max: TOUCH_HOLD_LIMITS.max,
-                  step: 100,
+                  step: 1,
                   value: item.holdMs,
                   disabled: readOnly,
                   style: { ...numberInputStyle, width: 92 },
@@ -1704,7 +1739,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const bubbleMaxSeconds = normalizeBubbleMax(state.value?.bubbleMaxSeconds, DEFAULT_VALUE.bubbleMaxSeconds)
   const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
   /** 偏移类输入（气泡垂直偏移 / 交互条偏移）统一 5px 一档。 */
-  const OFFSET_STEP = 5
+  const OFFSET_STEP = 1
   // 交互条偏移是本机渲染态：不落盘就会被「关掉设置再打开」重置回 0
   // AI 驱动关闭时会联动关掉语音与交互条；记下关掉前的选择，重新打开时恢复
   const voiceBeforeAiOff = useRef<boolean | null>(null)
@@ -1794,13 +1829,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'number',
             min: FOCUS_RANGE_LIMITS.min,
             max: FOCUS_RANGE_LIMITS.max,
-            step: 5,
+            step: 1,
             style: numberInputStyle,
-            value: value.focusRange,
+            value: numDrafts.focusRange ?? value.focusRange,
             disabled: !writable,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('focusRange', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.focusRange === undefined) return
               const next = normalizeFocusRange(e.target.value, DEFAULT_SETTINGS.focusRange)
-              enqueueWrite(() => [{ op: 'set', path: ['focusRange'], value: next }])
+              commitNumDraft('focusRange', () => [{ op: 'set', path: ['focusRange'], value: next }])
             },
           }),
         ),
@@ -1826,13 +1866,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'number',
             min: 0,
             max: 300,
-            step: 5,
-            value: canvasPadX,
+            step: 1,
+            value: numDrafts.canvasPadX ?? canvasPadX,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('canvasPadX', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.canvasPadX === undefined) return
               const next = normalizeCanvasPad(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['canvasPadX'], value: next }])
+              commitNumDraft('canvasPadX', () => [{ op: 'set', path: ['canvasPadX'], value: next }])
             },
           }),
         ),
@@ -1844,13 +1889,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'number',
             min: 0,
             max: 300,
-            step: 5,
-            value: canvasPadY,
+            step: 1,
+            value: numDrafts.canvasPadY ?? canvasPadY,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('canvasPadY', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.canvasPadY === undefined) return
               const next = normalizeCanvasPad(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['canvasPadY'], value: next }])
+              commitNumDraft('canvasPadY', () => [{ op: 'set', path: ['canvasPadY'], value: next }])
             },
           }),
         ),
@@ -1863,12 +1913,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: 0,
             max: 100,
             step: 1,
-            value: homeRight,
+            value: numDrafts.homeRight ?? homeRight,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('homeRight', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.homeRight === undefined) return
               const next = normalizeHomePosition(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['homeRight'], value: next }])
+              commitNumDraft('homeRight', () => [{ op: 'set', path: ['homeRight'], value: next }])
             },
           }),
         ),
@@ -1881,12 +1936,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: 0,
             max: 100,
             step: 1,
-            value: homeBottom,
+            value: numDrafts.homeBottom ?? homeBottom,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('homeBottom', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.homeBottom === undefined) return
               const next = normalizeHomePosition(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['homeBottom'], value: next }])
+              commitNumDraft('homeBottom', () => [{ op: 'set', path: ['homeBottom'], value: next }])
             },
           }),
         ),
@@ -1966,12 +2026,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: 0,
             max: 100,
             step: 1,
-            value: bubbleBgOpacity,
+            value: numDrafts.bubbleBgOpacity ?? bubbleBgOpacity,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('bubbleBgOpacity', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.bubbleBgOpacity === undefined) return
               const next = normalizeBubbleOpacity(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
+              commitNumDraft('bubbleBgOpacity', () => [{ op: 'set', path: ['bubbleBgOpacity'], value: next }])
             },
           }),
         ),
@@ -2011,13 +2076,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'number',
             min: 0,
             max: 600,
-            step: 5,
-            value: bubbleMaxSeconds,
+            step: 1,
+            value: numDrafts.bubbleMaxSeconds ?? bubbleMaxSeconds,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('bubbleMaxSeconds', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.bubbleMaxSeconds === undefined) return
               const next = normalizeBubbleMax(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['bubbleMaxSeconds'], value: next }])
+              commitNumDraft('bubbleMaxSeconds', () => [{ op: 'set', path: ['bubbleMaxSeconds'], value: next }])
             },
           }),
         ),
@@ -2235,12 +2305,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: AI_HISTORY_LIMITS.min,
             max: AI_HISTORY_LIMITS.max,
             step: 1,
-            value: value.aiHistoryCount,
+            value: numDrafts.aiHistoryCount ?? value.aiHistoryCount,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('aiHistoryCount', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.aiHistoryCount === undefined) return
               const next = normalizeHistoryCount(e.target.value, DEFAULT_AI_HISTORY)
-              enqueueWrite(() => [{ op: 'set', path: ['aiHistoryCount'], value: next }])
+              commitNumDraft('aiHistoryCount', () => [{ op: 'set', path: ['aiHistoryCount'], value: next }])
             },
           }),
         ),
@@ -2253,12 +2328,17 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: AI_MEMORY_LIMITS.min,
             max: AI_MEMORY_LIMITS.max,
             step: 1,
-            value: value.aiMemoryCount,
+            value: numDrafts.aiMemoryCount ?? value.aiMemoryCount,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('aiMemoryCount', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.aiMemoryCount === undefined) return
               const next = normalizeMemoryCount(e.target.value, DEFAULT_AI_MEMORY)
-              enqueueWrite(() => [{ op: 'set', path: ['aiMemoryCount'], value: next }])
+              commitNumDraft('aiMemoryCount', () => [{ op: 'set', path: ['aiMemoryCount'], value: next }])
             },
           }),
         ),
@@ -2291,14 +2371,21 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: AI_MIN_INTERVAL_LIMITS.min,
             max: AI_MIN_INTERVAL_LIMITS.max,
             step: 1,
-            value: value.aiMinIntervalSec,
+            value: numDrafts.aiMinIntervalSec ?? value.aiMinIntervalSec,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('aiMinIntervalSec', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.aiMinIntervalSec === undefined) return
               const parsed = Number(e.target.value)
-              if (!Number.isFinite(parsed)) return
-              const next = Math.round(Math.min(AI_MIN_INTERVAL_LIMITS.max, Math.max(AI_MIN_INTERVAL_LIMITS.min, parsed)))
-              if (next !== value.aiMinIntervalSec) enqueueWrite(() => [{ op: 'set', path: ['aiMinIntervalSec'], value: next }])
+              if (Number.isFinite(parsed)) {
+                const next = Math.round(Math.min(AI_MIN_INTERVAL_LIMITS.max, Math.max(AI_MIN_INTERVAL_LIMITS.min, parsed)))
+                if (next !== value.aiMinIntervalSec) commitNumDraft('aiMinIntervalSec', () => [{ op: 'set', path: ['aiMinIntervalSec'], value: next }])
+                else commitNumDraft('aiMinIntervalSec', () => [])
+              }
             },
           }),
         ),
@@ -2311,15 +2398,22 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: 0,
             max: Math.floor(IDLE_TIMEOUT_LIMITS.max / 60),
             step: 1,
-            value: Math.round(value.idleTimeoutSec / 60),
+            value: numDrafts.idleTimeoutMin ?? Math.round(value.idleTimeoutSec / 60),
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('idleTimeoutMin', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.idleTimeoutMin === undefined) return
               const parsed = Number(e.target.value)
-              if (!Number.isFinite(parsed)) return
-              const minutes = Math.round(Math.min(Math.floor(IDLE_TIMEOUT_LIMITS.max / 60), Math.max(0, parsed)))
-              const next = minutes * 60
-              if (next !== value.idleTimeoutSec) enqueueWrite(() => [{ op: 'set', path: ['idleTimeoutSec'], value: next }])
+              if (Number.isFinite(parsed)) {
+                const minutes = Math.round(Math.min(Math.floor(IDLE_TIMEOUT_LIMITS.max / 60), Math.max(0, parsed)))
+                const next = minutes * 60
+                if (next !== value.idleTimeoutSec) commitNumDraft('idleTimeoutMin', () => [{ op: 'set', path: ['idleTimeoutSec'], value: next }])
+                else commitNumDraft('idleTimeoutMin', () => [])
+              }
             },
           }),
         ),
@@ -2332,14 +2426,21 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             min: ACTIVITY_WINDOW_LIMITS.min,
             max: ACTIVITY_WINDOW_LIMITS.max,
             step: 1,
-            value: value.activityWindowSec,
+            value: numDrafts.activityWindowSec ?? value.activityWindowSec,
             disabled: !writable,
             style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('activityWindowSec', e.target.value),
+            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (numDrafts.activityWindowSec === undefined) return
               const parsed = Number(e.target.value)
-              if (!Number.isFinite(parsed)) return
-              const next = Math.round(Math.min(ACTIVITY_WINDOW_LIMITS.max, Math.max(ACTIVITY_WINDOW_LIMITS.min, parsed)))
-              if (next !== value.activityWindowSec) enqueueWrite(() => [{ op: 'set', path: ['activityWindowSec'], value: next }])
+              if (Number.isFinite(parsed)) {
+                const next = Math.round(Math.min(ACTIVITY_WINDOW_LIMITS.max, Math.max(ACTIVITY_WINDOW_LIMITS.min, parsed)))
+                if (next !== value.activityWindowSec) commitNumDraft('activityWindowSec', () => [{ op: 'set', path: ['activityWindowSec'], value: next }])
+                else commitNumDraft('activityWindowSec', () => [])
+              }
             },
           }),
         ),
@@ -2417,13 +2518,13 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                   }),
                   TRIGGER_EVENT_LABELS[event] ?? event,
                 ),
-                createElement('span', { style: foldMetaStyle }, custom.trim() !== '' ? '已自定义' : ''),
+                createElement('span', { style: foldMetaStyle }, (sceneDrafts[event] ?? custom).trim() !== '' ? '已自定义' : ''),
                 createElement(FoldToggle, { open, disabled: !writable, onClick: () => setOpenScenes((prev) => ({ ...prev, [event]: !open })) }),
               ),
               open && createElement('div', { style: foldBodyStyle },
                 createElement('textarea', {
                   rows: 2,
-                  value: custom,
+                  value: sceneDrafts[event] ?? custom,
                   placeholder: `留空用内置文案：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
                   maxLength: EVENT_TEXT_MAX,
                   disabled: !writable,
@@ -2437,9 +2538,16 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                     lineHeight: 1.45,
                     resize: 'none',
                   },
-                  onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
-                    const next = e.target.value
-                    enqueueWrite(() => [{ op: 'set', path: ['eventTexts', event], value: next }])
+                  onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setSceneDraft(event, e.target.value),
+                  onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      commitSceneDraft(event, (e.target as HTMLTextAreaElement).value)
+                    }
+                  },
+                  onBlur: (e: FocusEvent<HTMLTextAreaElement>) => {
+                    if (sceneDrafts[event] === undefined) return
+                    commitSceneDraft(event, e.target.value)
                   },
                 }),
               ),
@@ -2614,7 +2722,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'range',
             min: LIPSYNC_GAIN_LIMITS.min,
             max: LIPSYNC_GAIN_LIMITS.max,
-            step: 10,
+            step: 1,
             value: value.lipsyncGain,
             disabled: !writable,
             style: { width: 180 },
