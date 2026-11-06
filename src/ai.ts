@@ -89,8 +89,6 @@ export interface WaifuLlmRequest {
 export type WaifuLlmChunk = { type: 'text-delta'; text: string } | { type: string; text?: string }
 
 /** 触摸交互类型（轻碰/戳戳/抚摸，按按住时长区分；ADR-037）。 */
-export type TapKind = 'light' | 'poke' | 'stroke'
-
 /** 一次 AI 触发的场景描述（客户端上报的「发生了什么」）。 */
 export interface ReplyContext {
   /** 触发来源：触摸（`tap`）、DSH 事件（`event`）、用户对话（`chat`）或静默超时（`idle`）。 */
@@ -98,7 +96,6 @@ export interface ReplyContext {
   /** 触摸部位的中文名（`kind: 'tap'`）。 */
   part?: string
   /** 触摸类型（`kind: 'tap'`；轻碰/戳戳/抚摸）。部位没配自定义交互时的兜底描述。 */
-  tapKind?: TapKind
   /** 部位自定义交互名（ADR-038，如「抚摸」「捏脸」）；有值时以它为准，`tapKind` 不再进场景句。 */
   interaction?: string
   /** 「停留」交互（ADR-038 修订）：由鼠标悬停 box 触发（无按压）。场景句用悬停语义。 */
@@ -307,13 +304,6 @@ export function loadPersona(homeDir: string): string {
   }
 }
 
-/** 触摸类型 → 场景动词。 */
-const TAP_KIND_SCENES: Record<TapKind, string> = {
-  light: '轻轻碰了一下',
-  poke: '戳了戳',
-  stroke: '温柔地抚摸',
-}
-
 /** 事件文案覆写（事件键 → 用户自定义那句话；缺省用内置文案）。 */
 export type EventTexts = Record<string, string>
 
@@ -341,12 +331,14 @@ export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts
     const isHold = custom !== '' && context.hover === true
     if (isHold) {
       where = `主人${custom}你的「${context.part || '身体'}」（鼠标一直停在那里）`
-    } else {
+    } else if (custom !== '') {
       const duration = context.durationMs !== undefined && context.durationMs > 0
         ? `，按了约 ${(context.durationMs / 1000).toFixed(1)} 秒`
         : ''
-      const action = custom || TAP_KIND_SCENES[context.tapKind ?? 'poke']
-      where = `主人${action}你的「${context.part || '身体'}」${duration}`
+      where = `主人${custom}你的「${context.part || '身体'}」${duration}`
+    } else {
+      // 没有交互名（部位没配交互）就不描述具体动作——绝不回落到内建的「戳了戳」
+      where = `主人碰了你的「${context.part || '身体'}」`
     }
   } else if (context.kind === 'idle') {
     where = '有一阵子没人理你，也没发生什么事'
@@ -379,7 +371,7 @@ export function historySceneText(context: ReplyContext, eventTexts?: EventTexts)
     const seconds = context.durationMs !== undefined && context.durationMs >= 1000
       ? `（${(context.durationMs / 1000).toFixed(1)}s）`
       : ''
-    return custom ? `主人${custom}「${part}」${seconds}` : `主人碰了「${part}」${seconds}`
+    return custom !== '' ? `主人${custom}「${part}」${seconds}` : `主人碰了「${part}」`
   }
   if (context.kind === 'idle') return '一阵子没动静'
   const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)

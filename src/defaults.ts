@@ -248,28 +248,6 @@ export function normalizeBarPosition(value: unknown, fallback: BarPosition): Bar
 }
 
 /**
- * 触摸交互类型（ADR-037）：按按住时长区分。
- * - `light` 轻碰：< 250ms 的快速点触；
- * - `poke` 戳戳：250–900ms；
- * - `stroke` 抚摸：≥ 900ms（或按住滑动）。
- */
-export type TouchKind = 'light' | 'poke' | 'stroke'
-
-/** 按住时长 → 触摸类型。 */
-export function touchKindOf(durationMs: number): TouchKind {
-  if (durationMs < 250) return 'light'
-  if (durationMs < 900) return 'poke'
-  return 'stroke'
-}
-
-/** 触摸类型的中文描述（场景消息用）。 */
-export function touchKindLabel(kind: TouchKind): string {
-  if (kind === 'light') return '轻碰'
-  if (kind === 'poke') return '戳戳'
-  return '抚摸'
-}
-
-/**
  * 标量设置默认值（除 `model`：模型 id 由内置 preset 目录动态决定）。
  * 与 `Config` schema 的 `.default()`、设置页 `DEFAULT_VALUE` 保持逐项一致。
  */

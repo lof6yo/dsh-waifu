@@ -254,7 +254,6 @@ export interface TriggerInput {
   interaction?: string
   /** 「停留」交互为悬停触发（ADR-038 修订）：无按压。 */
   hover?: boolean
-  tapKind?: 'light' | 'poke' | 'stroke'
   durationMs?: number
   event?: string
   text?: string
@@ -301,10 +300,6 @@ function parseTriggerInput(record: Record<string, unknown>): TriggerInput {
     : record.kind === 'chat' ? 'chat' as const
     : record.kind === 'idle' ? 'idle' as const
     : 'tap' as const
-  const tapKind = record.tapKind === 'light' ? 'light' as const
-    : record.tapKind === 'stroke' ? 'stroke' as const
-    : record.tapKind === 'poke' ? 'poke' as const
-    : undefined
   const merged = Array.isArray(record.merged)
     ? record.merged.filter((item): item is string => typeof item === 'string').slice(0, 8)
     : undefined
@@ -313,7 +308,6 @@ function parseTriggerInput(record: Record<string, unknown>): TriggerInput {
     part: typeof record.part === 'string' ? record.part.slice(0, 40) : undefined,
     interaction: typeof record.interaction === 'string' ? record.interaction.slice(0, 20) : undefined,
     hover: record.hover === true,
-    tapKind,
     durationMs: typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)
       ? Math.max(0, Math.min(600_000, Math.round(record.durationMs)))
       : undefined,

@@ -99,7 +99,7 @@ describe('时区', () => {
 
 describe('buildSceneMessage（ADR-037 场景描述）', () => {
   it('部位自定义交互名优先于时长三档（ADR-038）', () => {
-    const scene = buildSceneMessage({ kind: 'tap', part: '脸', tapKind: 'poke', interaction: '抚摸', durationMs: 3200, tz: 'Asia/Shanghai' })
+    const scene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', durationMs: 3200, tz: 'Asia/Shanghai' })
     // 「停留」交互（悬停触发，ADR-038 修订）：不用「按了约 N 秒」的按压措辞
     const hoverScene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', hover: true, tz: 'Asia/Shanghai' })
     expect(hoverScene).toContain('（鼠标一直停在那里）')
@@ -109,10 +109,15 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
     expect(scene).toContain('按了约 3.2 秒')
   })
 
-  it('触摸情景按轻碰/戳戳/抚摸区分，附按压时长', () => {
-    expect(buildSceneMessage({ kind: 'tap', part: '脸', tapKind: 'light' })).toContain('轻轻碰了一下你的「脸」')
-    expect(buildSceneMessage({ kind: 'tap', part: '胸', tapKind: 'poke', durationMs: 400 })).toContain('戳了戳你的「胸」，按了约 0.4 秒')
-    expect(buildSceneMessage({ kind: 'tap', part: '头', tapKind: 'stroke', durationMs: 1500 })).toContain('温柔地抚摸你的「头」')
+  it('交互名带进场景句并附按压时长', () => {
+    expect(buildSceneMessage({ kind: 'tap', part: '脸', interaction: '轻碰', durationMs: 120, tz: 'Asia/Shanghai' })).toContain('主人轻碰你的「脸」，按了约 0.1 秒')
+  })
+  it('没有交互名时只说「碰了」，绝不回落内建「戳了戳」（ADR-038 修订）', () => {
+    const scene = buildSceneMessage({ kind: 'tap', part: '脸', tz: 'Asia/Shanghai' })
+    expect(scene).toContain('主人碰了你的「脸」')
+    expect(scene).not.toContain('戳了戳')
+    expect(scene).not.toContain('轻轻碰了')
+    expect(scene).not.toContain('温柔地抚摸')
   })
 
   it('事件文案可被设置覆写（ADR-039）', () => {
@@ -185,7 +190,7 @@ describe('标签与记忆行（ADR-037 输出格式）', () => {
   it('generateReply 把标签拆出来、记忆剥出来', async () => {
     const llm = fakeLlm(['[blush][Tilt] 呜…别摸啦\n[记] 主人手劲好大'])
     const result = await generateReply(llm, {
-      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头', tapKind: 'stroke' },
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头' },
     })
     expect(result.text).toBe('呜…别摸啦')
     expect(result.expressions).toEqual(['blush'])
@@ -215,7 +220,7 @@ describe('generateReply', () => {
       provider: 'deepseek-official',
       model: 'deepseek-flash',
       persona: DEFAULT_PERSONA,
-      context: { kind: 'tap', part: '手', tapKind: 'poke' },
+      context: { kind: 'tap', part: '手' },
     })
     expect(attempt.text).toBe('好吧…就一下')
     // 请求带上 provider/model 与人设前缀
@@ -228,7 +233,7 @@ describe('generateReply', () => {
 
   it('流中断或空文本返回 null + 原因', async () => {
     const broken = fakeLlm(['啊', '哦'], { throwAt: 1 })
-    const failed = await generateReply(broken, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' } })
+    const failed = await generateReply(broken, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })
     expect(failed.text).toBeNull()
     expect(failed.error).toBeTruthy()
     const empty = fakeLlm(['   '])
@@ -250,7 +255,7 @@ describe('generateReply 推理模型兜底', () => {
         })()
       },
     }
-    const attempt = await generateReply(llm, { provider: 'openrouter', model: 'google/gemma-4-31b-it', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' } })
+    const attempt = await generateReply(llm, { provider: 'openrouter', model: 'google/gemma-4-31b-it', persona: 'x', context: { kind: 'tap', part: '脸' } })
     expect(attempt.text).toBe('哼，手拿开。')
     expect(calls).toHaveLength(2)
     expect(calls[0].reasoningEffort).toBeUndefined()
@@ -267,7 +272,7 @@ describe('generateReply 结束原因', () => {
         })()
       },
     }
-    const attempt = await generateReply(llm, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' } })
+    const attempt = await generateReply(llm, { provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' } })
     expect(attempt.text).toBeNull()
     expect(attempt.error).toContain('UNKNOWN_MODEL')
     expect(attempt.error).toContain('no model x')
@@ -329,7 +334,7 @@ describe('最近对话注入（ADR-030）', () => {
   })
 
   it('场景描述注入当前时间', () => {
-    const text = buildSceneMessage({ kind: 'tap', part: '头', tapKind: 'poke' })
+    const text = buildSceneMessage({ kind: 'tap', part: '头' })
     expect(text).toMatch(/现在是 \d+月\d+日 周[一二三四五六日] \d{2}:\d{2}/)
     expect(formatNow(new Date('2026-11-05T21:10:00').getTime())).toBe('11月5日 周四 21:10')
   })
@@ -341,7 +346,7 @@ describe('最近对话注入（ADR-030）', () => {
       provider: 'p',
       model: 'm',
       persona: '人设',
-      context: { kind: 'tap', part: '脸', tapKind: 'poke' },
+      context: { kind: 'tap', part: '脸' },
       history,
       historyCount: 1,
       onPayload: (payload) => payloads.push(payload),
@@ -349,7 +354,7 @@ describe('最近对话注入（ADR-030）', () => {
     expect(payloads).toHaveLength(1)
     expect(payloads[0].system).toContain('人设')
     expect(payloads[0].messages).toHaveLength(3)
-    expect(payloads[0].messages[2].content).toContain('主人戳了戳你的「脸」')
+    expect(payloads[0].messages[2].content).toContain('主人碰了你的「脸」')
     expect(payloads[0].messages[0].content).not.toContain('戳了你的「脸」')
   })
 
@@ -359,7 +364,7 @@ describe('最近对话注入（ADR-030）', () => {
       provider: 'p',
       model: 'm',
       persona: '人设',
-      context: { kind: 'tap', part: '脸', tapKind: 'poke' },
+      context: { kind: 'tap', part: '脸' },
       history,
       historyCount: 1,
     })
@@ -371,7 +376,7 @@ describe('最近对话注入（ADR-030）', () => {
     expect(JSON.stringify(messages[0])).toContain('第 3 句')
     // assistant 历史必须带 source（否则 pi-ai 重建历史时读 message.source.replayState 崩）
     expect(messages[1]).toMatchObject({ role: 'assistant', source: { kind: 'model' } })
-    expect(JSON.stringify(messages[2])).toContain('主人戳了戳你的「脸」')
+    expect(JSON.stringify(messages[2])).toContain('主人碰了你的「脸」')
   })
 
   it('历史只保留上限条数，且默认上限等于 limits.max', () => {
@@ -390,7 +395,7 @@ describe('streamReply（ADR-037 标签流式）', () => {
     const llm = fakeLlm(['[blush]', '[Tilt] 呜', '…别摸啦', '\n[记] 主人手劲大'])
     const events: { type: string; data: unknown }[] = []
     for await (const chunk of streamReply(llm, {
-      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头', tapKind: 'stroke' },
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '头' },
     })) {
       events.push({ type: chunk.type, data: chunk })
     }
@@ -425,7 +430,7 @@ describe('streamReply（ADR-037 标签流式）', () => {
     }
     const events: { type: string; data: unknown }[] = []
     for await (const chunk of streamReply(llm, {
-      provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸', tapKind: 'poke' },
+      provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' },
     })) {
       events.push({ type: chunk.type, data: chunk })
     }

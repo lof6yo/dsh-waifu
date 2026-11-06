@@ -73,3 +73,6 @@ ADR-037 之后，触摸只剩「部位名 + 按压时长」交给模型：客户
    「停留」理解成「戳了很久」。
 4. **按压路径只挑 tap/double**：`pickTapInteraction()` 取代按压判定里的 `pickInteraction`，
    hold 交互不再能被「长按」触发（避免同一交互两条触发路径）。
+5. **内建三档彻底删除**（用户明确要求「有定义才有触发，不要兜底」）：`touchKindOf`/`touchKindLabel`/
+   `TAP_KIND_SCENES`/`TapKind`/`tapKind` 字段全删。场景句没有交互名时只说「主人碰了你的「脸」」，
+   不再编造「戳了戳」「温柔地抚摸」这类未定义的动词。

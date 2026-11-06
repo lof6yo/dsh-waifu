@@ -294,7 +294,6 @@ export function apply(ctx: Context, config: Config): void {
       part: input.part,
       interaction: input.interaction,
       hover: input.hover,
-      tapKind: input.tapKind,
       durationMs: input.durationMs,
       event: input.event,
       text: input.text,
@@ -408,7 +407,7 @@ export function apply(ctx: Context, config: Config): void {
         model: input?.model || settings.aiModel,
         persona: loadPersona(waifuHome),
         memory: memoryContext(loadMemory(waifuHome).entries, settings.aiMemoryCount),
-        context: { kind: 'tap', part: '脸', tapKind: 'poke' },
+        context: { kind: 'tap', part: '脸', interaction: '轻碰' },
         timeoutMs: 20000,
       })
       if (attempt.text) return { ok: true, text: attempt.text }

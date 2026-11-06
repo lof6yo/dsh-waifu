@@ -2744,7 +2744,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 命中最小 box 优先。
       const part = hitTestTouchParts(editState?.parts ?? touchParts, ratio.nx, ratio.ny)
       if (!part) return
-      // 触摸交互（ADR-038）：部位自定义交互优先，没配则回落到时长三档（ADR-037）。
+      // 触摸交互（ADR-038 修订）：只认部位自定义交互，没有匹配的交互就不触发。
       const durationMs = tapDownAt > 0 ? Math.max(0, now - tapDownAt) : 0
       const fireTap = (clickCount: number): void => {
         const picked = pickTapInteraction(part, clickCount)
