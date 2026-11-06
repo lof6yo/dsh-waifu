@@ -1271,6 +1271,13 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
 
   /** 保存动作（部位卡片「保存」/结构行共用）：显式写回当前完整草稿。 */
   const saveNow = (): void => {
+    // m12259：存在空名交互的草稿不允许保存（含切模型时的静默自动补存）
+    if ((touchDraftRef.current ?? []).some((part) => (part.interactions ?? []).some((item) => !item.name.trim()))) {
+      if (saveSourceRef.current?.type === 'part') setSaveState('error')
+      clientLog('warn', 'touch-parts save blocked: 有交互名为空，先补全名字')
+      saveSourceRef.current = null
+      return
+    }
     if (readOnly || !hasPendingParts()) {
       saveSourceRef.current = null
       return
@@ -1562,7 +1569,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'button',
             className: 'dsh-btn dsh-btn-primary',
             style: buttonPrimaryStyle,
-            disabled: saveState === 'saving' || readOnly,
+            disabled: saveState === 'saving' || readOnly || hasInvalidInteractions,
             onClick: () => savePartNow(part.id),
           }, '保存'),
         )
@@ -1632,9 +1639,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 placeholder: '抚摸',
                 value: item.name,
                 disabled: readOnly,
-                style: { ...inputStyle, width: 140 },
+                // 合法性（m12259）：名字.trim() 非空才算合法；空名交互标红，且保存按钮禁用
+                style: { ...inputStyle, width: 140, ...(item.name.trim() ? {} : { borderColor: C.error }) },
                 onChange: (e: ChangeEvent<HTMLInputElement>) => setInteractionName(part.id, item.id, e.target.value),
               }),
+              item.name.trim() ? null : createElement('span', { style: { fontSize: 11, color: C.error } }, '名字不能为空'),
               createElement('select', {
                 value: item.trigger,
                 disabled: readOnly,
@@ -1681,6 +1690,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   }
 
   // ---- 组装页面 ----
+  /** 任何部位存在空名交互 = 非法草稿（m12259）：保存按钮禁用，直到名字补全。 */
+  const hasInvalidInteractions = touchDraft.some(
+    (part) => (part.interactions ?? []).some((item) => !item.name.trim()),
+  )
   const hasChanges = partsDirty
 
   /** 组内 sticky 保存行：左侧状态文本（warn/error/success 语义色）+ 右侧 primary 保存按钮。 */
@@ -1703,7 +1716,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       type: 'button',
       className: 'dsh-btn dsh-btn-primary',
       style: buttonPrimaryStyle,
-      disabled: saveState === 'saving' || readOnly || !hasChanges,
+      disabled: saveState === 'saving' || readOnly || !hasChanges || hasInvalidInteractions,
       onClick: onSave,
     }, '保存'),
   )
