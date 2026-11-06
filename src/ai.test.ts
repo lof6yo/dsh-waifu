@@ -102,7 +102,9 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
     const scene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', durationMs: 3200, tz: 'Asia/Shanghai' })
     // 「停留」交互（悬停触发，ADR-038 修订）：不用「按了约 N 秒」的按压措辞
     const hoverScene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', hover: true, tz: 'Asia/Shanghai' })
-    expect(hoverScene).toContain('（鼠标一直停在那里）')
+    // 悬停不描述「鼠标停在那里」（2026-11-06 修订）：场景句只写发生了什么
+    expect(hoverScene).toContain('主人抚摸你的「脸」')
+    expect(hoverScene).not.toContain('鼠标')
     expect(hoverScene).not.toContain('按了约')
     expect(scene).toContain('主人抚摸你的「脸」')
     expect(scene).not.toContain('戳了戳')
@@ -149,7 +151,7 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
 
   it('对话情景带上主人原话；静默超时说明「没人理你」', () => {
     expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('主人刚对你说「今天累不累？」')
-    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('回应主人这句话')
+    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('回应主人的这句话')
     expect(buildSceneMessage({ kind: 'idle' })).toContain('有一阵子没人理你')
   })
 

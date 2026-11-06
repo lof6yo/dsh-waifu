@@ -330,7 +330,8 @@ export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts
     const custom = (context.interaction ?? '').trim().slice(0, 20)
     const isHold = custom !== '' && context.hover === true
     if (isHold) {
-      where = `主人${custom}你的「${context.part || '身体'}」（鼠标一直停在那里）`
+      // 悬停不描述「鼠标停在那里」——场景句子只说发生了什么，剩下的交给模型
+      where = `主人${custom}你的「${context.part || '身体'}」`
     } else if (custom !== '') {
       const duration = context.durationMs !== undefined && context.durationMs > 0
         ? `，按了约 ${(context.durationMs / 1000).toFixed(1)} 秒`
@@ -349,9 +350,10 @@ export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts
   // 事件合并：窗口内被攒下来的事件一起描述（模型自己会挑重点反应）
   const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
   const mergedText = merged.length > 0 ? `这期间还发生了：${merged.join('；')}。` : ''
+  // 指令用「你就是这个人物」的口吻，不要说「演」——避免模型切到扮演/旁白视角
   const ask = context.kind === 'chat'
-    ? '按你的人设回应主人这句话。'
-    : '按你的人设即兴演一下这一刻的反应。'
+    ? '你就是这个人，直接按你的性格回应主人的这句话。'
+    : '你就是这个人。这就是你此刻真实遇到的事，直接给出你的反应。'
   return `（现在是 ${now}。${where}。${mergedText}）${ask}`
 }
 
