@@ -810,7 +810,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 拖拽/点击判定只认命中层，交互条上的指针事件不要穿到宠物逻辑
     bar.addEventListener('pointerdown', (event) => event.stopPropagation())
     // 输入为空时提交按钮置灰（但仍可点击：留给「点一下聚焦」的机会）
-    input.addEventListener('input', syncBarVisual)
+    input.addEventListener('input', syncSendState)
     bar.append(mute, input, send)
     petLayer.appendChild(bar)
     barEl = bar
@@ -838,17 +838,28 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     barInputEl.disabled = !canChat
     barInputEl.placeholder = canChat ? '跟我说句话…' : 'AI 回复未开启'
     barInputEl.style.opacity = canChat ? '1' : '.45'
-    if (barSendEl) {
-      const hasText = barInputEl.value.trim().length > 0
-      barSendEl.disabled = !canChat
-      barSendEl.style.opacity = canChat && hasText ? '1' : '.4'
-      barSendEl.style.background = canChat && hasText ? 'rgba(120,170,255,.42)' : 'rgba(255,255,255,.10)'
-      barSendEl.style.cursor = canChat && hasText ? 'pointer' : 'default'
-    }
+    syncSendState()
     // 文案/宽度变了，下一帧重新测量
     barW = 0
     barH = 0
     barKey = ''
+  }
+
+  /**
+   * 发送按钮的可点击状态：只有「AI 开着 + 输入框非空」才算真正可发送。
+   * 空输入不硬禁用（点一下能把光标放进输入框），但用 `aria-disabled` 与灰态说清楚它不会发。
+   */
+  function syncSendState(): void {
+    if (!barSendEl || !barInputEl) return
+    const hasText = barInputEl.value.trim().length > 0
+    const canSend = aiEnabled && hasText
+    // 硬禁用只在 AI 关闭时：那时连输入框都是 disabled
+    barSendEl.disabled = !aiEnabled
+    barSendEl.setAttribute('aria-disabled', canSend ? 'false' : 'true')
+    barSendEl.title = !aiEnabled ? 'AI 回复未开启' : hasText ? '发送' : '先输入内容'
+    barSendEl.style.opacity = canSend ? '1' : '.4'
+    barSendEl.style.background = canSend ? 'rgba(120,170,255,.42)' : 'rgba(255,255,255,.10)'
+    barSendEl.style.cursor = canSend ? 'pointer' : 'default'
   }
 
   /** 静音按钮：直接改设置里的 `ttsEnabled`（持久化，其它端也同步）。 */
@@ -875,10 +886,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (text.length === 0) {
       // 空输入点提交：当成「把光标放进输入框」，不打扰模型
       input.focus()
+      syncSendState()
       return
     }
     if (!aiEnabled) return
     input.value = ''
+    syncSendState()
     if (ttsEnabled) ensureAudio()
     await requestSpeak({ kind: 'chat', text })
   }
