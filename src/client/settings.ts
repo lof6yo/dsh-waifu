@@ -2207,19 +2207,19 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           createElement('select', {
             value: value.triggerMode,
             disabled: !writable,
-            style: { ...selectStyle, width: 200 },
+            style: { ...selectStyle, width: 260 },
             onChange: (e: ChangeEvent<HTMLSelectElement>) => {
               const next = e.target.value === 'queue' ? 'queue' : 'interrupt'
               if (next !== value.triggerMode) enqueueWrite(() => [{ op: 'set', path: ['triggerMode'], value: next }])
             },
           },
-            createElement('option', { value: 'interrupt' }, '截断抢占'),
-            createElement('option', { value: 'queue' }, '排队等说完'),
+            createElement('option', { value: 'interrupt' }, '截断抢占（新事件立刻掐掉上一轮，话可能说一半）'),
+            createElement('option', { value: 'queue' }, '排队等说完（等上一轮说完再开始，攒着的事件合并）'),
           ),
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '最小间隔（秒）', hint: '事件类触发的冷却：间隔内的 DSH 事件不再触发（0 = 不限）' }),
+        createElement(FormLabel, { title: '事件类触发最小间隔（秒，0 = 不限）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2239,7 +2239,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '静默超时（分钟）', hint: '多久没有任何事件/互动就主动说一句（0 = 关闭）' }),
+        createElement(FormLabel, { title: '静默超时（分钟，0 = 关闭）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
