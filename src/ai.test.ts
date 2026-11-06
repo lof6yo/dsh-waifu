@@ -17,6 +17,7 @@ import {
   generateReply,
   historyMessages,
   loadPersona,
+  normalizeEmotion,
   parseEmotionTag,
   personaPath,
   sanitizeLine,
@@ -332,6 +333,31 @@ describe('情绪标签', () => {
     expect(parseEmotionTag('别看了啦')).toEqual({ emotion: null, rest: '别看了啦' })
     expect(parseEmotionTag('[dunno] 喂')).toEqual({ emotion: null, rest: '喂' })
   })
+  it('各种写法都能认出来：前缀、修饰词、markdown、大小写', () => {
+    expect(parseEmotionTag('[emotion: shy] 别')).toEqual({ emotion: 'shy', rest: '别' })
+    expect(parseEmotionTag('**[shy]** 嗯')).toEqual({ emotion: 'shy', rest: '嗯' })
+    expect(parseEmotionTag('（有点害羞）别看了')).toEqual({ emotion: 'shy', rest: '别看了' })
+    expect(parseEmotionTag('【开心】太好啦')).toEqual({ emotion: 'happy', rest: '太好啦' })
+    expect(parseEmotionTag('[骄傲] 哼')).toEqual({ emotion: 'smug', rest: '哼' })
+    expect(normalizeEmotion('SURPRISED')).toBe('surprised')
+    expect(normalizeEmotion('害羞地')).toBe('shy')
+    expect(normalizeEmotion('无奈')).toBe('neutral')
+    expect(normalizeEmotion('mood: angry')).toBe('angry')
+  })
+
+  it('连写多个标签只取第一个认出的情绪，剩下的也剥掉', () => {
+    expect(parseEmotionTag('[smug] [happy] 哼')).toEqual({ emotion: 'smug', rest: '哼' })
+  })
+
+  it('标签写在句子中间也要清掉，普通方括号不受影响', () => {
+    expect(parseEmotionTag('别[shy]看了')).toEqual({ emotion: null, rest: '别看了' })
+    expect(parseEmotionTag('这里[注]不动')).toEqual({ emotion: null, rest: '这里[注]不动' })
+  })
+
+  it('sanitizeLine 兜底：标签不出现在台词里', () => {
+    expect(sanitizeLine('[shy] “哼，才不呢”')).toBe('哼，才不呢')
+  })
+
   it('长标签（surprised）也能识别', () => {
     expect(parseEmotionTag('[surprised] 呀！你干嘛')).toEqual({ emotion: 'surprised', rest: '呀！你干嘛' })
   })
