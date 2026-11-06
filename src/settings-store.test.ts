@@ -138,6 +138,8 @@ describe('SettingsStore', () => {
     expect(store.get().barPosition).toBe('bottom')
     store.applyOps([{ op: 'set', path: ['barPosition'], value: 'top' }])
     expect(store.get().barPosition).toBe('top')
+    store.applyOps([{ op: 'set', path: ['barPosition'], value: 'hidden' }])
+    expect(store.get().barPosition).toBe('hidden')
     store.applyOps([{ op: 'set', path: ['barPosition'], value: 'left' }])
     expect(store.get().barPosition).toBe('bottom')
   })

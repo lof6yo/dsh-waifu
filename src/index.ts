@@ -147,10 +147,11 @@ export const Config: Schema<Config> = Schema.object({
     Schema.const('touch-first'),
     Schema.const('event-first'),
   ]).default(DEFAULT_INTERACTION_MODE),
-  /** 交互条贴在模型上方还是下方（静音 + 对话输入）。 */
+  /** 交互条贴在模型上方 / 下方，或干脆不显示（静音 + 对话输入）。 */
   barPosition: Schema.union([
     Schema.const('top'),
     Schema.const('bottom'),
+    Schema.const('hidden'),
   ]).default(DEFAULT_BAR_POSITION),
   /** 交互条沿吸附边的额外偏移（px，正数远离模型）。 */
   barOffset: Schema.number().min(BAR_OFFSET_LIMITS.min).max(BAR_OFFSET_LIMITS.max).default(DEFAULT_BAR_OFFSET),

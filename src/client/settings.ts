@@ -2492,6 +2492,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           },
             createElement('option', { value: 'bottom' }, '模型下方'),
             createElement('option', { value: 'top' }, '模型上方'),
+            createElement('option', { value: 'hidden' }, '不显示'),
           ),
           createElement('input', {
             type: 'number',
@@ -2500,7 +2501,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             max: BAR_OFFSET_LIMITS.max,
             step: 1,
             defaultValue: value.barOffset,
-            disabled: !writable,
+            disabled: !writable || value.barPosition === 'hidden',
             style: numberInputStyle,
             onBlur: (e: FocusEvent<HTMLInputElement>) => {
               const parsed = Number.parseInt(e.target.value, 10)

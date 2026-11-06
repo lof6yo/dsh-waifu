@@ -133,7 +133,8 @@ export type InteractionMode = (typeof INTERACTION_MODES)[number]
 export const DEFAULT_INTERACTION_MODE: InteractionMode = 'touch-first'
 
 /** 交互条（模型上方/下方的静音按钮 + 对话输入框）的位置：上方 `top` / 下方 `bottom`。 */
-export const BAR_POSITIONS = ['top', 'bottom'] as const
+export const BAR_POSITIONS = ['top', 'bottom', 'hidden'] as const
+/** `hidden` = 不显示交互条（只留模型本体）。 */
 export type BarPosition = (typeof BAR_POSITIONS)[number]
 export const DEFAULT_BAR_POSITION: BarPosition = 'bottom'
 /** 交互条沿「吸附边」的额外偏移（px，正数 = 远离模型；默认 0）。 */

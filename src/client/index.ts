@@ -87,6 +87,7 @@ const TAP_SLOP_PX = 12
  * 不用 emoji——各平台字体渲染差异太大、大小也对不齐。
  */
 const ICON_SPEAKER_ON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>'
+const ICON_SEND = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12h13"/><path d="m12 6.5 5.5 5.5-5.5 5.5"/></svg>'
 const ICON_SPEAKER_OFF = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16.5 9.5 5 5"/><path d="m21.5 9.5-5 5"/></svg>'
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
@@ -542,6 +543,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let barEl: HTMLDivElement | null = null
   let barMuteEl: HTMLButtonElement | null = null
   let barInputEl: HTMLInputElement | null = null
+  let barSendEl: HTMLButtonElement | null = null
   /** 交互条尺寸缓存（只在内容/位置变化时重新测量，避免每帧读布局）。 */
   let barW = 0
   let barH = 0
@@ -748,6 +750,30 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       event.stopPropagation()
       void toggleMute()
     })
+    const send = document.createElement('button')
+    send.type = 'button'
+    send.title = '发送'
+    send.setAttribute('aria-label', '发送')
+    Object.assign(send.style, {
+      width: '26px',
+      height: '26px',
+      flex: '0 0 auto',
+      display: 'grid',
+      placeItems: 'center',
+      borderRadius: '50%',
+      border: 'none',
+      background: 'rgba(120,170,255,.22)',
+      color: '#e8edf7',
+      cursor: 'pointer',
+      padding: '0',
+      transition: 'background .15s ease, opacity .15s ease',
+    })
+    send.innerHTML = ICON_SEND
+    send.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      void sendChat()
+    })
     const input = document.createElement('input')
     input.type = 'text'
     input.maxLength = 200
@@ -772,11 +798,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     })
     // 拖拽/点击判定只认命中层，交互条上的指针事件不要穿到宠物逻辑
     bar.addEventListener('pointerdown', (event) => event.stopPropagation())
-    bar.append(mute, input)
+    // 输入为空时提交按钮置灰（但仍可点击：留给「点一下聚焦」的机会）
+    input.addEventListener('input', syncBarVisual)
+    bar.append(mute, input, send)
     petLayer.appendChild(bar)
     barEl = bar
     barMuteEl = mute
     barInputEl = input
+    barSendEl = send
     barW = 0
     barH = 0
     barKey = ''
@@ -798,6 +827,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     barInputEl.disabled = !canChat
     barInputEl.placeholder = canChat ? '跟我说句话…' : 'AI 回复未开启'
     barInputEl.style.opacity = canChat ? '1' : '.45'
+    if (barSendEl) {
+      const hasText = barInputEl.value.trim().length > 0
+      barSendEl.disabled = !canChat
+      barSendEl.style.opacity = canChat && hasText ? '1' : '.4'
+      barSendEl.style.background = canChat && hasText ? 'rgba(120,170,255,.42)' : 'rgba(255,255,255,.10)'
+      barSendEl.style.cursor = canChat && hasText ? 'pointer' : 'default'
+    }
     // 文案/宽度变了，下一帧重新测量
     barW = 0
     barH = 0
@@ -825,7 +861,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const input = barInputEl
     if (!input) return
     const text = input.value.trim()
-    if (text.length === 0) return
+    if (text.length === 0) {
+      // 空输入点提交：当成「把光标放进输入框」，不打扰模型
+      input.focus()
+      return
+    }
     if (!aiEnabled) return
     input.value = ''
     if (ttsEnabled) ensureAudio()
@@ -835,6 +875,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 交互条定位：贴模型包围盒上方或下方居中（视口内横向夹取）。 */
   function updateBarPosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
     if (!barEl || !petLayer) return
+    // 「不显示」档：整条收起来，别占位置也别留残影
+    if (barPosition === 'hidden') {
+      barEl.style.display = 'none'
+      barKey = ''
+      return
+    }
+    barEl.style.display = 'flex'
     const bounds = boundsArg === undefined ? modelBounds() : boundsArg
     if (!bounds) return
     if (barW === 0 || barH === 0) {

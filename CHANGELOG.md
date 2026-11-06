@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- 交互条右端加圆形提交按钮（空输入点它只聚焦输入框）
+- 交互条位置新增「不显示」档（`barPosition: 'hidden'`）
 - 交互条支持位置偏移 `barOffset`（px，-200..200，设置页「显示 → 交互条」），可把整条推远或压到模型边缘
 - **语音合成 + 口型跟随**（ADR-033）：AI 台词按句读逐段合成（OpenRouter `/api/v1/audio/speech`），气泡在每段音频**开始播放时**才补上那一段文字，`ParamMouthOpenY` 由同一段音频的波形能量驱动。设置页新增「语音」分组：总开关、语音模型、音色、口型开关与强度（0–300%）、试听；TTS 失败只是没声音，文字照常上屏，语音关闭时自动回落原来的一次性回复。
 - 新接口：`POST /api/dsh-waifu/speak`（SSE：`text` / `clause` / `audio` / `done` / `error`）、`POST /api/dsh-waifu/tts`（单段合成，试听与排查用）。
