@@ -105,10 +105,10 @@ describe('systemPrompt（动作/表情释义可覆写 + 可关闭，ADR-040）',
       motionEnabled: { Nod: false },
       expressionEnabled: { blush: false },
     })
-    expect(prompt).not.toContain('- Nod（点头）')
-    expect(prompt).toContain('- ShakeHead（摇头）')
-    expect(prompt).not.toContain('- blush（脸红）')
-    expect(prompt).toContain('- angry（生气）')
+    expect(prompt).not.toContain('- Nod：')
+    expect(prompt).toContain('- ShakeHead：')
+    expect(prompt).not.toContain('- blush：')
+    expect(prompt).toContain('- angry：')
     const tags = filterTags({ expressions: ['blush', 'angry'], motions: ['Nod', 'Tilt'] }, {
       motionEnabled: { Nod: false },
       expressionEnabled: { blush: false },
@@ -121,9 +121,9 @@ describe('systemPrompt（动作/表情释义可覆写 + 可关闭，ADR-040）',
       motionTexts: { Nod: '酷酷地点头' },
       expressionTexts: { blush: '羞到冒烟' },
     })
-    expect(prompt).toContain('- Nod（点头）：酷酷地点头')
-    expect(prompt).toContain('- blush（脸红）：羞到冒烟')
-    expect(prompt).toContain('- ShakeHead（摇头）：拒绝、无奈、不敢相信')
+    expect(prompt).toContain('- Nod：酷酷地点头')
+    expect(prompt).toContain('- blush：羞到冒烟')
+    expect(prompt).toContain('- ShakeHead：拒绝、无奈、不敢相信')
   })
 })
 

@@ -527,11 +527,11 @@ export function filterTags<T extends { expressions: string[]; motions: string[] 
 export function systemPrompt(persona: string, memory = '', catalog: CatalogOptions = {}): string {
   const motionLines = AI_MOTIONS
     .filter((motion) => catalogAllowed(catalog.motionEnabled, motion.id))
-    .map((motion) => `- ${motion.id}（${motion.name}）：${catalog.motionTexts?.[motion.id] ?? motion.meaning}`)
+    .map((motion) => `- ${motion.id}：${catalog.motionTexts?.[motion.id] ?? motion.meaning}`)
     .join('\n')
   const expressionLines = EXPRESSIONS
     .filter((expression) => expression.id !== 'none' && catalogAllowed(catalog.expressionEnabled, expression.id))
-    .map((expression) => `- ${expression.id}（${expression.name}）：${catalog.expressionTexts?.[expression.id] ?? expression.meaning}`)
+    .map((expression) => `- ${expression.id}：${catalog.expressionTexts?.[expression.id] ?? expression.meaning}`)
     .join('\n')
   const memoryBlock = memory ? `\n## 你记得的事\n${memory}\n` : ''
   return `${persona}${memoryBlock}

@@ -2439,7 +2439,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                             enqueueWrite(() => [{ op: 'set', path: [switchField, item.id], value: next }])
                           },
                         }),
-                        `${item.id}（${item.name}）`,
+                        item.id,
                       ),
                       createElement('span', { style: foldMetaStyle }, (catalogDrafts[key] ?? custom).trim() !== '' ? '已自定义' : ''),
                       createElement(FoldToggle, {
