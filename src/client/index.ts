@@ -2454,6 +2454,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   const CON_MAX_LINES = 300
   /** 单行原文字符上限（payload 可能上万字符）。 */
   const CON_LINE_MAX = 4000
+  /** 控制台可视高度：固定 20 行，超出滚动。 */
+  const CON_VIEW_LINES = 20
+  /** 控制台行高（px）：font 11px 与 scrollTop 计算共用同一值。 */
+  const CON_LINE_HEIGHT = 16
 
   function conClock(): string {
     const now = new Date()
@@ -2599,33 +2603,39 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugMotionSelect = motionSelect
       debugBody.appendChild(motionRow)
 
-      // 表情预览：点选即常驻（再点同一项取消）
-      const exprLabel = sectionLabel('表情预览')
-      debugBody.appendChild(exprLabel)
-      const exprRow = document.createElement('div')
-      exprRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px'
-      const exprButtons: { id: string; btn: HTMLButtonElement }[] = []
-      repaintDebugExpressions = (): void => paintExprButtons()
-      const paintExprButtons = (): void => {
-        for (const { id, btn } of exprButtons) {
-          const active = (debugExpression ?? 'none') === id
-          btn.style.background = active ? 'rgba(120,170,255,.38)' : 'rgba(128,128,128,.1)'
-          btn.style.borderColor = active ? 'rgba(120,170,255,.55)' : 'rgba(128,128,128,.25)'
-        }
-      }
+      // 表情预览：下拉选择 + 播放按钮（与动画预览同一套交互）；应用后常驻，选「无」恢复默认脸
+      debugBody.appendChild(sectionLabel('表情预览'))
+      const exprSelect = document.createElement('select')
+      exprSelect.style.cssText = 'flex:1;min-width:0;background:#1c1e28;color:#e8eaf0;border:1px solid rgba(128,128,128,.3);border-radius:6px;font-size:12px;padding:4px 6px;outline:none'
       for (const expression of EXPRESSIONS) {
-        const btn = document.createElement('button')
-        btn.textContent = expression.name
-        btn.style.cssText = 'padding:3px 0;border-radius:6px;border:1px solid rgba(128,128,128,.25);background:rgba(128,128,128,.1);color:#dbe2ef;font-size:11px;font-family:inherit;cursor:pointer;outline:none'
-        btn.onclick = () => {
-          debugExpression = debugExpression === expression.id ? null : expression.id
-          refreshExpressionTargets()
-          paintExprButtons()
-        }
-        exprButtons.push({ id: expression.id, btn })
-        exprRow.appendChild(btn)
+        const option = document.createElement('option')
+        option.value = expression.id
+        option.textContent = expression.name
+        exprSelect.appendChild(option)
       }
-      paintExprButtons()
+      /** 下拉框跟随当前生效的表情（外部改动/面板重建后同步）。 */
+      const syncExprSelect = (): void => { exprSelect.value = debugExpression ?? 'none' }
+      /** 应用下拉框当前项：'none' 即清掉预览表情，回到默认脸。 */
+      const applyDebugExpression = (): void => {
+        const next = exprSelect.value === 'none' ? null : exprSelect.value
+        if (next === debugExpression) { syncExprSelect(); return }
+        debugExpression = next
+        refreshExpressionTargets()
+        syncExprSelect()
+      }
+      repaintDebugExpressions = syncExprSelect
+      const exprPlay = document.createElement('button')
+      exprPlay.textContent = '播放'
+      exprPlay.style.cssText = 'padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;background:rgba(120,170,255,.28);color:#e8eaf0;border:1px solid rgba(120,170,255,.35);outline:none'
+      exprPlay.onmouseenter = () => { exprPlay.style.background = 'rgba(120,170,255,.4)' }
+      exprPlay.onmouseleave = () => { exprPlay.style.background = 'rgba(120,170,255,.28)' }
+      exprSelect.onchange = applyDebugExpression
+      exprPlay.onclick = applyDebugExpression
+      const exprRow = document.createElement('div')
+      exprRow.style.cssText = 'display:flex;gap:6px;align-items:center'
+      exprRow.appendChild(exprSelect)
+      exprRow.appendChild(exprPlay)
+      syncExprSelect()
       debugBody.appendChild(exprRow)
 
       // 控制台（ADR-043）：开启后记录所有事件与 LLM/TTS 原始报文
@@ -2653,7 +2663,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       conRow.appendChild(conState)
       debugBody.appendChild(conRow)
       conBody = document.createElement('div')
-      conBody.style.cssText = 'margin-top:6px;max-height:200px;overflow-y:auto;overflow-x:hidden;background:rgba(0,0,0,.32);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:6px;font:11px/1.45 ui-monospace,monospace;color:#cfd6e6'
+      // 固定 20 行高（content-box，不含 padding/border），内容超出滚动；行高与字体统一写死，便于按行数算高度
+      conBody.style.cssText = `margin-top:6px;height:${CON_VIEW_LINES * CON_LINE_HEIGHT}px;line-height:${CON_LINE_HEIGHT}px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:rgba(0,0,0,.32);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:6px;font:11px/${CON_LINE_HEIGHT}px ui-monospace,monospace;color:#cfd6e6`
       debugBody.appendChild(conBody)
 
       // 状态信息：与上方区域分隔
