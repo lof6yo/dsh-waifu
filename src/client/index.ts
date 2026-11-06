@@ -183,8 +183,8 @@ const EMOTION_EXPRESSIONS: Record<string, readonly string[]> = {
 const EMOTION_HOLD_MS = 4200
 
 const IDLE_MICRO_MOTIONS = ['Glance', 'Perk', 'Shift', 'Sigh'] as const
-const IDLE_MICRO_MIN_MS = 9000
-const IDLE_MICRO_MAX_MS = 22000
+const IDLE_MICRO_MIN_MS = 7000
+const IDLE_MICRO_MAX_MS = 16000
 /** 被打断（非 idle / 正在互动）后重试的间隔。 */
 const IDLE_MICRO_RETRY_MS = 4000
 

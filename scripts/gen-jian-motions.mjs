@@ -463,16 +463,18 @@ const MOTION_DEFS = [
       const d = 2.2
       // 待机小动作①：偏头看一眼再回来（眼球先到、头跟上，回来时带一点过冲）
       const hold = (t) => smoothstep(t, 0.16, 0.52) - smoothstep(t, 1.44, 1.96)
-      const headX = (t) => 7.0 * hold(t) - 0.8 * pulse(t, 2.04, 0.12)
-      const headZ = (t) => 3.4 * hold(t)
-      const headY = (t) => -1.6 * hold(t)
-      const eyeBallX = (t) => 0.52 * hold(t)
+      const headX = (t) => 16.0 * hold(t) - 2.2 * pulse(t, 2.04, 0.12)
+      const headZ = (t) => 8.0 * hold(t)
+      const headY = (t) => -3.5 * hold(t)
+      const headPX = (t) => 3.2 * hold(t)
+      const eyeBallX = (t) => 0.9 * hold(t)
       const eye = (t) => 1 - 0.95 * pulse(t, 0.6, 0.05) - 0.95 * pulse(t, 1.62, 0.05)
       const brow = (t) => 0.16 * hold(t)
       return [
         buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
         buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
         buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
         buildCurve('ParamEyeBallX', sample(d, eyeBallX), { loop: false, duration: d }),
         buildCurve('ParamEyeLOpen', sample(d, eye), { loop: false, duration: d }),
         buildCurve('ParamEyeROpen', sample(d, eye), { loop: false, duration: d }),
@@ -491,13 +493,13 @@ const MOTION_DEFS = [
       // 待机小动作②：听到动静——头一抬、眉一挑、眼睛睁大，随后放松回去。
       // 幅度刻意很小：这是「被什么吸引了」的微反应，不是动作表演。
       const up = (t) => pulse(t, 0.34, 0.17)
-      const headY = (t) => -4.4 * up(t)
-      const headX = (t) => 5.0 * up(t)
-      const headZ = (t) => 2.0 * up(t)
-      const headPX = (t) => 1.6 * up(t)
+      const headY = (t) => -10.0 * up(t)
+      const headX = (t) => 11.0 * up(t)
+      const headZ = (t) => 4.5 * up(t)
+      const headPX = (t) => 4.0 * up(t)
       const eye = (t) => 1 - 0.5 * pulse(t, 0.2, 0.06)
-      const brow = (t) => 0.55 * up(t)
-      const mouth = (t) => 0.14 * up(t)
+      const brow = (t) => 0.9 * up(t)
+      const mouth = (t) => 0.3 * up(t)
       return [
         buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
         buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
@@ -520,10 +522,10 @@ const MOTION_DEFS = [
       const d = 2.4
       // 待机小动作③：换个重心站着——位移参数带动物理链，头发/衣服/尾巴会自己晃一下
       const hold = (t) => smoothstep(t, 0.2, 0.8) - smoothstep(t, 1.56, 2.1)
-      const headPX = (t) => 2.4 * hold(t)
-      const headPY = (t) => -1.1 * hold(t)
-      const headX = (t) => 3.6 * hold(t)
-      const headZ = (t) => -3.0 * hold(t)
+      const headPX = (t) => 6.5 * hold(t)
+      const headPY = (t) => -3.4 * hold(t)
+      const headX = (t) => 9.0 * hold(t)
+      const headZ = (t) => -7.5 * hold(t)
       const eye = (t) => 1 - 0.95 * pulse(t, 1.7, 0.05)
       return [
         buildCurve('ParamAnglePX', sample(d, headPX), { loop: false, duration: d }),
