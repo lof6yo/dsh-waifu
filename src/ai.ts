@@ -426,7 +426,7 @@ function describeFinish(reason: unknown): string | undefined {
  * 认不出的标签也剥掉——它是写给前端的控制信号，绝不能显示或念出来。
  */
 const TAG_PATTERN = /^\s*[*_`~]*\s*[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]\s*[*_`~]*\s*/
-const TAG_OPEN_ONLY = /^\s*[*_`~]*\s*[[［【(（〔〖][^\]］】）}〕〗\n]{0,32}$/
+const TAG_PARTIAL = /^\s*[*_`~]*\s*[[［【(（〔〖][^\]］】）}〕〗\n]{0,16}$/
 const TAG_ANY = /[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]/g
 
 /** 开头标签的解析结果：表情/动作 id（在目录内才算数）。 */
@@ -495,15 +495,21 @@ export function extractMemoryNote(raw: string): { note: string; text: string } {
 
 /**
  * 流式版标签剥离：`buffer` 是「还没发给前端的原始文本」。
- * 返回 `resolved=false` 表示它可能还是标签前缀（例如刚读到 `[sh`），继续攒着别发。
+ * 返回还剩 `needMore=true` 表示尾部是一个**还没闭合**的标签（例如刚读到 `[Sh`），
+ * 这段必须继续攒着——否则后面的标签会被当正文、对应的动作也就丢了（ADR-037）。
  */
-function stripLeadingTagStream(buffer: string): { resolved: boolean; expressions: string[]; motions: string[]; rest: string } {
+function consumeLeadingTags(buffer: string): {
+  expressions: string[]
+  motions: string[]
+  rest: string
+  needMore: boolean
+} {
   const tags = parseLeadingTags(buffer)
-  if (tags.expressions.length > 0 || tags.motions.length > 0 || tags.rest !== buffer.trimStart()) {
-    return { resolved: true, expressions: tags.expressions, motions: tags.motions, rest: stripInlineTags(tags.rest) }
+  if (tags.rest === '') return { ...tags, needMore: false }
+  if (TAG_PARTIAL.test(tags.rest)) {
+    return { expressions: tags.expressions, motions: tags.motions, rest: tags.rest, needMore: true }
   }
-  if (TAG_OPEN_ONLY.test(buffer)) return { resolved: false, expressions: [], motions: [], rest: '' }
-  return { resolved: true, expressions: [], motions: [], rest: stripInlineTags(buffer) }
+  return { expressions: tags.expressions, motions: tags.motions, rest: tags.rest, needMore: false }
 }
 
 /**
@@ -769,12 +775,19 @@ export async function* streamReply(
           visible += chunk.text
         } else {
           pending += chunk.text
-          const tag = stripLeadingTagStream(pending)
-          if (!tag.resolved) continue
-          sentTags = true
-          const allowed = filterTags(tag, options.catalog ?? {})
-          if (allowed.expressions.length > 0 || allowed.motions.length > 0) {
-            yield { type: 'tags', expressions: allowed.expressions, motions: allowed.motions }
+          const tag = consumeLeadingTags(pending)
+          if (tag.expressions.length > 0 || tag.motions.length > 0) {
+            sentTags = true
+            const allowed = filterTags(tag, options.catalog ?? {})
+            if (allowed.expressions.length > 0 || allowed.motions.length > 0) {
+              yield { type: 'tags', expressions: allowed.expressions, motions: allowed.motions }
+            }
+          }
+          if (tag.needMore) {
+            // 尾部是没闭合的标签前缀（`[blush` / `][` / `[Sh`）：留住它等下一块，
+            // 不能当正文发出去，否则后面的 `[ShakeHead]` 就再也认不出来、动作丢失。
+            pending = tag.rest
+            continue
           }
           if (tag.rest === '') {
             // 到目前为止只有标签：继续攒，正文出现才进入转发模式
@@ -782,8 +795,9 @@ export async function* streamReply(
             pending = ''
             continue
           }
+          pending = ''
           prefixDone = true
-          visible = tag.rest
+          visible = stripInlineTags(tag.rest)
         }
         if (visible.length > sent) {
           yield { type: 'delta', text: visible.slice(sent) }

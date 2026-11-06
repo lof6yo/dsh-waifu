@@ -492,6 +492,42 @@ describe('streamReply（ADR-037 标签流式）', () => {
     expect(memory.data.note).toBe('主人手劲大')
   })
 
+  it('标签被流式分片切断（[blush / ][ / Sway / ] …）也不丢动作', async () => {
+    // 真实 provider 按 token 切片，切点常落在标签中间；早期实现会把尾巴当正文，
+    // 于是 `[Sway]` 只在念稿时被剥掉、motions 永远是空的（动作总不出来）。
+    const llm = fakeLlm(['[blush', '][', 'Sway', '] 唔…别摸那里'])
+    const events: { type: string; data: unknown }[] = []
+    for await (const chunk of streamReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '胸' },
+    })) {
+      events.push({ type: chunk.type, data: chunk })
+    }
+    const tagEvents = events.filter((e) => e.type === 'tags')
+    const expressions = tagEvents.flatMap((e) => (e.data as { expressions: string[] }).expressions)
+    const motions = tagEvents.flatMap((e) => (e.data as { motions: string[] }).motions)
+    expect(expressions).toContain('blush')
+    expect(motions).toContain('Sway')
+    const deltas = events.filter((e) => e.type === 'delta').map((e) => (e.data as { text: string }).text).join('')
+    expect(deltas).toBe('唔…别摸那里')
+    const done = events.find((e) => e.type === 'done') as { data: { text: string } }
+    expect(done.data.text).toBe('唔…别摸那里')
+  })
+
+  it('标签在词中间被切断（[blush][Sh + akeHead]）时两个标签都上报', async () => {
+    const llm = fakeLlm(['[blush][Sh', 'akeHead] 哼，才不', '要理你'])
+    const events: { type: string; data: unknown }[] = []
+    for await (const chunk of streamReply(llm, {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'event', event: 'done' },
+    })) {
+      events.push({ type: chunk.type, data: chunk })
+    }
+    const tagEvents = events.filter((e) => e.type === 'tags')
+    expect(tagEvents.flatMap((e) => (e.data as { expressions: string[] }).expressions)).toContain('blush')
+    expect(tagEvents.flatMap((e) => (e.data as { motions: string[] }).motions)).toContain('ShakeHead')
+    const done = events.find((e) => e.type === 'done') as { data: { text: string } }
+    expect(done.data.text).toBe('哼，才不要理你')
+  })
+
   it('失败收尾：正常文本给 done；空文本给 error（含 finish 原因）', async () => {
     const llm: WaifuLlm = {
       stream() {
