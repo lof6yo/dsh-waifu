@@ -2192,6 +2192,22 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
   const bubbleMaxSeconds = normalizeBubbleMax(state.value?.bubbleMaxSeconds, DEFAULT_VALUE.bubbleMaxSeconds)
   const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
+  /** 偏移类输入（气泡垂直偏移 / 交互条偏移）统一 5px 一档。 */
+  const OFFSET_STEP = 5
+  // 交互条偏移是本机渲染态：不落盘就会被「关掉设置再打开」重置回 0
+  const [barOffsetDraft, setBarOffsetDraft] = useState<string | null>(null)
+  const barOffsetTimer = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (barOffsetTimer.current !== null) window.clearTimeout(barOffsetTimer.current)
+  }, [])
+  const commitBarOffset = (raw: string): void => {
+    const parsed = Number.parseInt(raw, 10)
+    const next = Number.isFinite(parsed)
+      ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, parsed)))
+      : 0
+    if (next === value.barOffset) return
+    enqueueWrite(() => [{ op: 'set', path: ['barOffset'], value: next }])
+  }
   const colorInputStyle: CSSProperties = {
     ...inputStyle,
     flex: '0 0 48px',
@@ -2365,7 +2381,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'number',
             min: -1000,
             max: 1000,
-            step: 5,
+            step: OFFSET_STEP,
             value: bubbleOffsetX,
             disabled: !writable,
             style: numberInputStyle,
@@ -2383,7 +2399,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             type: 'number',
             min: -1000,
             max: 1000,
-            step: 5,
+            step: OFFSET_STEP,
             value: bubbleOffsetY,
             disabled: !writable,
             style: numberInputStyle,
@@ -2499,18 +2515,23 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             title: '偏移（px）：正数离模型更远，负数贴近/压住模型',
             min: BAR_OFFSET_LIMITS.min,
             max: BAR_OFFSET_LIMITS.max,
-            step: 1,
-            defaultValue: value.barOffset,
+            // 与「垂直偏移」同一档步进：方向键一次 5px，想精确就手输
+            step: OFFSET_STEP,
+            value: barOffsetDraft ?? String(value.barOffset),
             disabled: !writable || value.barPosition === 'hidden',
             style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              // 每键都写一遍太难打字（"1"→"-"→"-3"），200ms 防抖后再落盘
+              const raw = e.target.value
+              setBarOffsetDraft(raw)
+              if (barOffsetTimer.current !== null) window.clearTimeout(barOffsetTimer.current)
+              barOffsetTimer.current = window.setTimeout(() => commitBarOffset(raw), 200)
+            },
             onBlur: (e: FocusEvent<HTMLInputElement>) => {
-              const parsed = Number.parseInt(e.target.value, 10)
-              const next = Number.isFinite(parsed)
-                ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, parsed)))
-                : 0
-              e.target.value = String(next)
-              if (next === value.barOffset) return
-              enqueueWrite(() => [{ op: 'set', path: ['barOffset'], value: next }])
+              if (barOffsetTimer.current !== null) window.clearTimeout(barOffsetTimer.current)
+              barOffsetTimer.current = null
+              commitBarOffset(e.target.value)
+              setBarOffsetDraft(null)
             },
           }),
         ),
