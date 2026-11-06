@@ -400,6 +400,19 @@ function PetAnchor(): ReturnType<typeof createElement> {
   return createElement('div', { ref, style: { width: 0, height: 0 } })
 }
 
+/** 气泡兜底：行首的 `[shy]`、`［害羞］`、`** [smug] **` 一律当控制标签剥掉（客户端没有情绪词表，就看位置）。 */
+const LEADING_TAG = /^\s*[*_`~]*\s*[[［【(（〔〖][^\]］】）}〕〗\n]{1,24}[\])］】）}〕〗]\s*[*_`~]*\s*/
+
+function stripLeadingTagText(text: string): string {
+  let out = text
+  for (let i = 0; i < 3; i += 1) {
+    const next = out.replace(LEADING_TAG, '')
+    if (next === out) break
+    out = next
+  }
+  return out || text
+}
+
 function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   if (!anchor) { clientLog('warn', 'boot skipped: anchor missing'); return undefined }
   clientLog('info', 'boot start')
@@ -958,7 +971,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function setBubbleText(text: string): void {
     if (!bubble) return
     clearBubbleHideTimer()
-    bubble.textContent = stripTimestamps(text)
+    bubble.textContent = stripLeadingTagText(stripTimestamps(text))
     bubble.style.opacity = '1'
     if (!bubbleVisible) {
       bubbleVisible = true

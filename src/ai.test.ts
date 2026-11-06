@@ -345,6 +345,11 @@ describe('情绪标签', () => {
     expect(normalizeEmotion('mood: angry')).toBe('angry')
   })
 
+  it('全角方括号［］也要认（模型偶尔会用全角）', () => {
+    expect(parseEmotionTag('［shy］别看了')).toEqual({ emotion: 'shy', rest: '别看了' })
+    expect(parseEmotionTag('［ 害羞 ］嗯')).toEqual({ emotion: 'shy', rest: '嗯' })
+  })
+
   it('连写多个标签只取第一个认出的情绪，剩下的也剥掉', () => {
     expect(parseEmotionTag('[smug] [happy] 哼')).toEqual({ emotion: 'smug', rest: '哼' })
   })

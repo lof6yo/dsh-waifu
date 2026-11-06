@@ -401,9 +401,9 @@ const EMOTION_LOOKUP: readonly { word: string; emotion: Emotion }[] = (
   .sort((a, b) => b.word.length - a.word.length)
 
 /** 开头的标签：`[shy]`、`【害羞】`、`(shy)`、`〔smug〕`，允许前导 markdown 记号。 */
-const TAG_PATTERN = /^\s*[*_`~]*\s*[[【(（〔]\s*([^\]】）}〕\n]{1,32})\s*[\])】）}〕]\s*[*_`~]*\s*/
-const TAG_OPEN_ONLY = /^\s*[*_`~]*\s*[[【(（〔][^\]】）}〕\n]{0,32}$/
-const TAG_ANY = /[[【(（〔]\s*([^\]】）}〕\n]{1,32})\s*[\])】）}〕]/g
+const TAG_PATTERN = /^\s*[*_`~]*\s*[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]\s*[*_`~]*\s*/
+const TAG_OPEN_ONLY = /^\s*[*_`~]*\s*[[［【(（〔〖][^\]］】）}〕〗\n]{0,32}$/
+const TAG_ANY = /[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]/g
 
 export function normalizeEmotion(raw: string | undefined | null): Emotion | null {
   if (!raw) return null
