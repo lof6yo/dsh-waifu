@@ -1538,6 +1538,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   /** 偏移类输入（气泡垂直偏移 / 交互条偏移）统一 5px 一档。 */
   const OFFSET_STEP = 5
   // 交互条偏移是本机渲染态：不落盘就会被「关掉设置再打开」重置回 0
+  // AI 驱动关闭时会联动关掉语音与交互条；记下关掉前的选择，重新打开时恢复
+  const voiceBeforeAiOff = useRef<boolean | null>(null)
+  const barBeforeAiOff = useRef<BarPosition | null>(null)
   const [barOffsetDraft, setBarOffsetDraft] = useState<string | null>(null)
   const barOffsetTimer = useRef<number | null>(null)
   useEffect(() => () => {
@@ -1852,49 +1855,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      // 交互条：模型上下的「静音 + 对话输入」条（贴哪一侧 + 额外偏移都在这里）
-      createElement('div', { key: 'bar-position', style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '交互条'),
-        createElement('div', { style: formControlInlineStyle },
-          createElement('select', {
-            style: selectStyle,
-            value: value.barPosition,
-            disabled: !writable,
-            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-              const next = e.target.value as BarPosition
-              enqueueWrite(() => [{ op: 'set', path: ['barPosition'], value: next }])
-            },
-          },
-            createElement('option', { value: 'bottom' }, '模型下方'),
-            createElement('option', { value: 'top' }, '模型上方'),
-            createElement('option', { value: 'hidden' }, '不显示'),
-          ),
-          createElement('input', {
-            type: 'number',
-            title: '偏移（px）：正数离模型更远，负数贴近/压住模型',
-            min: BAR_OFFSET_LIMITS.min,
-            max: BAR_OFFSET_LIMITS.max,
-            // 与「垂直偏移」同一档步进：方向键一次 5px，想精确就手输
-            step: OFFSET_STEP,
-            value: barOffsetDraft ?? String(value.barOffset),
-            disabled: !writable || value.barPosition === 'hidden',
-            style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
-              // 每键都写一遍太难打字（"1"→"-"→"-3"），200ms 防抖后再落盘
-              const raw = e.target.value
-              setBarOffsetDraft(raw)
-              if (barOffsetTimer.current !== null) window.clearTimeout(barOffsetTimer.current)
-              barOffsetTimer.current = window.setTimeout(() => commitBarOffset(raw), 200)
-            },
-            onBlur: (e: FocusEvent<HTMLInputElement>) => {
-              if (barOffsetTimer.current !== null) window.clearTimeout(barOffsetTimer.current)
-              barOffsetTimer.current = null
-              commitBarOffset(e.target.value)
-              setBarOffsetDraft(null)
-            },
-          }),
-        ),
-      ),
     ),
   ))
 
@@ -1985,18 +1945,43 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   children.push(createElement('div', { key: 'ai-reply', style: sectionStyle },
     createElement(SectionHeader, {
       title: 'AI 驱动',
-      description: '角色的台词、动作、表情全部由模型按人设 + 场景 + 历史 + 记忆即兴决定；关闭后角色完全静默。',
+      description: '角色的台词、动作、表情全部由模型按人设 + 场景 + 历史 + 记忆即兴决定；关闭后角色完全静默（语音与交互条一并关闭）。',
       action: createElement(ThemeSwitch, {
         checked: !!value.aiEnabled,
         disabled: !writable,
         onChange: (next) => {
-          enqueueWrite(() => [{ op: 'set', path: ['aiEnabled'], value: next }])
+          if (next) {
+            // 重新打开：把关闭时联动关掉的语音 / 交互条恢复成用户原来的选择
+            const ops: SettingsOp[] = [{ op: 'set', path: ['aiEnabled'], value: true }]
+            if (voiceBeforeAiOff.current !== null) {
+              ops.push({ op: 'set', path: ['ttsEnabled'], value: voiceBeforeAiOff.current })
+              voiceBeforeAiOff.current = null
+            }
+            const bar = barBeforeAiOff.current
+            if (bar !== null) {
+              if (bar !== 'hidden') ops.push({ op: 'set', path: ['barPosition'], value: bar })
+              barBeforeAiOff.current = null
+            }
+            enqueueWrite(() => ops)
+            return
+          }
+          // 关闭：记下当前选择，再联动关掉语音与交互条（角色不能说话时留着它们只会误点）
+          voiceBeforeAiOff.current = value.ttsEnabled
+          barBeforeAiOff.current = value.barPosition
+          enqueueWrite(() => [
+            { op: 'set', path: ['aiEnabled'], value: false },
+            { op: 'set', path: ['ttsEnabled'], value: false },
+            { op: 'set', path: ['barPosition'], value: 'hidden' },
+          ])
         },
       }),
     }),
     !!value.aiEnabled && createElement('div', null,
       createElement('div', { style: formRowStyle },
-        createElement('label', { style: formLabelStyle }, 'Provider'),
+        createElement(FormLabel, {
+          title: 'Provider',
+          hint: '用 DSH 已配置的 LLM provider；账号与 Key 沿用「设置 → 模型」里的那份',
+        }),
         createElement('div', { style: formControlStyle },
           providerChoices.length > 0
             ? createElement('select', {
@@ -2027,7 +2012,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowStyle },
-        createElement('label', { style: formLabelStyle }, '模型'),
+        createElement(FormLabel, {
+          title: '模型',
+          hint: '该 provider 下的模型；点「测试」用一句话自检能不能出字',
+        }),
         createElement('div', { style: formControlStyle },
           modelOptions.length > 0
             ? createElement('select', {
@@ -2201,8 +2189,54 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
+      // 交互条（原「显示」分组，ADR-037 修订）：AI 驱动的对话输入入口，跟 AI 设置放一起
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, {
+          title: '交互条',
+          hint: '模型上/下方的「静音 + 对话输入」条；偏移正数离模型更远、负数贴近模型',
+        }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('select', {
+            style: selectStyle,
+            value: value.barPosition,
+            disabled: !writable,
+            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+              const next = e.target.value as BarPosition
+              enqueueWrite(() => [{ op: 'set', path: ['barPosition'], value: next }])
+            },
+          },
+            createElement('option', { value: 'bottom' }, '模型下方'),
+            createElement('option', { value: 'top' }, '模型上方'),
+            createElement('option', { value: 'hidden' }, '不显示'),
+          ),
+          createElement('input', {
+            type: 'number',
+            title: '偏移（px）：正数离模型更远，负数贴近/压住模型',
+            min: BAR_OFFSET_LIMITS.min,
+            max: BAR_OFFSET_LIMITS.max,
+            // 与「垂直偏移」同一档步进：方向键一次 5px，想精确就手输
+            step: OFFSET_STEP,
+            value: barOffsetDraft ?? String(value.barOffset),
+            disabled: !writable || value.barPosition === 'hidden',
+            style: numberInputStyle,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => {
+              // 每键都写一遍太难打字（"1"→"-"→"-3"），200ms 防抖后再落盘
+              const raw = e.target.value
+              setBarOffsetDraft(raw)
+              if (barOffsetTimer.current !== null) window.clearTimeout(barOffsetTimer.current)
+              barOffsetTimer.current = window.setTimeout(() => commitBarOffset(raw), 200)
+            },
+            onBlur: (e: FocusEvent<HTMLInputElement>) => {
+              if (barOffsetTimer.current !== null) window.clearTimeout(barOffsetTimer.current)
+              barOffsetTimer.current = null
+              commitBarOffset(e.target.value)
+              setBarOffsetDraft(null)
+            },
+          }),
+        ),
+      ),
       !!aiCheckStatus && createElement('div', { style: formRowStyle },
-        createElement('label', { style: formLabelStyle }, '自检'),
+        createElement(FormLabel, { title: '自检', hint: '刚发出去的那次真实请求的结果' }),
         createElement('div', {
           style: {
             ...formControlStyle,
@@ -2279,10 +2313,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   children.push(createElement('div', { key: 'voice', style: sectionStyle },
     createElement(SectionHeader, {
       title: '语音',
-      description: '开启后 AI 台词按句读逐段合成并播放，气泡跟着语音逐段显示，口型跟随音频。',
+      description: value.aiEnabled
+        ? '开启后 AI 台词按句读逐段合成并播放，气泡跟着语音逐段显示，口型跟随音频。'
+        : 'AI 驱动已关闭，没有台词可念，语音随之关闭；重新打开 AI 驱动会恢复原来的选择。',
       action: createElement(ThemeSwitch, {
         checked: !!value.ttsEnabled,
-        disabled: !writable,
+        disabled: !writable || !value.aiEnabled,
         onChange: (next) => {
           enqueueWrite(() => [{ op: 'set', path: ['ttsEnabled'], value: next }])
         },
