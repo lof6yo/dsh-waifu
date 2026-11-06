@@ -49,6 +49,7 @@ import {
   TTS_MODELS,
   ttsDefaultVoice,
   ttsModelOption,
+  type BarPosition,
   type InteractionMode,
 } from '../defaults.ts'
 import { clientLog } from './client-log.ts'
@@ -103,6 +104,8 @@ export interface PetSettingsValue {
   aiModel: string
   /** 打断优先级（ADR-032）：触摸互动与状态事件谁先占气泡/动作/AI 演绎。 */
   interactionMode: InteractionMode
+  /** 交互条位置（模型上方 / 下方）。 */
+  barPosition: BarPosition
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10，ADR-030）。 */
   aiHistoryCount: number
   /** 语音合成开关（ADR-033）：开启后走 /speak 流式管线。 */
@@ -2466,6 +2469,24 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             createElement('option', { value: 'touch-first' }, '触摸优先'),
             createElement('option', { value: 'mutual' }, '互相打断'),
             createElement('option', { value: 'event-first' }, '事件优先'),
+          ),
+        ),
+      ),
+      // 交互条：模型上下的「静音 + 对话输入」条（贴哪一侧由这里决定）
+      createElement('div', { key: 'bar-position', style: { ...formRowInlineStyle, marginBottom: 0 } },
+        createElement('span', { style: formLabelInlineStyle }, '交互条'),
+        createElement('div', { style: formControlInlineStyle },
+          createElement('select', {
+            style: selectStyle,
+            value: value.barPosition,
+            disabled: !writable,
+            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+              const next = e.target.value as BarPosition
+              enqueueWrite(() => [{ op: 'set', path: ['barPosition'], value: next }])
+            },
+          },
+            createElement('option', { value: 'bottom' }, '模型下方'),
+            createElement('option', { value: 'top' }, '模型上方'),
           ),
         ),
       ),

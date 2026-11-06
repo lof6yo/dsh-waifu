@@ -214,6 +214,16 @@ describe('最近对话注入（ADR-030）', () => {
     expect(formatStamp(new Date('2026-11-04T20:03:00').getTime(), now)).toBe('11/4 20:03')
   })
 
+  it('chat 场景：原话进「主人刚对你说」，并要求回应这句话', () => {
+    const text = buildSceneMessage({ kind: 'chat', text: '今天累不累？' })
+    expect(text).toContain('主人刚对你说「今天累不累？」')
+    expect(text).toContain('回应主人这句话')
+    expect(text).not.toContain('即兴演一下这一刻的反应')
+    // 历史里不写「回应」指令，只记发生过的事
+    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' }, { forHistory: true }))
+      .toContain('主人刚对你说「今天累不累？」')
+  })
+
   it('场景描述注入当前时间', () => {
     const text = buildSceneMessage({ kind: 'tap', part: '头' })
     expect(text).toMatch(/现在是 \d+月\d+日 周[一二三四五六日] \d{2}:\d{2}/)

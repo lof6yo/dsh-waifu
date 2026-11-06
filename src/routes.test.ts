@@ -65,6 +65,7 @@ const BASE_SETTINGS: PetSettings = {
   aiTouchOnly: false,
   aiTakeover: false,
   interactionMode: 'touch-first',
+  barPosition: 'bottom',
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,

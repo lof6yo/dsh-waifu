@@ -23,6 +23,7 @@ import {
   DEFAULT_AI_HISTORY,
   DEFAULT_AI_MODEL,
   DEFAULT_AI_PROVIDER,
+  DEFAULT_BAR_POSITION,
   DEFAULT_INTERACTION_MODE,
   DEFAULT_BUBBLE_BG_COLOR,
   DEFAULT_BUBBLE_BG_OPACITY,
@@ -144,6 +145,11 @@ export const Config: Schema<Config> = Schema.object({
     Schema.const('touch-first'),
     Schema.const('event-first'),
   ]).default(DEFAULT_INTERACTION_MODE),
+  /** 交互条贴在模型上方还是下方（静音 + 对话输入）。 */
+  barPosition: Schema.union([
+    Schema.const('top'),
+    Schema.const('bottom'),
+  ]).default(DEFAULT_BAR_POSITION),
   /** 注入到 prompt 的最近对话条数（0 = 不注入，默认 10；ADR-030）。 */
   aiHistoryCount: Schema.number().min(0).max(50).default(DEFAULT_AI_HISTORY),
   // 长状态 AI 演绎节奏（ADR-026）：入态延迟、演绎间隔、每次入态最大次数（思考/等待各自一套）
@@ -196,6 +202,7 @@ export function apply(ctx: Context, config: Config): void {
     aiProvider: config.aiProvider,
     aiModel: config.aiModel,
     interactionMode: config.interactionMode,
+    barPosition: config.barPosition,
     aiHistoryCount: config.aiHistoryCount,
     thinkingAiDelay: config.thinkingAiDelay,
     thinkingAiInterval: config.thinkingAiInterval,

@@ -88,10 +88,12 @@ export type WaifuLlmChunk = { type: 'text-delta'; text: string } | { type: strin
 
 /** 一次回复请求的描述（客户端上报的「发生了什么」）。 */
 export interface ReplyContext {
-  /** 触发来源：触摸部位（`tap`）或状态变化（`state`）。 */
-  kind: 'tap' | 'state'
+  /** 触发来源：触摸部位（`tap`）、状态变化（`state`）或用户在交互条里说的话（`chat`）。 */
+  kind: 'tap' | 'state' | 'chat'
   /** 触摸部位的中文名（`kind: 'tap'`）。 */
   part?: string
+  /** 用户输入的原话（`kind: 'chat'`，已单行化并截断）。 */
+  text?: string
   /** 当前宠物状态（idle/thinking/...）。 */
   state?: string
   /** 该部位/事件原本会说的一句话（作为语气参考，不要求复述）。 */
@@ -223,21 +225,28 @@ export function loadPersona(homeDir: string): string {
  */
 export function buildSceneMessage(context: ReplyContext, options: { forHistory?: boolean } = {}): string {
   const state = context.state ?? 'idle'
-  const where = context.kind === 'tap'
-    ? `主人刚戳了你的「${context.part || '身体'}」`
-    : `当前状态是「${state}」（${
-      state === 'thinking' ? '主人在等你想事情'
-        : state === 'error' ? '出错了，气氛有点僵'
-          : state === 'done' ? '事情办完了'
-            : state === 'waiting' ? '主人正在等你确认'
-              : state === 'delivered' ? '主人刚交付了成果'
-                : '主人在看着你'
-    }）`
+  const said = (context.text ?? '').replace(/\s+/g, ' ').trim()
+  const where = context.kind === 'chat'
+    ? `主人刚对你说「${said || '（没说话）'}」`
+    : context.kind === 'tap'
+      ? `主人刚戳了你的「${context.part || '身体'}」`
+      : `当前状态是「${state}」（${
+        state === 'thinking' ? '主人在等你想事情'
+          : state === 'error' ? '出错了，气氛有点僵'
+            : state === 'done' ? '事情办完了'
+              : state === 'waiting' ? '主人正在等你确认'
+                : state === 'delivered' ? '主人刚交付了成果'
+                  : '主人在看着你'
+      }）`
   // 参考台词只给方向，明确禁止「换一种说法」式的改写：要的是即兴演绎，不是 paraphrasing
   const hint = !options.forHistory && context.hint
     ? `你下意识想说的是「${context.hint}」，但别照搬，也不必复述。`
     : ''
-  return `（现在是 ${formatNow()}。${where}。${hint}）按你的人设即兴演一下这一刻的反应，一句话。`
+  // 用户主动说话时不是「演一下现在的反应」，而是「回应这句话」
+  const ask = context.kind === 'chat'
+    ? '按你的人设回应主人这句话，一句话。'
+    : '按你的人设即兴演一下这一刻的反应，一句话。'
+  return `（现在是 ${formatNow()}。${where}。${hint}）${ask}`
 }
 
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */

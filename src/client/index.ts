@@ -58,7 +58,10 @@ import {
   DEFAULT_HOME_BOTTOM,
   DEFAULT_HOME_RIGHT,
   DEFAULT_MAX_FPS,
+  DEFAULT_BAR_POSITION,
   DEFAULT_INTERACTION_MODE,
+  normalizeBarPosition,
+  type BarPosition,
   normalizeInteractionMode,
   type InteractionMode,
 } from '../defaults.ts'
@@ -268,7 +271,7 @@ const api = {
     return () => es.close()
   },
   /** AI 回复（ADR-025）：上报「戳了哪里/变成什么状态」，拿回一句台词（失败返回 ok:false）。 */
-  interact: (body: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<{ ok: boolean; text?: string; error?: string }> =>
+  interact: (body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string }): Promise<{ ok: boolean; text?: string; error?: string }> =>
     fetch(`${PET_API}/interact`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -279,7 +282,7 @@ const api = {
    * 用 fetch + ReadableStream 手动解帧（EventSource 不支持 POST 带 body）。
    */
   speak: async (
-    body: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    body: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
     onEvent: (event: string, data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void> => {
@@ -525,6 +528,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let lipsyncGain: number = DEFAULT_SETTINGS.lipsyncGain
   /** 打断优先级（ADR-032）：触摸互动与状态事件抢气泡/动作/AI 演绎时的规则。 */
   let interactionMode: InteractionMode = DEFAULT_INTERACTION_MODE
+  /** 交互条（模型上下的静音按钮 + 对话输入框）位置与 DOM。 */
+  let barPosition: BarPosition = DEFAULT_BAR_POSITION
+  let barEl: HTMLDivElement | null = null
+  let barMuteEl: HTMLButtonElement | null = null
+  let barInputEl: HTMLInputElement | null = null
+  /** 交互条尺寸缓存（只在内容/位置变化时重新测量，避免每帧读布局）。 */
+  let barW = 0
+  let barH = 0
+  let barKey = ''
   /** 触摸互动保持窗口的截止时间戳；窗口内状态事件按优先级决定是否接管。 */
   let tapHoldUntil = 0
   let tapResumeTimer: number | undefined
@@ -680,6 +692,158 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (rect && rect.top + anchorY < 8) anchorY = 8 - rect.top
     bubble.style.left = `${anchorX}px`
     bubble.style.top = `${anchorY}px`
+  }
+
+  // ---- 交互条（静音 + 对话输入） ----
+
+  /** 建交互条：圆形静音按钮 + 胶囊输入框，整体贴在模型上方或下方。 */
+  function buildBar(): void {
+    if (!petLayer || barEl) return
+    const bar = document.createElement('div')
+    Object.assign(bar.style, {
+      position: 'absolute',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+      padding: '4px 4px 4px 4px',
+      borderRadius: '999px',
+      background: 'rgba(24,26,34,.82)',
+      border: '1px solid rgba(255,255,255,.16)',
+      boxShadow: '0 6px 18px rgba(0,0,0,.28)',
+      backdropFilter: 'blur(6px)',
+      pointerEvents: 'auto',
+      zIndex: '4',
+      opacity: '0',
+      transition: 'opacity .18s ease',
+    })
+    const mute = document.createElement('button')
+    mute.type = 'button'
+    mute.title = '静音 / 取消静音'
+    Object.assign(mute.style, {
+      width: '26px',
+      height: '26px',
+      flex: '0 0 auto',
+      display: 'grid',
+      placeItems: 'center',
+      borderRadius: '50%',
+      border: 'none',
+      background: 'rgba(255,255,255,.10)',
+      color: '#e8edf7',
+      fontSize: '13px',
+      lineHeight: '1',
+      cursor: 'pointer',
+      padding: '0',
+    })
+    mute.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      void toggleMute()
+    })
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.maxLength = 200
+    input.placeholder = '跟我说句话…'
+    input.setAttribute('aria-label', '和角色说话')
+    Object.assign(input.style, {
+      width: '150px',
+      background: 'transparent',
+      border: 'none',
+      outline: 'none',
+      color: '#eef2f8',
+      fontSize: '12px',
+      padding: '0 6px',
+      fontFamily: 'inherit',
+    })
+    input.addEventListener('keydown', (event) => {
+      // 输入框里的按键不和页面快捷键抢：整段冒泡都拦下来
+      event.stopPropagation()
+      if (event.key !== 'Enter' || event.isComposing) return
+      event.preventDefault()
+      void sendChat()
+    })
+    // 拖拽/点击判定只认命中层，交互条上的指针事件不要穿到宠物逻辑
+    bar.addEventListener('pointerdown', (event) => event.stopPropagation())
+    bar.append(mute, input)
+    petLayer.appendChild(bar)
+    barEl = bar
+    barMuteEl = mute
+    barInputEl = input
+    barW = 0
+    barH = 0
+    barKey = ''
+    syncBarVisual()
+    window.requestAnimationFrame(() => {
+      bar.style.opacity = '1'
+    })
+    syncOverlayLoop()
+  }
+
+  /** 按当前语音/AI 开关刷新交互条外观（静音图标、禁用态）。 */
+  function syncBarVisual(): void {
+    if (!barMuteEl || !barInputEl) return
+    const muted = !ttsEnabled
+    barMuteEl.textContent = muted ? '🔇' : '🔊'
+    barMuteEl.setAttribute('aria-pressed', muted ? 'true' : 'false')
+    barMuteEl.title = muted ? '取消静音' : '静音'
+    const canChat = aiEnabled
+    barInputEl.disabled = !canChat
+    barInputEl.placeholder = canChat ? '跟我说句话…' : 'AI 回复未开启'
+    barInputEl.style.opacity = canChat ? '1' : '.45'
+    // 文案/宽度变了，下一帧重新测量
+    barW = 0
+    barH = 0
+    barKey = ''
+  }
+
+  /** 静音按钮：直接改设置里的 `ttsEnabled`（持久化，其它端也同步）。 */
+  async function toggleMute(): Promise<void> {
+    const next = !ttsEnabled
+    ttsEnabled = next
+    syncBarVisual()
+    try {
+      await fetch(`${PET_API}/settings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ops: [{ op: 'set', path: ['ttsEnabled'], value: next }] }),
+      })
+    } catch {
+      // 写失败不弹错：SSE 回来的真实配置会把状态纠回去
+    }
+  }
+
+  /** 交互条输入框回车：把这句话交给模型（人设 + 场景 + 历史），回复照常走气泡/语音。 */
+  async function sendChat(): Promise<void> {
+    const input = barInputEl
+    if (!input) return
+    const text = input.value.trim()
+    if (text.length === 0) return
+    if (!aiEnabled) return
+    input.value = ''
+    if (ttsEnabled) ensureAudio()
+    await requestSpeak({ kind: 'chat', text })
+  }
+
+  /** 交互条定位：贴模型包围盒上方或下方居中（视口内横向夹取）。 */
+  function updateBarPosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
+    if (!barEl || !petLayer) return
+    const bounds = boundsArg === undefined ? modelBounds() : boundsArg
+    if (!bounds) return
+    if (barW === 0 || barH === 0) {
+      barW = barEl.offsetWidth
+      barH = barEl.offsetHeight
+    }
+    const rect = layerRect()
+    const viewportW = window.innerWidth || document.documentElement.clientWidth
+    let left = bounds.x + bounds.width / 2 - barW / 2
+    const layerLeft = rect ? rect.left : 0
+    // 别跑出视口左边/右边
+    left = Math.max(left, 8 - layerLeft)
+    left = Math.min(left, viewportW - 8 - barW - layerLeft)
+    const top = barPosition === 'top'
+      ? bounds.y - barH - 8
+      : bounds.y + bounds.height + 8
+    barEl.style.left = `${Math.round(left)}px`
+    barEl.style.top = `${Math.round(top)}px`
   }
 
   /** 显示常驻气泡文案：取消瞬态隐藏计时，气泡保持可见直到被取代。 */
@@ -1375,6 +1539,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       petLayer.appendChild(hitLayer)
       // 气泡改为相对 petLayer 定位，避免调试面板插入后把气泡顶到面板上方
       if (bubble && bubble.parentNode !== petLayer) petLayer.appendChild(bubble)
+      buildBar()
       // 调试面板是 petLayer 内的绝对定位浮层（不占布局，重新挂到新画布层）
       if (debugEl) petLayer.appendChild(debugEl)
       box.appendChild(petLayer)
@@ -1507,6 +1672,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     layerRectCache = null
     panelSizeCache = null
     canvasRectCache = null
+    // 交互条的位置依赖层矩形与尺寸缓存，一并失效，下一帧重排
+    barKey = ''
+    barW = 0
+    barH = 0
   }
 
   /** 浮层循环的帧间隔（跟随 settings.maxFps；0 = 不限，按 rAF 自然节奏）。 */
@@ -1534,6 +1703,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     updateDebugPanelPosition(bounds)
     updateBubblePosition(bounds)
+    // 交互条只在包围盒/位置/尺寸变化时重排，静止时整帧跳过
+    if (barEl) {
+      const barSig = `${key}|${barPosition}|${pos.size}|${barW}x${barH}`
+      if (barSig !== barKey) {
+        barKey = barSig
+        updateBarPosition(bounds)
+      }
+    }
     if (touchboxOverlayVisible()) paintTouchBoxes(bounds, key)
   }
 
@@ -2170,6 +2347,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     aiTouchOnly = cfg.aiTouchOnly === true
     aiTakeover = cfg.aiTakeover === true
     ttsEnabled = cfg.ttsEnabled !== false
+    barPosition = normalizeBarPosition(cfg.barPosition, DEFAULT_BAR_POSITION)
+    if (barEl) {
+      barKey = ''
+      syncBarVisual()
+    }
     lipsyncEnabled = cfg.lipsyncEnabled !== false
     lipsyncGain = Number.isFinite(cfg.lipsyncGain) ? cfg.lipsyncGain! : DEFAULT_SETTINGS.lipsyncGain
     interactionMode = normalizeInteractionMode(cfg.interactionMode, interactionMode)
@@ -2252,7 +2434,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 连点时只采用最新一次请求的结果（`aiRequestSeq`）。
    */
   async function requestAiReply(
-    input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
     options?: { sticky?: boolean; ignoreCooldown?: boolean },
   ): Promise<string | null> {
     if (!aiEnabled) return null
@@ -2286,7 +2468,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 口型吃同一段音频的波形。语音关闭或一句都没出来时回落到一次性的 {@link requestAiReply}。
    */
   async function requestSpeak(
-    input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
     options?: { sticky?: boolean },
   ): Promise<string | null> {
     if (!aiEnabled) return null
@@ -2465,6 +2647,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         aiTouchOnly = view.config.aiTouchOnly === true
         aiTakeover = view.config.aiTakeover === true
         ttsEnabled = view.config.ttsEnabled !== false
+        barPosition = normalizeBarPosition(view.config.barPosition, DEFAULT_BAR_POSITION)
         lipsyncEnabled = view.config.lipsyncEnabled !== false
         lipsyncGain = Number.isFinite(view.config.lipsyncGain)
           ? view.config.lipsyncGain!
@@ -2484,6 +2667,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (popoverSupported) box.setAttribute('popover', 'manual')
       document.body.appendChild(box)
       if (popoverSupported) { try { box.showPopover() } catch { /* 已显示 */ } }
+      pushCleanup(() => {
+        barEl?.parentNode?.removeChild(barEl)
+        barEl = null
+        barMuteEl = null
+        barInputEl = null
+      })
       pushCleanup(() => { box?.parentNode?.removeChild(box) })
       clientLog('info', `container created (popover=${String(popoverSupported)})`)
 

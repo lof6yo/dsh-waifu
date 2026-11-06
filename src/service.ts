@@ -63,6 +63,8 @@ export interface PetStateView {
     aiTouchOnly: boolean
     aiTakeover: boolean
     interactionMode: string
+    /** 交互条位置：`top` | `bottom`。 */
+    barPosition: string
     /** AI 回复用的 provider 路由与模型 id（设置页下拉选中的值，快照透传给宠物半边）。 */
     aiProvider: string
     aiModel: string
@@ -242,6 +244,7 @@ export class PetService {
         aiTouchOnly: settings.aiTouchOnly,
         aiTakeover: settings.aiTakeover,
         interactionMode: settings.interactionMode,
+        barPosition: settings.barPosition,
         aiProvider: settings.aiProvider,
         aiModel: settings.aiModel,
         aiHistoryCount: settings.aiHistoryCount,

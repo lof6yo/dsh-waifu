@@ -132,6 +132,16 @@ export const INTERACTION_MODES = ['mutual', 'touch-first', 'event-first'] as con
 export type InteractionMode = (typeof INTERACTION_MODES)[number]
 export const DEFAULT_INTERACTION_MODE: InteractionMode = 'touch-first'
 
+/** 交互条（模型上方/下方的静音按钮 + 对话输入框）的位置：上方 `top` / 下方 `bottom`。 */
+export const BAR_POSITIONS = ['top', 'bottom'] as const
+export type BarPosition = (typeof BAR_POSITIONS)[number]
+export const DEFAULT_BAR_POSITION: BarPosition = 'bottom'
+
+/** 归一化交互条位置：未知值回退默认。 */
+export function normalizeBarPosition(value: unknown, fallback: BarPosition): BarPosition {
+  return BAR_POSITIONS.includes(value as BarPosition) ? (value as BarPosition) : fallback
+}
+
 /** 归一化打断优先级：未知值回退默认。 */
 export function normalizeInteractionMode(value: unknown, fallback: InteractionMode): InteractionMode {
   return INTERACTION_MODES.includes(value as InteractionMode) ? (value as InteractionMode) : fallback
@@ -166,6 +176,8 @@ export const DEFAULT_SETTINGS = {
   aiModel: DEFAULT_AI_MODEL,
   aiHistoryCount: DEFAULT_AI_HISTORY,
   interactionMode: DEFAULT_INTERACTION_MODE,
+  /** 交互条：模型上下的静音按钮 + 对话输入框。 */
+  barPosition: DEFAULT_BAR_POSITION,
   ttsEnabled: DEFAULT_TTS_ENABLED,
   ttsEngine: DEFAULT_TTS_ENGINE,
   ttsModel: DEFAULT_TTS_MODEL,

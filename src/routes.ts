@@ -237,7 +237,7 @@ export interface AiRoutesApi {
 
 /** AI 回复 API（ADR-025）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
 export interface InteractRoutesApi {
-  reply(input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string }): Promise<{
+  reply(input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string }): Promise<{
     ok: boolean
     text?: string
     error?: string
@@ -253,7 +253,7 @@ export interface SpeakRoutesApi {
    * @param signal - 连接断开时中止合成。
    */
   stream(
-    input: { kind: 'tap' | 'state'; part?: string; state?: string; hint?: string },
+    input: { kind: 'tap' | 'state' | 'chat'; part?: string; state?: string; hint?: string; text?: string },
     emit: (event: 'text' | 'clause' | 'audio' | 'done' | 'error', data: unknown) => void,
     signal: AbortSignal,
   ): Promise<void>
@@ -348,11 +348,12 @@ export function makePetRoutes(deps: {
     ] : []),
     // AI 回复（ADR-025）：客户端上报「戳了哪里 / 变成什么状态」，Host 用 ctx.llm 生成一句台词
     ...(ai ? [postRoute(`${PET_API_PREFIX}/interact`, (body) => {
-      const kind = body.kind === 'state' ? 'state' as const : 'tap' as const
+      const kind = body.kind === 'state' ? 'state' as const : body.kind === 'chat' ? 'chat' as const : 'tap' as const
       const part = typeof body.part === 'string' ? body.part.slice(0, 40) : undefined
       const state = typeof body.state === 'string' ? body.state.slice(0, 20) : undefined
       const hint = typeof body.hint === 'string' ? body.hint.slice(0, 120) : undefined
-      return ai.reply({ kind, part, state, hint })
+      const text = typeof body.text === 'string' ? body.text.slice(0, 200) : undefined
+      return ai.reply({ kind, part, state, hint, text })
     })] : []),
     // 流式演绎（ADR-033）：SSE 下发 text / clause / audio / done / error，
     // 客户端按 clause 显示气泡、按 audio 播放并用同一段音频驱动口型。
@@ -367,10 +368,11 @@ export function makePetRoutes(deps: {
         readJsonBody(req).then((body) => {
           const record = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {}
           const input = {
-            kind: record.kind === 'state' ? 'state' as const : 'tap' as const,
+            kind: record.kind === 'state' ? 'state' as const : record.kind === 'chat' ? 'chat' as const : 'tap' as const,
             part: typeof record.part === 'string' ? record.part.slice(0, 40) : undefined,
             state: typeof record.state === 'string' ? record.state.slice(0, 20) : undefined,
             hint: typeof record.hint === 'string' ? record.hint.slice(0, 120) : undefined,
+            text: typeof record.text === 'string' ? record.text.slice(0, 200) : undefined,
           }
           res.writeHead(200, {
             'content-type': 'text/event-stream; charset=utf-8',

@@ -16,10 +16,12 @@ import { petHomeDir, fileStamp } from './home.ts'
 import { clampInt } from './clamp.ts'
 import {
   AI_HISTORY_LIMITS,
+  normalizeBarPosition,
   normalizeInteractionMode,
   normalizeLipsyncGain,
   ttsModelOption,
   ttsModelRandomVoice,
+  type BarPosition,
   type InteractionMode,
 } from './defaults.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
@@ -79,6 +81,8 @@ export interface PetSettings {
   aiHistoryCount: number
   /** 打断优先级：触摸互动与状态事件谁先占气泡/动作/AI 演绎（ADR-032）。 */
   interactionMode: InteractionMode
+  /** 交互条位置（模型上方 / 下方）。 */
+  barPosition: BarPosition
   /** 长状态「思考」的 AI 演绎节奏：入态后延迟多久开始（秒，0–120）。 */
   thinkingAiDelay: number
   /** 「思考」的演绎间隔（秒，5–600）。 */
@@ -247,6 +251,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     aiModel: pickString(record.aiModel) ?? base.aiModel,
     aiHistoryCount: clampInt(record.aiHistoryCount, base.aiHistoryCount, AI_HISTORY_LIMITS.min, AI_HISTORY_LIMITS.max),
     interactionMode: normalizeInteractionMode(record.interactionMode, base.interactionMode),
+    barPosition: normalizeBarPosition(record.barPosition, base.barPosition),
     thinkingAiDelay: clampInt(record.thinkingAiDelay, base.thinkingAiDelay, LONG_AI_LIMITS.delay.min, LONG_AI_LIMITS.delay.max),
     thinkingAiInterval: clampInt(record.thinkingAiInterval, base.thinkingAiInterval, LONG_AI_LIMITS.interval.min, LONG_AI_LIMITS.interval.max),
     thinkingAiMax: clampInt(record.thinkingAiMax, base.thinkingAiMax, LONG_AI_LIMITS.max.min, LONG_AI_LIMITS.max.max),
