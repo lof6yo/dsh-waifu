@@ -2368,8 +2368,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** 刷新表情目标值（状态/触摸/调试预览变化时调用）。 */
   function refreshExpressionTargets(): void {
-    expressionTargets = expressionParams(desiredExpressions())
+    const ids = desiredExpressions()
+    expressionTargets = expressionParams(ids)
     expressionSettled = false
+    // 诊断：表情每次切换都留痕，排查「表情不生效」时看 ~/.dsh/waifu/client.log
+    clientLog('info', 'expr targets', `${ids.join('+') || 'none'} ${JSON.stringify(expressionTargets)}`)
   }
 
   /**
@@ -2396,14 +2399,22 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (Math.abs(target - current) < 0.004) {
         if (current !== target) {
           expressionMix.set(param, target)
-          try { set.call(coreModel, param, target, 1) } catch { /* 模型没有该参数 */ }
+          try {
+            set.call(coreModel, param, target, 1)
+          } catch (error) {
+            clientLog('warn', 'expr set failed', `${param}: ${String(error)}`)
+          }
         }
         continue
       }
       settled = false
       const next = current + (target - current) * fade
       expressionMix.set(param, next)
-      try { set.call(coreModel, param, next, 1) } catch { /* 模型没有该参数 */ }
+      try {
+        set.call(coreModel, param, next, 1)
+      } catch (error) {
+        clientLog('warn', 'expr set failed', `${param}: ${String(error)}`)
+      }
     }
     expressionSettled = settled
   }
@@ -2760,6 +2771,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (!list || list.length === 0) return
     tempExpressions = [...list]
     tempExpressionUntil = Date.now() + EMOTION_HOLD_MS
+    clientLog('info', 'emotion', `${String(emotion)} → ${list.join('+')}`)
     refreshExpressionTargets()
   }
 
