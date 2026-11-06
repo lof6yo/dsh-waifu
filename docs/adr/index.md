@@ -47,3 +47,4 @@
 | 039 | [历史注入改短句、DSH 事件文案可配置](./039-compact-history-and-event-texts.md) | 已采纳 |
 | 040 | [动作/表情的「给模型的释义」可在设置页编辑](./040-editable-motion-expression-prompts.md) | 已采纳 |
 | 041 | [演出手势（动作 / 表情）期间暂停鼠标跟随](./041-pause-focus-during-performance.md) | 已采纳 |
+| 042 | [只在标签页隐藏时暂停渲染](./042-pause-render-only-when-hidden.md) | 已采纳 |

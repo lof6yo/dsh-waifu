@@ -615,7 +615,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let maxFps = DEFAULT_MAX_FPS
   // 渲染开关：插件 enabled（配置）与页面可见性（spec §7）共同决定 ticker 是否运行
   let enabled = true
-  let hidden = document.visibilityState !== 'visible'
+  /** 标签页/窗口是否可见（spec §7：只有它影响渲染循环）。 */
+  let hidden = document.visibilityState === 'hidden'
+  /** 浏览器窗口是否有焦点：只影响鼠标跟随，不停渲染（用户可在别处时也让角色动）。 */
+  let windowFocused = document.hasFocus()
 
   /** 宠物是否应可见/渲染：插件开启，或设置页正在编辑触摸部位（编辑态强制显示，spec §4）。 */
   function petShown(): boolean {
@@ -1254,7 +1257,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 动作与表情可能同时进行：任一方还在演就先别恢复跟随
     if (interactionActive || expressionHoldActive()) return
     focusSuppressed = false
-    if (model && lastPointerClient && !dragging && enabled && !hidden) {
+    if (model && lastPointerClient && !dragging && enabled && !hidden && windowFocused) {
       applyFocus(lastPointerClient.x, lastPointerClient.y)
     }
   }
@@ -2634,7 +2637,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function handleGlobalPointerMove(e: PointerEvent): void {
     lastPointerClient = { x: e.clientX, y: e.clientY }
     // 非 idle 动作播放期间抑制 focus，避免动作关键帧被鼠标跟随叠加（spec §4）
-    if (!model || !canvas || dragging || !petShown() || hidden || focusSuppressed) return
+    if (!model || !canvas || dragging || !petShown() || hidden || !windowFocused || focusSuppressed) return
     applyFocus(e.clientX, e.clientY)
   }
   function handleGlobalMouseOut(e: MouseEvent): void {
@@ -2988,9 +2991,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         // EventSource 不可用：保留首帧快照（静态宠物），不再更新
       }
       // 标签页隐藏/窗口失焦 → 暂停渲染循环；恢复时继续（spec §7）
-      const onVisibility = () => { hidden = document.visibilityState !== 'visible'; syncTicker() }
-      const onBlur = () => { hidden = true; syncTicker() }
-      const onFocus = () => { hidden = false; syncTicker() }
+      const onVisibility = () => { hidden = document.visibilityState === 'hidden'; syncTicker() }
+      // 窗口失焦不再停渲染（ADR-042）：用户点到别处时角色继续动，只有标签页隐藏/最小化才暂停
+      const onBlur = () => { windowFocused = false }
+      const onFocus = () => { windowFocused = true }
       // 视口尺寸变化：重新 clamp 画布中心点并刷新面板/气泡（不写盘，spec §2/§4）
       const onResize = () => {
         invalidateLayout()
