@@ -2398,14 +2398,13 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             const enabled = normalizeEventTriggers(value.eventTriggers)[event] !== false
             const custom = normalizeEventTexts(value.eventTexts)[event] ?? ''
             const open = openScenes[event] === true
-            const preview = custom.trim() !== '' ? custom.trim() : (DEFAULT_EVENT_TEXTS[event] ?? event)
             return createElement('div', {
               key: `trigger-${event}`,
               style: { display: 'flex', flexDirection: 'column', paddingBottom: GAP.xs },
             },
               createElement('div', { style: foldHeadStyle },
                 createElement('label', {
-                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap', cursor: 'pointer' },
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, flex: '1 1 auto', minWidth: 0, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap', cursor: 'pointer' },
                 },
                   createElement('input', {
                     type: 'checkbox',
@@ -2422,20 +2421,27 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 createElement(FoldToggle, { open, disabled: !writable, onClick: () => setOpenScenes((prev) => ({ ...prev, [event]: !open })) }),
               ),
               open && createElement('div', { style: foldBodyStyle },
-                createElement('input', {
-                  type: 'text',
+                createElement('textarea', {
+                  rows: 2,
                   value: custom,
-                  placeholder: `内置：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
+                  placeholder: `留空用内置文案：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
                   maxLength: EVENT_TEXT_MAX,
                   disabled: !writable,
-                  style: { ...inputStyle, width: '100%', height: 28, fontSize: 12 },
-                  onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                  style: {
+                    ...textareaStyle,
+                    height: 46,
+                    minHeight: 46,
+                    maxHeight: 46,
+                    width: '100%',
+                    fontSize: 12,
+                    lineHeight: 1.45,
+                    resize: 'none',
+                  },
+                  onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
                     const next = e.target.value
                     enqueueWrite(() => [{ op: 'set', path: ['eventTexts', event], value: next }])
                   },
                 }),
-                createElement('div', { style: { fontSize: 11, color: C.textSecondary, lineHeight: 1.6, wordBreak: 'break-all' } },
-                  `prompt 预览：${preview}`),
               ),
             )
           }),
