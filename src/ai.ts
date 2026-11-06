@@ -97,8 +97,10 @@ export interface ReplyContext {
   kind: 'tap' | 'event' | 'chat' | 'idle'
   /** 触摸部位的中文名（`kind: 'tap'`）。 */
   part?: string
-  /** 触摸类型（`kind: 'tap'`；轻碰/戳戳/抚摸）。 */
+  /** 触摸类型（`kind: 'tap'`；轻碰/戳戳/抚摸）。部位没配自定义交互时的兜底描述。 */
   tapKind?: TapKind
+  /** 部位自定义交互名（ADR-038，如「抚摸」「捏脸」）；有值时以它为准，`tapKind` 不再进场景句。 */
+  interaction?: string
   /** 触摸按住时长（ms，`kind: 'tap'`）。 */
   durationMs?: number
   /** 用户输入的原话（`kind: 'chat'`，已单行化并截断）。 */
@@ -343,10 +345,11 @@ export function buildSceneMessage(context: ReplyContext): string {
     const said = (context.text ?? '').replace(/\s+/g, ' ').trim()
     where = `主人刚对你说「${said || '（没说话）'}」`
   } else if (context.kind === 'tap') {
-    const tapKind = context.tapKind ?? 'poke'
-    const verb = TAP_KIND_SCENES[tapKind]
     const duration = context.durationMs !== undefined ? `，按了约 ${(context.durationMs / 1000).toFixed(1)} 秒` : ''
-    where = `主人${verb}你的「${context.part || '身体'}」${duration}`
+    // ADR-038：部位自定义交互名优先（用户起的名就是语义），没有才回落到时长三档
+    const custom = (context.interaction ?? '').trim().slice(0, 20)
+    const action = custom || TAP_KIND_SCENES[context.tapKind ?? 'poke']
+    where = `主人${action}你的「${context.part || '身体'}」${duration}`
   } else if (context.kind === 'idle') {
     where = '有一阵子没人理你，也没发生什么事'
   } else {
@@ -515,7 +518,9 @@ ${expressionLines}
 2. 台词不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
 3. 如果这轮有值得长期记住的事（主人的习惯、约定、你的小心愿），在台词后面另起一行写「[记] 内容」，
    十几个字以内，用第三人称记录（例如「[记] 主人半夜还在赶工」）。没有就别写。
-4. 每次换个角度反应，不要重复上一次的说法。`
+4. 每次换个角度反应，不要重复上一次的说法。
+5. 场景里写「主人<某个动作>了你的「<部位>」」时，那个动作是主人**自己给这个部位起的交互名**（比如「抚摸」「捏脸」「弹一下」），
+   按字面理解它的意思和亲密程度来演，不要把它当成动作 id，也不要复述这个词。`
 }
 
 /** 采样参数：两个入口共用（台词要短、要活，temperature 拉满）。 */

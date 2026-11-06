@@ -211,10 +211,47 @@ export interface TouchBox {
  * 名字用于向模型描述「主人碰了你哪里」，box 只做命中判定；反应交给 AI。
  * 图层：parts 数组顺序即图层顺序，**第 0 项为最上层**，box 重叠时上层部位生效。
  */
+/** 交互触发条件（ADR-038）：单击 / 双击 / 按住停留。 */
+export type InteractionTrigger = 'tap' | 'double' | 'hold'
+
+/** 全部触发条件（设置页下拉顺序）。 */
+export const INTERACTION_TRIGGERS: readonly InteractionTrigger[] = ['tap', 'double', 'hold']
+
+/** 触发条件的中文名。 */
+export const INTERACTION_TRIGGER_LABELS: Record<InteractionTrigger, string> = {
+  tap: '单击',
+  double: '双击',
+  hold: '停留',
+}
+
+/** 单个部位最多交互数（防止配置失控；设置页同步限制）。 */
+export const MAX_INTERACTIONS_PER_PART = 8
+/** 交互名最大长度（更长的截断）。 */
+export const INTERACTION_NAME_MAX = 20
+/** 「停留」默认时长与允许范围（ms）。 */
+export const TOUCH_HOLD_DEFAULT_MS = 3000
+export const TOUCH_HOLD_LIMITS = { min: 300, max: 10000 } as const
+/** 双击判定窗口（ms）：两次点击间隔小于它算双击。 */
+export const DOUBLE_TAP_MS = 300
+
+/**
+ * 部位自定义交互（ADR-038）：用户给一个名字 + 一个触发条件，
+ * 名字原样透传给模型（模型按字面理解「抚摸」「捏脸」这类语义）。
+ */
+export interface TouchInteraction {
+  id: string
+  name: string
+  trigger: InteractionTrigger
+  /** 仅 `hold` 有意义：按住多久算「停留」（ms）。 */
+  holdMs: number
+}
+
 export interface TouchPart {
   id: string
   name: string
   boxes: TouchBox[]
+  /** 自定义交互；空/缺省 = 回落内建的轻碰/戳戳/抚摸三档。 */
+  interactions?: TouchInteraction[]
 }
 
 /** 无默认触摸部位时的空表（用户未创建部位 → 点击不触发互动）。 */
@@ -257,6 +294,62 @@ export function normalizeTouchBox(raw: unknown): TouchBox | null {
  * 归一化部位列表：丢弃非法条目、限制 box 数量、去重 id。
  * 旧文件里的 `motions` / `lines` 字段（ADR-037 前的部位绑定）直接忽略。
  */
+/** 归一化一个部位的交互列表：丢空名、去重（同名同触发条件）、夹时长、限量。 */
+export function normalizeInteractions(raw: unknown): TouchInteraction[] {
+  if (!Array.isArray(raw)) return []
+  const out: TouchInteraction[] = []
+  const seen = new Set<string>()
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const record = entry as Record<string, unknown>
+    const name = typeof record.name === 'string' ? record.name.trim().slice(0, INTERACTION_NAME_MAX) : ''
+    if (!name) continue
+    const trigger = INTERACTION_TRIGGERS.includes(record.trigger as InteractionTrigger)
+      ? (record.trigger as InteractionTrigger)
+      : 'tap'
+    const key = `${trigger}:${name}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const rawHold = Number(record.holdMs)
+    const holdMs = Number.isFinite(rawHold)
+      ? Math.round(Math.min(TOUCH_HOLD_LIMITS.max, Math.max(TOUCH_HOLD_LIMITS.min, rawHold)))
+      : TOUCH_HOLD_DEFAULT_MS
+    out.push({ id: `i${out.length + 1}`, name, trigger, holdMs })
+    if (out.length >= MAX_INTERACTIONS_PER_PART) break
+  }
+  return out
+}
+
+/** 该部位是否定义了双击交互（决定单击要不要等 300ms 判双）。 */
+export function hasDoubleInteraction(part: TouchPart): boolean {
+  return (part.interactions ?? []).some((item) => item.trigger === 'double')
+}
+
+/**
+ * 按按压时长与连击数挑一个交互（ADR-038）：
+ * 1. 停留类优先（时长 ≥ 该交互的 holdMs，取最长的那个）；
+ * 2. 连击 ≥ 2 且定义了双击 → 双击；
+ * 3. 否则单击交互；
+ * 4. 都没有返回 undefined（调用方回落内建轻碰/戳戳/抚摸）。
+ */
+export function pickInteraction(
+  part: TouchPart,
+  durationMs: number,
+  clickCount: number,
+): TouchInteraction | undefined {
+  const list = part.interactions ?? []
+  if (list.length === 0) return undefined
+  const holds = list
+    .filter((item) => item.trigger === 'hold' && durationMs >= item.holdMs)
+    .sort((a, b) => b.holdMs - a.holdMs)
+  if (holds.length > 0) return holds[0]
+  if (clickCount >= 2) {
+    const double = list.find((item) => item.trigger === 'double')
+    if (double) return double
+  }
+  return list.find((item) => item.trigger === 'tap')
+}
+
 export function normalizeTouchParts(raw: unknown): TouchPart[] {
   if (!Array.isArray(raw)) return []
   const seen = new Set<string>()
@@ -279,7 +372,8 @@ export function normalizeTouchParts(raw: unknown): TouchPart[] {
       if (boxes.length >= MAX_BOXES_PER_PART) break
     }
     seen.add(id)
-    out.push({ id, name, boxes })
+    const interactions = normalizeInteractions(record.interactions)
+    out.push(interactions.length > 0 ? { id, name, boxes, interactions } : { id, name, boxes })
   }
   return out
 }

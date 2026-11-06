@@ -34,7 +34,9 @@ export interface TouchPartsFileView {
 const TOUCH_PARTS_HEADER = `// 触摸部位配置文件（插件私有，JSONC 支持注释）。
 // 路径：$DSH_HOME/waifu/touch-parts.jsonc
 // 建议通过设置页「触摸部位」编辑；直接编辑后刷新页面即可生效。
-// 结构：models[<模型 id>].parts[] = { id, name, boxes[{left,top,right,bottom}] }
+// 结构：models[<模型 id>].parts[] = { id, name, boxes[{left,top,right,bottom}],
+//        interactions?: [{ name, trigger: tap|double|hold, holdMs }] }
+// interactions 的名字由你自己起（ADR-038），会原样告诉模型；留空则用内置轻碰/戳戳/抚摸三档。
 // left/top/right/bottom 为相对模型包围盒的 0–1 归一化坐标（左上右下）。
 // 部位不再携带台词/动作（ADR-037）：角色反应全部由 AI 驱动，这里只管命中判定。`
 

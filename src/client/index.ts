@@ -28,7 +28,7 @@ import type { ReactNode } from 'react'
 import type { PetState, PetStateView } from '../service.ts'
 import { PetSettingsSection } from './settings.ts'
 import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
-import { stripTimestamps } from '../models.ts'
+import { stripTimestamps, hasDoubleInteraction, pickInteraction, DOUBLE_TAP_MS } from '../models.ts'
 import { clientLog } from './client-log.ts'
 import {
   EXPRESSIONS,
@@ -278,6 +278,8 @@ interface TriggerBody {
   kind: 'tap' | 'event' | 'chat' | 'idle'
   part?: string
   tapKind?: 'light' | 'poke' | 'stroke'
+  /** 部位自定义交互名（ADR-038）；有值时场景句用它，不用 tapKind。 */
+  interaction?: string
   durationMs?: number
   event?: string
   text?: string
@@ -591,6 +593,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 冷却期内被挡下的触摸：到点再补一次，让「点快了」不至于白点。 */
   let pendingTap: TriggerBody | null = null
   let pendingTapTimer: number | undefined
+  /** 部位定义了双击交互时，单击要等一个双击窗口再结算（ADR-038）。 */
+  let pendingDoublePart: { id: string; timer: number; flush: () => void } | null = null
   // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
   let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
@@ -1070,6 +1074,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   function clearPendingTap(): void {
+    if (pendingDoublePart) {
+      window.clearTimeout(pendingDoublePart.timer)
+      pendingDoublePart = null
+    }
     pendingTap = null
     if (pendingTapTimer !== undefined) {
       window.clearTimeout(pendingTapTimer)
@@ -2694,17 +2702,44 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 命中最小 box 优先。
       const part = hitTestTouchParts(editState?.parts ?? touchParts, ratio.nx, ratio.ny)
       if (!part) return
-      // 触摸类型（ADR-037）：按压时长决定 轻碰(<250ms) / 戳戳(250–900ms) / 抚摸(≥900ms)。
+      // 触摸交互（ADR-038）：部位自定义交互优先，没配则回落到时长三档（ADR-037）。
       const durationMs = tapDownAt > 0 ? Math.max(0, now - tapDownAt) : 0
-      const input: TriggerBody = {
-        kind: 'tap',
-        part: part.name,
-        tapKind: touchKindOf(durationMs),
-        durationMs,
+      const fireTap = (clickCount: number): void => {
+        const picked = pickInteraction(part, durationMs, clickCount)
+        const input: TriggerBody = {
+          kind: 'tap',
+          part: part.name,
+          tapKind: touchKindOf(durationMs),
+          durationMs,
+        }
+        if (picked) input.interaction = picked.name
+        clientLog('info', `tap | ${part.name} | ${picked ? `${picked.name}(${picked.trigger})` : input.tapKind} ${durationMs}ms`)
+        // 触摸必触发（不受事件开关/最小间隔限制），冷却由 fireTrigger 内部处理
+        fireTrigger(input)
       }
-      clientLog('info', `tap | ${part.name} | ${input.tapKind} ${durationMs}ms`)
-      // 触摸必触发（不受事件开关/最小间隔限制），冷却由 fireTrigger 内部处理
-      fireTrigger(input)
+      // 停留类交互（按住够久）与「没配双击的部位」都立即结算，保证跟手
+      const holding = pickInteraction(part, durationMs, 1)
+      if ((holding && holding.trigger === 'hold') || !hasDoubleInteraction(part)) {
+        fireTap(1)
+        return
+      }
+      // 有双击交互：第一次点击先压 300ms 看有没有第二下
+      if (pendingDoublePart) {
+        const previous = pendingDoublePart
+        window.clearTimeout(previous.timer)
+        pendingDoublePart = null
+        if (previous.id === part.id) {
+          fireTap(2)
+          return
+        }
+        // 换了部位：把上一个部位欠着的单击立刻补掉，再压这一次
+        previous.flush()
+      }
+      const timer = window.setTimeout(() => {
+        pendingDoublePart = null
+        fireTap(1)
+      }, DOUBLE_TAP_MS)
+      pendingDoublePart = { id: part.id, timer, flush: () => fireTap(1) }
     } catch {
       // 命中检测异常：忽略本次点击
     }

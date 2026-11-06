@@ -18,10 +18,16 @@ import {
   motionLabel,
   expressionLabel,
   expressionParams,
+  normalizeInteractions,
+  normalizeTouchParts,
+  pickInteraction,
+  hasDoubleInteraction,
+  MAX_INTERACTIONS_PER_PART,
+  TOUCH_HOLD_DEFAULT_MS,
+  TOUCH_HOLD_LIMITS,
   dedupeExpressions,
   hitTestTouchParts,
   normalizeTouchBox,
-  normalizeTouchParts,
   pointToBoundsRatio,
   stripTimestamps,
   type TouchPart,
@@ -251,5 +257,51 @@ describe('stripTimestamps', () => {
   it('只有时间戳时不把台词删空', () => {
     expect(stripTimestamps('[14:57]')).toBe('[14:57]')
     expect(stripTimestamps('')).toBe('')
+  })
+
+})
+
+describe('部位自定义交互（ADR-038）', () => {
+  it('归一化：去空名、去重、夹时长、限量', () => {
+    const list = normalizeInteractions([
+      { name: '抚摸', trigger: 'hold', holdMs: 20 },
+      { name: '', trigger: 'tap' },
+      { name: '抚摸', trigger: 'hold' },
+      { name: '捏脸', trigger: '什么鬼' },
+      { name: '弹一下', trigger: 'double', holdMs: 999999 },
+      ...Array.from({ length: 10 }, (_, index) => ({ name: `多余${index}`, trigger: 'tap' })),
+    ])
+    expect(list.length).toBe(MAX_INTERACTIONS_PER_PART)
+    expect(list[0]).toMatchObject({ name: '抚摸', trigger: 'hold', holdMs: TOUCH_HOLD_LIMITS.min })
+    expect(list[1]).toMatchObject({ name: '捏脸', trigger: 'tap' })
+    expect(list[2]).toMatchObject({ name: '弹一下', trigger: 'double', holdMs: TOUCH_HOLD_LIMITS.max })
+    expect(new Set(list.map((item) => item.id)).size).toBe(list.length)
+  })
+
+  it('部位归一化保留 interactions，空表不写字段', () => {
+    const parts = normalizeTouchParts([
+      { id: 'face', name: '脸', boxes: [{ left: 0.1, top: 0.1, right: 0.2, bottom: 0.2 }], interactions: [{ name: '抚摸', trigger: 'hold' }] },
+      { id: 'hip', name: '臀', boxes: [] },
+    ])
+    expect(parts[0].interactions?.[0]).toMatchObject({ name: '抚摸', trigger: 'hold', holdMs: TOUCH_HOLD_DEFAULT_MS })
+    expect(parts[1].interactions).toBeUndefined()
+  })
+
+  it('挑交互：停留优先，其次双击，再次单击', () => {
+    const part = normalizeTouchParts([{
+      id: 'face', name: '脸', boxes: [],
+      interactions: [
+        { name: '捏脸', trigger: 'tap' },
+        { name: '戳两下', trigger: 'double' },
+        { name: '抚摸', trigger: 'hold', holdMs: 3000 },
+        { name: '长按', trigger: 'hold', holdMs: 1200 },
+      ],
+    }])[0]
+    expect(pickInteraction(part, 400, 1)?.name).toBe('捏脸')
+    expect(pickInteraction(part, 400, 2)?.name).toBe('戳两下')
+    expect(pickInteraction(part, 1500, 1)?.name).toBe('长按')
+    expect(pickInteraction(part, 3200, 2)?.name).toBe('抚摸')
+    expect(hasDoubleInteraction(part)).toBe(true)
+    expect(pickInteraction(normalizeTouchParts([{ id: 'a', name: 'a', boxes: [] }])[0], 900, 1)).toBeUndefined()
   })
 })

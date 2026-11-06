@@ -97,6 +97,13 @@ describe('时区', () => {
 })
 
 describe('buildSceneMessage（ADR-037 场景描述）', () => {
+  it('部位自定义交互名优先于时长三档（ADR-038）', () => {
+    const scene = buildSceneMessage({ kind: 'tap', part: '脸', tapKind: 'poke', interaction: '抚摸', durationMs: 3200, tz: 'Asia/Shanghai' })
+    expect(scene).toContain('主人抚摸你的「脸」')
+    expect(scene).not.toContain('戳了戳')
+    expect(scene).toContain('按了约 3.2 秒')
+  })
+
   it('触摸情景按轻碰/戳戳/抚摸区分，附按压时长', () => {
     expect(buildSceneMessage({ kind: 'tap', part: '脸', tapKind: 'light' })).toContain('轻轻碰了一下你的「脸」')
     expect(buildSceneMessage({ kind: 'tap', part: '胸', tapKind: 'poke', durationMs: 400 })).toContain('戳了戳你的「胸」，按了约 0.4 秒')

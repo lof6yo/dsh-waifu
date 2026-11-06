@@ -14,11 +14,17 @@
 
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent, FocusEvent, ReactNode, ReactElement } from 'react'
-import type { TouchBox, TouchPart } from '../models.ts'
+import type { InteractionTrigger, TouchBox, TouchInteraction, TouchPart } from '../models.ts'
 import {
   ACTIVITY_EVENTS,
   ANIMATION_SLOTS,
+  INTERACTION_NAME_MAX,
+  INTERACTION_TRIGGERS,
+  INTERACTION_TRIGGER_LABELS,
   MAX_BOXES_PER_PART,
+  MAX_INTERACTIONS_PER_PART,
+  TOUCH_HOLD_DEFAULT_MS,
+  TOUCH_HOLD_LIMITS,
 } from '../models.ts'
 import {
   ACTIVITY_WINDOW_LIMITS,
@@ -182,6 +188,9 @@ function cloneTouchParts(parts: readonly TouchPart[]): TouchPart[] {
     id: part.id,
     name: part.name,
     boxes: part.boxes.map((box) => ({ ...box })),
+    ...(part.interactions && part.interactions.length > 0
+      ? { interactions: part.interactions.map((item) => ({ ...item })) }
+      : {}),
   }))
 }
 
@@ -1337,6 +1346,54 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       : { ...part, boxes: [...part.boxes, { ...DEFAULT_TOUCH_BOX }] }))
   }
 
+  const addInteraction = (partId: string): void => {
+    updateTouchPart(partId, (part) => {
+      const list = part.interactions ?? []
+      if (list.length >= MAX_INTERACTIONS_PER_PART) return part
+      const next: TouchInteraction = {
+        id: `i${Date.now().toString(36)}${list.length}`,
+        name: '新交互',
+        trigger: 'tap',
+        holdMs: TOUCH_HOLD_DEFAULT_MS,
+      }
+      return { ...part, interactions: [...list, next] }
+    })
+  }
+
+  const removeInteraction = (partId: string, interactionId: string): void => {
+    updateTouchPart(partId, (part) => {
+      const list = (part.interactions ?? []).filter((item) => item.id !== interactionId)
+      return list.length > 0 ? { ...part, interactions: list } : { ...part, interactions: undefined }
+    })
+  }
+
+  const setInteractionName = (partId: string, interactionId: string, raw: string): void => {
+    updateTouchPart(partId, (part) => ({
+      ...part,
+      interactions: (part.interactions ?? []).map((item) =>
+        (item.id === interactionId ? { ...item, name: raw.slice(0, INTERACTION_NAME_MAX) } : item)),
+    }))
+  }
+
+  const setInteractionTrigger = (partId: string, interactionId: string, trigger: InteractionTrigger): void => {
+    updateTouchPart(partId, (part) => ({
+      ...part,
+      interactions: (part.interactions ?? []).map((item) =>
+        (item.id === interactionId ? { ...item, trigger } : item)),
+    }))
+  }
+
+  const setInteractionHoldMs = (partId: string, interactionId: string, raw: string): void => {
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed)) return
+    const holdMs = Math.round(Math.min(TOUCH_HOLD_LIMITS.max, Math.max(TOUCH_HOLD_LIMITS.min, parsed)))
+    updateTouchPart(partId, (part) => ({
+      ...part,
+      interactions: (part.interactions ?? []).map((item) =>
+        (item.id === interactionId ? { ...item, holdMs } : item)),
+    }))
+  }
+
   const removeBox = (partId: string, boxIndex: number): void => {
     updateTouchPart(partId, (part) => ({ ...part, boxes: part.boxes.filter((_box, index) => index !== boxIndex) }))
   }
@@ -1473,6 +1530,69 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           disabled: readOnly || part.boxes.length >= MAX_BOXES_PER_PART,
           onClick: () => addBox(part.id),
         }, part.boxes.length >= MAX_BOXES_PER_PART ? `box 已达上限（${MAX_BOXES_PER_PART}）` : '+ 添加 box'),
+        // 交互（ADR-038）：名字原样透传给模型，触发条件决定什么时候算这一次交互
+        createElement('div', { key: 'interactions', style: { marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 } },
+          createElement(FormLabel, {
+            title: '交互',
+            hint: '名字自己起（会原样告诉模型，比如「抚摸」「捏脸」）；留空则用内置的轻碰 / 戳戳 / 抚摸三档',
+          }),
+          (part.interactions ?? []).length === 0
+            ? createElement('div', { style: hintStyle }, '还没有交互，点「+ 添加交互」造一个。')
+            : (part.interactions ?? []).map((item) => createElement('div', {
+              key: item.id,
+              style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+            },
+              createElement('input', {
+                type: 'text',
+                maxLength: INTERACTION_NAME_MAX,
+                'aria-label': '交互名',
+                placeholder: '抚摸',
+                value: item.name,
+                disabled: readOnly,
+                style: { ...inputStyle, width: 140 },
+                onChange: (e: ChangeEvent<HTMLInputElement>) => setInteractionName(part.id, item.id, e.target.value),
+              }),
+              createElement('select', {
+                value: item.trigger,
+                disabled: readOnly,
+                style: { ...selectStyle, width: 108 },
+                onChange: (e: ChangeEvent<HTMLSelectElement>) => setInteractionTrigger(part.id, item.id, e.target.value as InteractionTrigger),
+              }, INTERACTION_TRIGGERS.map((trigger) => createElement('option', { key: trigger, value: trigger },
+                trigger === 'hold' ? '停留' : INTERACTION_TRIGGER_LABELS[trigger]))),
+              item.trigger === 'hold'
+                ? createElement('input', {
+                  type: 'number',
+                  'aria-label': '停留时长（毫秒）',
+                  min: TOUCH_HOLD_LIMITS.min,
+                  max: TOUCH_HOLD_LIMITS.max,
+                  step: 100,
+                  value: item.holdMs,
+                  disabled: readOnly,
+                  style: { ...numberInputStyle, width: 92 },
+                  onChange: (e: ChangeEvent<HTMLInputElement>) => setInteractionHoldMs(part.id, item.id, e.target.value),
+                })
+                : null,
+              item.trigger === 'hold'
+                ? createElement('span', { style: { fontSize: 12, color: C.textSecondary } }, 'ms')
+                : null,
+              createElement('button', {
+                type: 'button',
+                className: 'dsh-btn dsh-btn-danger',
+                style: deleteBoxButtonStyle,
+                disabled: readOnly,
+                onClick: () => removeInteraction(part.id, item.id),
+              }, '删除'),
+            )),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-btn dsh-btn-secondary',
+            style: { ...buttonSecondaryStyle, alignSelf: 'flex-start' },
+            disabled: readOnly || (part.interactions ?? []).length >= MAX_INTERACTIONS_PER_PART,
+            onClick: () => addInteraction(part.id),
+          }, (part.interactions ?? []).length >= MAX_INTERACTIONS_PER_PART
+            ? `交互已达上限（${MAX_INTERACTIONS_PER_PART}）`
+            : '+ 添加交互'),
+        ),
       ),
     )
   }
