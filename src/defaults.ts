@@ -73,6 +73,26 @@ export type EventTriggers = Record<string, boolean>
 /** 可触发场景目录（设置页勾选；`idle` 是静息态不算触发键）。 */
 export const TRIGGER_EVENTS: readonly PetEventKey[] = [...ANIMATION_SLOTS.slice(1), ...ACTIVITY_EVENTS]
 
+/** 触发场景中文名（设置页开关列表与调试面板场景演示共用）。 */
+export const TRIGGER_EVENT_LABELS: Readonly<Record<string, string>> = {
+  thinking: '思考中',
+  error: '出错',
+  done: '完成',
+  delivered: '交付成果',
+  waiting: '等确认',
+  'tool-read': '工具·读取',
+  'tool-write': '工具·写入',
+  'tool-run': '工具·执行命令',
+  'tool-agent': '工具·派出子代理',
+  'tool-other': '工具·其他',
+  'approval-granted': '审批·通过',
+  'approval-denied': '审批·拒绝',
+  'session-open': '会话·开启',
+  'session-close': '会话·结束',
+  'subagent-start': '子代理·出发',
+  'subagent-end': '子代理·归来',
+}
+
 /** 默认全部场景可触发（Record 形式持久化在 settings.jsonc）。 */
 export function defaultEventTriggers(): Record<string, boolean> {
   const out: Record<string, boolean> = {}

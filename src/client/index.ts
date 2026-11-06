@@ -64,6 +64,8 @@ import {
   type BarPosition,
   DEFAULT_TRIGGER_MODE,
   normalizeTriggerMode,
+  TRIGGER_EVENTS,
+  TRIGGER_EVENT_LABELS,
   type TriggerMode,
 } from '../defaults.ts'
 import { onTouchEdit, type TouchEditState } from './touch-edit.ts'
@@ -476,7 +478,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 按模型 URL 缓存原生动画列表，避免重复请求同一份 .model3.json。 */
   const motionListCache = new Map<string, DebugMotionItem[]>()
   let debugMotionSelect: HTMLSelectElement | null = null
-  /** 调试面板状态文本容器：与演示按钮/动画预览并列，避免被 textContent 覆盖。 */
+  /** 调试面板状态文本容器：与场景演示/动画预览并列，避免被 textContent 覆盖。 */
   let debugTextEl: HTMLDivElement | null = null
   /** 是否正处于 debug 原生动画预览：预览期间抑制 focus，结束后只恢复跟随，不触发状态恢复。 */
   let previewActive = false
@@ -563,7 +565,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 气泡当前是否可见（用于判断一次新的显示是否要重新起算最长时长）。 */
   let bubbleVisible = false
   let lastState: PetState | null = null
-  let demoState: PetState | null = null
   let view: PetStateView | null = null
   let pos: DisplayLike = { right: 24, bottom: 20, size: 240 }
   // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
@@ -1173,8 +1174,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    *   queue 模式下若上一轮还在说，攒 pendingTrigger 等本轮结束后发（只留最新）。
    * - 上一轮进行中到达的事件（interrupt 模式下被截断前的窗口内事件）合并进 `merged`。
    */
-  function fireTrigger(input: TriggerBody): void {
-    if (!aiEnabled) return
+  function fireTrigger(input: TriggerBody, options?: { force?: boolean }): void {
+    const force = options?.force === true
+    if (!aiEnabled) {
+      clientLog('info', `trigger skipped | ai disabled | ${input.kind}${input.event ? `:${input.event}` : ''}`)
+      return
+    }
     // 页面隐藏（切标签页/最小化）：不请求、不排队——活动照常累积在 Host，回来再看
     if (hidden) {
       clientLog('info', `trigger skipped | page hidden | ${input.kind}${input.event ? `:${input.event}` : ''}`)
@@ -1194,9 +1199,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     // 事件类：idle 状态本身不是触发（静默超时另行处理）
     if (input.kind === 'event') {
-      if (input.event !== undefined && !eventTriggerEnabled(input.event)) return
-      if (!eventIntervalPassed()) return
-      lastEventTriggerAt = Date.now()
+      // force = 调试面板「场景演示」强制触发：跳过场景开关与最小间隔，也不占用真实事件的时间预算
+      if (!force) {
+        if (input.event !== undefined && !eventTriggerEnabled(input.event)) return
+        if (!eventIntervalPassed()) return
+        lastEventTriggerAt = Date.now()
+      }
       scheduleIdleTimer()
       if (triggerMode === 'queue' && speakingTurnActive) {
         // 排队等完成：只留最新一条
@@ -1420,7 +1428,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   function applyState(next: PetStateView | null): void {
-    const state = demoState ?? next?.state ?? 'idle'
+    const state = next?.state ?? 'idle'
     applyActivity(next?.activity)
     // 状态变化（ADR-037）：动作/表情/台词全部交给 AI——这里只把状态当作触发场景。
     // idle 不是触发；静默超时由 scheduleIdleTimer 单独兜底。
@@ -2602,20 +2610,34 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         return el
       }
 
-      // 状态演示：等宽按钮网格（六态两行三列）
-      const demoLabel = sectionLabel('状态演示')
-      debugBody.appendChild(demoLabel)
-      const demoRow = document.createElement('div')
-      demoRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px'
-      for (const st of ['idle', 'thinking', 'waiting', 'done', 'delivered', 'error'] as const) {
-        const btn = document.createElement('button')
-        btn.textContent = st
-        btn.style.cssText = 'padding:4px 0;border-radius:6px;border:1px solid rgba(128,128,128,.25);background:rgba(128,128,128,.1);color:#dbe2ef;font-size:11px;font-family:inherit;cursor:pointer;outline:none'
-        btn.onmouseenter = () => { btn.style.background = 'rgba(120,170,255,.22)' }
-        btn.onmouseleave = () => { btn.style.background = 'rgba(128,128,128,.1)' }
-        btn.onclick = () => { demoState = demoState === st ? null : st; applyState(view) }
-        demoRow.appendChild(btn)
+      // 场景演示：下拉选触发场景 + 播放按钮（与动画/表情预览同一套交互）
+      // 走真实触发链路（fireTrigger force）：台词/动作/表情/语音全由 AI 按该场景即兴决定
+      debugBody.appendChild(sectionLabel('场景演示'))
+      const demoSelect = document.createElement('select')
+      demoSelect.style.cssText = 'flex:1;min-width:0;background:#1c1e28;color:#e8eaf0;border:1px solid rgba(128,128,128,.3);border-radius:6px;font-size:12px;padding:4px 6px;outline:none'
+      for (const event of TRIGGER_EVENTS) {
+        const option = document.createElement('option')
+        option.value = event
+        option.textContent = TRIGGER_EVENT_LABELS[event] ?? event
+        demoSelect.appendChild(option)
       }
+      const demoPlay = document.createElement('button')
+      demoPlay.textContent = '播放'
+      demoPlay.style.cssText = 'padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;background:rgba(120,170,255,.28);color:#e8eaf0;border:1px solid rgba(120,170,255,.35);outline:none'
+      demoPlay.onmouseenter = () => { demoPlay.style.background = 'rgba(120,170,255,.4)' }
+      demoPlay.onmouseleave = () => { demoPlay.style.background = 'rgba(120,170,255,.28)' }
+      const playScenario = (): void => {
+        const event = demoSelect.value
+        if (!event) return
+        clientLog('info', `demo scenario | ${event}`)
+        fireTrigger({ kind: 'event', event }, { force: true })
+      }
+      demoSelect.onchange = playScenario
+      demoPlay.onclick = playScenario
+      const demoRow = document.createElement('div')
+      demoRow.style.cssText = 'display:flex;gap:6px;align-items:center'
+      demoRow.appendChild(demoSelect)
+      demoRow.appendChild(demoPlay)
       debugBody.appendChild(demoRow)
 
       // 动画预览：原生动画下拉 + 播放按钮

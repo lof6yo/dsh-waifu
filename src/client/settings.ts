@@ -44,6 +44,7 @@ import {
   FOCUS_RANGE_LIMITS,
   IDLE_TIMEOUT_LIMITS,
   LIPSYNC_GAIN_LIMITS,
+  TRIGGER_EVENT_LABELS,
   TTS_MODELS,
   normalizeEventTexts,
   normalizeEventTriggers,
@@ -178,26 +179,6 @@ interface SettingsState {
 const DEFAULT_VALUE: PetSettingsValue = {
   ...DEFAULT_SETTINGS,
   model: DEFAULT_MODEL_ID,
-}
-
-/** 触发场景中文名（触发开关列表）。 */
-const TRIGGER_EVENT_LABELS: Record<string, string> = {
-  thinking: '思考中',
-  error: '出错',
-  done: '完成',
-  delivered: '交付成果',
-  waiting: '等确认',
-  'tool-read': '工具·读取',
-  'tool-write': '工具·写入',
-  'tool-run': '工具·执行命令',
-  'tool-agent': '工具·派出子代理',
-  'tool-other': '工具·其他',
-  'approval-granted': '审批·通过',
-  'approval-denied': '审批·拒绝',
-  'session-open': '会话·开启',
-  'session-close': '会话·结束',
-  'subagent-start': '子代理·出发',
-  'subagent-end': '子代理·归来',
 }
 
 /** 触发场景开关顺序（ANIMATION_SLOTS 去掉 idle + ACTIVITY_EVENTS）。 */
