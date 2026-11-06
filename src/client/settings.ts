@@ -1045,6 +1045,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       .catch(() => setMemoryStatus('保存失败'))
       .finally(() => setMemorySaving(false))
   }
+  // 设置页折叠态（ADR-039 之后不再写第二行小字，长内容一律折叠）
+  const [openScenes, setOpenScenes] = useState<Record<string, boolean>>({})
+  const [personaOpen, setPersonaOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const modelDraftRef = useRef('')
   const [touchDraft, setTouchDraft] = useState<TouchPart[]>([])
   const touchDraftRef = useRef<TouchPart[]>([])
@@ -2219,7 +2223,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '事件类触发最小间隔（秒，0 = 不限）' }),
+        createElement(FormLabel, { title: '最小间隔（秒）', hint: '事件类触发的冷却：间隔内的 DSH 事件不再触发（0 = 不限）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2239,7 +2243,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '静默超时（分钟，0 = 关闭）' }),
+        createElement(FormLabel, { title: '静默超时（分钟）', hint: '多久没有任何事件/互动就主动说一句（0 = 关闭）' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('input', {
             type: 'number',
@@ -2279,53 +2283,9 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowStartStyle },
-        createElement(FormLabel, {
-          title: '触发场景',
-          hint: '打开的事件才会让角色反应；触摸与对话始终可触发。下面的输入框可以改「这件事怎么描述给模型」，留空用内置文案',
-        }),
-        createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '8px 12px' } },
-          TRIGGER_ORDER.map((event) => {
-            const enabled = normalizeEventTriggers(value.eventTriggers)[event] !== false
-            const custom = normalizeEventTexts(value.eventTexts)[event] ?? ''
-            return createElement('div', { key: `trigger-${event}`, style: { display: 'flex', flexDirection: 'column', gap: 3 } },
-              createElement('label', {
-                style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap' },
-              },
-                createElement('input', {
-                  type: 'checkbox',
-                  checked: enabled,
-                  disabled: !writable,
-                  onChange: (e: ChangeEvent<HTMLInputElement>) => {
-                    const next = e.target.checked
-                    enqueueWrite(() => [{ op: 'set', path: ['eventTriggers', event], value: next }])
-                  },
-                }),
-                TRIGGER_EVENT_LABELS[event] ?? event,
-              ),
-              createElement('input', {
-                type: 'text',
-                value: custom,
-                placeholder: DEFAULT_EVENT_TEXTS[event] ?? '',
-                maxLength: EVENT_TEXT_MAX,
-                disabled: !writable,
-                title: `内置文案：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
-                style: { ...numberInputStyle, width: '100%', fontSize: 11 },
-                onChange: (e: ChangeEvent<HTMLInputElement>) => {
-                  const next = e.target.value
-                  enqueueWrite(() => [{ op: 'set', path: ['eventTexts', event], value: next }])
-                },
-              }),
-            )
-          }),
-        ),
-      ),
-      // 交互条（原「显示」分组，ADR-037 修订）：AI 驱动的对话输入入口，跟 AI 设置放一起
+      // 交互条（ADR-037 修订）：AI 驱动的对话输入入口
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, {
-          title: '交互条',
-          hint: '模型上/下方的「静音 + 对话输入」条；偏移正数离模型更远、负数贴近模型',
-        }),
+        createElement(FormLabel, { title: '交互条' }),
         createElement('div', { style: formControlInlineStyle },
           createElement('select', {
             style: selectStyle,
@@ -2366,6 +2326,62 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
+      // 触发场景：默认只列开关，展开才显示「怎么描述给模型」的输入框与 prompt 预览
+      createElement('div', { style: formRowStartStyle },
+        createElement(FormLabel, {
+          title: '触发场景',
+          hint: '打开的事件才会让角色反应；触摸与对话始终可触发。展开可改「这件事怎么描述给模型」，留空用内置文案',
+        }),
+        createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+          TRIGGER_ORDER.map((event) => {
+            const enabled = normalizeEventTriggers(value.eventTriggers)[event] !== false
+            const custom = normalizeEventTexts(value.eventTexts)[event] ?? ''
+            const open = openScenes[event] === true
+            const preview = custom.trim() !== '' ? custom.trim() : (DEFAULT_EVENT_TEXTS[event] ?? event)
+            return createElement('div', { key: `trigger-${event}`, style: { display: 'flex', flexDirection: 'column' } },
+              createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                createElement('label', {
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textPrimary, whiteSpace: 'nowrap', cursor: 'pointer' },
+                },
+                  createElement('input', {
+                    type: 'checkbox',
+                    checked: enabled,
+                    disabled: !writable,
+                    onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                      const next = e.target.checked
+                      enqueueWrite(() => [{ op: 'set', path: ['eventTriggers', event], value: next }])
+                    },
+                  }),
+                  TRIGGER_EVENT_LABELS[event] ?? event,
+                ),
+                createElement('button', {
+                  type: 'button',
+                  style: { ...buttonBaseStyle, height: 20, padding: '0 6px', fontSize: 11, color: open ? C.brand : C.textSecondary },
+                  disabled: !writable,
+                  onClick: () => setOpenScenes((prev) => ({ ...prev, [event]: !open })),
+                }, open ? '收起' : '编辑'),
+              ),
+              open && createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0 8px 22px' } },
+                createElement('input', {
+                  type: 'text',
+                  value: custom,
+                  placeholder: DEFAULT_EVENT_TEXTS[event] ?? '',
+                  maxLength: EVENT_TEXT_MAX,
+                  disabled: !writable,
+                  title: `内置文案：${DEFAULT_EVENT_TEXTS[event] ?? event}`,
+                  style: { ...inputStyle, width: '100%', height: 26, fontSize: 11 },
+                  onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                    const next = e.target.value
+                    enqueueWrite(() => [{ op: 'set', path: ['eventTexts', event], value: next }])
+                  },
+                }),
+                createElement('div', { style: { fontSize: 11, color: C.textSecondary, lineHeight: 1.5, wordBreak: 'break-all' } },
+                  `prompt 预览：${preview}`),
+              ),
+            )
+          }),
+        ),
+      ),
       !!aiCheckStatus && createElement('div', { style: formRowStyle },
         createElement(FormLabel, { title: '自检', hint: '刚发出去的那次真实请求的结果' }),
         createElement('div', {
@@ -2380,54 +2396,75 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           },
         }, aiCheckStatus.text),
       ),
+      // 人设：默认折叠，展开才给编辑框（ADR-039 之后说明一律不写第二行小字）
       createElement('div', { style: formRowStartStyle },
-        createElement(FormLabel, { title: '人设', hint: '保存后立即写入 persona.md，下一次触摸生效' }),
+        createElement(FormLabel, { title: '人设' }),
         createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
-          createElement('textarea', {
-            key: 'ai-persona',
-            rows: 8,
-            value: personaDraft ?? '',
-            style: { ...textareaStyle, height: 148, minHeight: 148, maxHeight: 148, lineHeight: 1.5, flex: 'none', width: '100%' },
-            disabled: !writable || personaDraft === null,
-            placeholder: personaDraft === null ? '读取中…' : '写下「简」的人设与说话风格',
-            onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setPersonaDraft(e.target.value),
-          }),
-          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm, marginTop: 8 } },
+          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
             createElement('button', {
               type: 'button',
-              style: { ...buttonPrimaryStyle, opacity: personaSaving ? 0.6 : 1 },
-              disabled: !writable || personaSaving || personaDraft === null,
-              onClick: () => savePersona(),
-            }, personaSaving ? '保存中…' : '保存人设'),
+              style: { ...buttonBaseStyle, padding: '0 10px', color: personaOpen ? C.brand : C.textSecondary },
+              disabled: !writable || personaDraft === null,
+              onClick: () => setPersonaOpen((prev) => !prev),
+            }, personaOpen ? '收起' : '展开编辑'),
             personaStatus
               ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, personaStatus)
               : null,
           ),
+          personaOpen && createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } },
+            createElement('textarea', {
+              key: 'ai-persona',
+              rows: 8,
+              value: personaDraft ?? '',
+              style: { ...textareaStyle, height: 148, minHeight: 148, maxHeight: 148, lineHeight: 1.5, flex: 'none', width: '100%' },
+              disabled: !writable || personaDraft === null,
+              placeholder: personaDraft === null ? '读取中…' : '写下「简」的人设与说话风格',
+              onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setPersonaDraft(e.target.value),
+            }),
+            createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
+              createElement('button', {
+                type: 'button',
+                style: { ...buttonPrimaryStyle, opacity: personaSaving ? 0.6 : 1 },
+                disabled: !writable || personaSaving || personaDraft === null,
+                onClick: () => savePersona(),
+              }, personaSaving ? '保存中…' : '保存人设'),
+            ),
+          ),
         ),
       ),
-      // 记忆（ADR-037）：AI 自己写进来的长期记忆；可查看/编辑/保存
+      // 记忆（ADR-037）：AI 自己写进来的长期记忆；折叠查看/编辑
       createElement('div', { style: formRowStartStyle },
-        createElement(FormLabel, { title: '记忆', hint: 'AI 觉得值得记的事会带时间戳写进来；编辑保存后下一次反应生效' }),
+        createElement(FormLabel, { title: '记忆' }),
         createElement('div', { style: { ...formControlStyle, flexDirection: 'column', alignItems: 'stretch' } },
-          createElement('textarea', {
-            key: 'ai-memory',
-            rows: 8,
-            value: memoryDraft ?? '',
-            style: { ...textareaStyle, height: 148, minHeight: 148, maxHeight: 148, lineHeight: 1.5, flex: 'none', width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 },
-            disabled: !writable || memoryDraft === null,
-            placeholder: memoryDraft === null ? '读取中…' : '- [11-06 14:30] 主人喜欢…\n（一行一条，带时间戳）',
-            onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setMemoryDraft(e.target.value),
-          }),
-          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm, marginTop: 8 } },
+          createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
             createElement('button', {
               type: 'button',
-              style: { ...buttonPrimaryStyle, opacity: memorySaving ? 0.6 : 1 },
-              disabled: !writable || memorySaving || memoryDraft === null,
-              onClick: () => saveMemory(),
-            }, memorySaving ? '保存中…' : '保存记忆'),
+              style: { ...buttonBaseStyle, padding: '0 10px', color: memoryOpen ? C.brand : C.textSecondary },
+              disabled: !writable || memoryDraft === null,
+              onClick: () => setMemoryOpen((prev) => !prev),
+            }, memoryOpen ? '收起' : '展开编辑'),
             memoryStatus
               ? createElement('span', { style: { ...noticeBaseStyle, margin: 0, color: C.textSecondary } }, memoryStatus)
               : null,
+          ),
+          memoryOpen && createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } },
+            createElement('textarea', {
+              key: 'ai-memory',
+              rows: 8,
+              value: memoryDraft ?? '',
+              style: { ...textareaStyle, height: 148, minHeight: 148, maxHeight: 148, lineHeight: 1.5, flex: 'none', width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 },
+              disabled: !writable || memoryDraft === null,
+              placeholder: memoryDraft === null ? '读取中…' : '- [11-06 14:30] 主人喜欢…\n（一行一条，带时间戳）',
+              onChange: (e: ChangeEvent<HTMLTextAreaElement>) => setMemoryDraft(e.target.value),
+            }),
+            createElement('div', { style: { display: 'flex', alignItems: 'center', gap: GAP.sm } },
+              createElement('button', {
+                type: 'button',
+                style: { ...buttonPrimaryStyle, opacity: memorySaving ? 0.6 : 1 },
+                disabled: !writable || memorySaving || memoryDraft === null,
+                onClick: () => saveMemory(),
+              }, memorySaving ? '保存中…' : '保存记忆'),
+            ),
           ),
         ),
       ),
@@ -2483,10 +2520,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, {
-          title: '音色',
-          hint: randomVoice ? '该模型没有固定音色，每句都会换人声' : '固定音色，改完点「试听一句」确认',
-        }),
+        createElement(FormLabel, { title: '音色' }),
         createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
           createElement('select', {
             value: value.ttsVoice,
@@ -2510,10 +2544,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, {
-          title: '口型跟随',
-          hint: value.lipsyncEnabled ? '按正在播放的音频能量张嘴' : '不驱动口型（ParamMouthOpenY）',
-        }),
+        createElement(FormLabel, { title: '口型跟随' }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
             checked: !!value.lipsyncEnabled,
@@ -2544,7 +2575,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
         ),
       ),
       createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '试听', hint: '用当前的模型 / 音色合成一句话' }),
+        createElement(FormLabel, { title: '试听' }),
         createElement('div', { style: { ...formControlInlineStyle, gap: GAP.sm } },
           createElement('button', {
             type: 'button',
