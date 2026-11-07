@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- **演出谱子（`src/timeline.ts`）：台词按段下发，每段自带该演什么（ADR-048 第二步）**
+  - `ClauseTimeline` 把「正文增量 + 目录标签」变成 `clause { index, text, cues }`：标签归属它之后的第一个台词段（开头连写的标签 == 第 0 段的开场演出），正文里残留的标签照旧剥掉。
+  - 段边界直接复用 TTS 的句读切分，**与重构前逐字节一致**：`src/timeline.test.ts` 用搬迁前现场录下的四种输入帧序列做快照对比（含 tags 先到、无标点、句中标签、记忆行+错误四个样本）。
+  - 目前 `cues` 是冗余字段（老客户端只认 `tags` 帧，行为不变），P3 换客户端播放器后才成为真正的契约。测试 227 → 237。
 - **剧本引擎（`src/director.ts`）：把「演员读到什么」从「怎么演」里拆出来（ADR-047 第一步）**
   - `systemPrompt` / `buildSceneMessage` / `historySceneText` / `historyMessages` / `assembleRequest` 从 `ai.ts` 搬进纯函数模块，`ai.ts` 只保留「调用 + 解析」，对外导出保持不变；时间与时区换算另抽 `src/time.ts`。
   - 新增 `src/director.test.ts`：剧本内容用 golden 哈希钉住（system 1681 字、messages、payload），搬代码不许改行为；另有目录/场景句/历史条数的行为断言。测试 214 → 227。
@@ -14,6 +18,7 @@
   - 删掉从上线起就没跑过的客户端死代码（`lastAiRequestAt` / `pendingTap` / `AI_REQUEST_COOLDOWN_MS`）。
 
 ### Docs
+- **ADR-048（已采纳）：演出编排三层**——剧本引擎只决定「演员看到什么」（纯函数 + golden 哈希），LLM 决定「演什么」，编排器只决定「能不能演、什么时候演」（不算语义、不猜情绪）；Host 出声明式谱子、浏览器当执行器；顺带记下一条：一轮只下发一个 `tags` 帧。
 - **ADR-047（已采纳）：触发调度归一化**——把散落在 Host 与客户端的 15 处「拦 / 延后 / 合并」判断收敛成一个调度器 + 一张策略表：四类触发源（触摸 / 对话 / 事件 / 静默）统一走「过滤 → 时间门 → 占用门 → 被拦动作」，被拦只有 `drop` / `defer` / `merge` 三种后果且都留日志；Host 退回纯传感器（不再 `QUIET_TOOLS` 过滤、不再同类节流、不再有 1.2s 硬冷却），`activityWindowSec` 从死设置变为真正生效。spec §3.2 已按实现重写。
 
 ### Fixed

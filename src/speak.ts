@@ -14,9 +14,10 @@
  * @module dsh-waifu/speak
  */
 
-import { splitClauses, type TtsAudio } from './tts.ts'
+import { type TtsAudio } from './tts.ts'
 import { stripInlineTags } from './ai.ts'
 import type { ReplyChunk } from './ai.ts'
+import { ClauseTimeline, type TimelineClause } from './timeline.ts'
 
 /** 单次演绎最多合成的字符数（防止模型跑飞把一句话拉成一段独白）。 */
 export const SPEAK_MAX_CHARS = 400
@@ -55,10 +56,8 @@ export interface SpeakResult {
 export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<SpeakResult> {
   const { chunks, synthesize, emit, signal } = options
   const tasks = new Map<number, Promise<TtsAudio | null>>()
-  let nextIndex = 0
   let pumpIndex = 0
   let audioCount = 0
-  let buffer = ''
   let total = ''
   let result = ''
   let memory: string | undefined
@@ -94,26 +93,15 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     return chain
   }
 
-  /** 把缓冲区里已完整的段落切出去（最后一段可能还没说完，留到下次）。 */
-  const flush = (final: boolean): void => {
-    if (!buffer) return
-    const pieces = splitClauses(buffer)
-    if (pieces.length === 0) {
-      if (final) buffer = ''
-      return
-    }
-    const ready = final ? pieces : pieces.slice(0, -1)
-    buffer = final ? '' : pieces[pieces.length - 1] ?? ''
-    for (const piece of ready) {
-      // 句中/句首残留的表情动作标签不能念出来（ADR-037）：切成段后统一剥一遍
-      const clean = stripInlineTags(piece)
-      if (!clean) continue
-      const index = nextIndex
-      nextIndex += 1
-      emit('clause', { index, text: clean })
-      // 先登记任务再启动，避免 pump 抢跑时任务还没进 Map
-      const task = synthesize(clean).catch(() => null)
-      tasks.set(index, task)
+  /** 时间线：切段 + 把 cue 挂到对应的段上（ADR-047 P2，切分规则与旧实现逐字节一致）。 */
+  const timeline = new ClauseTimeline()
+
+  /** 把切好的段发出去并开始合成（先登记任务再启动，避免 pump 抢跑时任务还没进 Map）。 */
+  const emitClauses = (clauses: readonly TimelineClause[]): void => {
+    for (const clause of clauses) {
+      emit('clause', clause)
+      const task = synthesize(clause.text).catch(() => null)
+      tasks.set(clause.index, task)
       void kick()
     }
   }
@@ -126,13 +114,14 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
         const room = SPEAK_MAX_CHARS - total.length
         const delta = chunk.text.slice(0, room)
         total += delta
-        buffer = `${buffer}${delta}`
-        flush(false)
+        emitClauses(timeline.push(delta))
       }
       continue
     }
     if (chunk.type === 'tags') {
-      // 目录标签先于台词到达：转给前端驱动表情/动作，不进气泡也不进 TTS
+      // 目录标签先于台词到达：转给前端驱动表情/动作，不进气泡也不进 TTS。
+      // 同时登记到时间线上——P3 起客户端按「段」执行 cue，老客户端仍只认这个帧。
+      timeline.tag(chunk.expressions, chunk.motions)
       emit('tags', { expressions: chunk.expressions, motions: chunk.motions })
       continue
     }
@@ -148,18 +137,18 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     }
     if (chunk.type === 'error') {
       // 出错也要把已经攒下的半句说出来，别让气泡空着
-      flush(true)
+      emitClauses(timeline.end())
       await kick()
       emit('error', { error: chunk.error })
       emit('done', { text: stripInlineTags(result || total) })
-      return { text: stripInlineTags(result || total), clauses: nextIndex, audio: audioCount, memory }
+      return { text: stripInlineTags(result || total), clauses: timeline.length, audio: audioCount, memory }
     }
   }
 
-  flush(true)
+  emitClauses(timeline.end())
   // 收尾：段数可能在 drain 期间继续增加，所以循环到索引 drained 完为止；
   // 每轮都真正 await 一次 drain（不会空转）
-  while (pumpIndex < nextIndex) {
+  while (pumpIndex < timeline.length) {
     if (!tasks.has(pumpIndex)) {
       pumpIndex += 1
       continue
@@ -167,5 +156,5 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     await kick()
   }
   emit('done', { text: stripInlineTags(result || total) })
-  return { text: stripInlineTags(result || total), clauses: nextIndex, audio: audioCount, memory }
+  return { text: stripInlineTags(result || total), clauses: timeline.length, audio: audioCount, memory }
 }

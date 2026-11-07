@@ -51,3 +51,4 @@
 | 043 | [调试控制台：事件 + 原始报文](./043-debug-console.md) | 已采纳 |
 | 044 | [调试面板自由摆放：拖动 / 缩放 / 本地记住](./044-draggable-debug-panel.md) | 已采纳 |
 | 047 | [触发调度归一化（一个调度器 + 一张策略表）](./047-trigger-scheduling.md) | 已采纳 |
+| 048 | [演出编排（剧本引擎 / 演员 / 编排器三层）](./048-performance-orchestration.md) | 已采纳 |

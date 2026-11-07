@@ -216,6 +216,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - **事件绑定**（ADR-015）：`EventBindings`（`models.ts`）随 `PetStateView.config.events` 下发；默认台词常量 `DEFAULT_EVENT_BINDINGS` + 模型 `animationMap` 提供动作组，用户覆盖存 `touch-parts.jsonc` 的 `models[<id>].events`（整事件替换）；无固定人设，后续 LLM 人设走提示词
 - **模型与素材**：内置模型随包（`assets/models/jian/`），`/waifu-assets/*` prefix 路由（目录穿越防护）；本版 UI 不暴露模型选择/自定义模型
 - **触摸部位**（ADR-014）：`TouchPart`/`TouchBox` 共享类型与纯函数（`normalizeTouchParts` / `pointToBoundsRatio` / `hitTestTouchParts`）在 `src/models.ts`；Host `TouchPartsStore` 读写 `$DSH_HOME/waifu/touch-parts.jsonc`（按模型 id 分组：`parts` + 可选 `animationMap` 覆盖层；未保存回退内置默认）；client 设置页与宠物层通过 `window` CustomEvent（`dsh-waifu:touch-edit`）传递编辑态与草稿部位；宠物层用 `model.getBounds()` 换算 box 到画布坐标绘制叠加层
+- **演出谱子**（ADR-048）：Host 把台词切成段后，每段 `clause` 帧带 `{ index, text, cues }`——`cues` 是这一段该执行的表情/动作（P2 起下发，旧客户端忽略该字段仍按 `tags` 帧播）；段序号即音频序号，口型/气泡/动作共用同一条时间线
 - 动作管理：pixi-live2d-display `MotionPriority`（IDLE=1 / NORMAL=2 / FORCE=3），idle 用 IDLE、状态与互动用 FORCE；重播同一动作前先 `stopAllMotions()`；完成信号统一用 `motionFinish`（ADR-008）
 - focus 抑制：非 idle 动作播放期间 `focusController.focus(0, 0, true)` 归零 + `pointermove` 门控，`motionFinish` 后恢复（ADR-008）
 - 动画映射：`resolveMotionMap()` 合并 `DEFAULT_MOTION_MAP` + 自定义条目/内置 preset；状态槽位 6 个；部位动作走 `part.motions`（ADR-014）
