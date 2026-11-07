@@ -170,7 +170,7 @@ export function savePersona(homeDir: string, text: string): { text: string; path
   return { text: value, path: file }
 }
 
-/** 读取人设文件；缺失时写入默认人设。读取失败回落到内置默认值。 */
+/** 读取人设文件；没有文件就用内置默认值（不自动落盘，见函数内注释）。 */
 export function loadPersona(homeDir: string): string {
   const file = personaPath(homeDir)
   try {
@@ -178,12 +178,13 @@ export function loadPersona(homeDir: string): string {
       const text = readFileSync(file, 'utf8').trim()
       if (text) return text
     }
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, DEFAULT_PERSONA, 'utf8')
-    return DEFAULT_PERSONA
   } catch {
-    return DEFAULT_PERSONA
+    // 读不到就当没写过：人设不该因为磁盘问题变成空字符串
   }
+  // 不自动落盘：没有文件就用代码里的默认值。
+  // 以前会在首次读取时把当时的默认值写进 persona.md，之后代码里改人设再也进不来，
+  // 老装机永远停在旧文案上（还带着已经不存在的机制的说明）。
+  return DEFAULT_PERSONA
 }
 
 /** 单行化 + 去引号 + 截断：气泡只放得下短短一句。 */

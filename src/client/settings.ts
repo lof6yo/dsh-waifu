@@ -1098,6 +1098,28 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
     return () => { cancelled = true }
   }, [aiEnabled])
 
+  /** 用内置默认人设覆盖 persona.md（人设文件是用户的东西，所以要用户自己点）。 */
+  async function resetPersona(): Promise<void> {
+    if (personaSaving || !writable) return
+    setPersonaSaving(true)
+    setPersonaStatus(null)
+    try {
+      const res = await fetch(PERSONA_API, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '' }),
+      })
+      const payload = await res.json() as { text?: unknown; error?: unknown }
+      if (!res.ok) throw new Error(typeof payload.error === 'string' ? payload.error : `HTTP ${res.status}`)
+      setPersonaDraft(typeof payload.text === 'string' ? payload.text : '')
+      setPersonaStatus('已恢复内置默认人设')
+    } catch (error) {
+      setPersonaStatus(`恢复失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setPersonaSaving(false)
+    }
+  }
+
   /** 保存人设到 $DSH_HOME/waifu/persona.md。 */
   const savePersona = (): void => {
     if (personaDraft === null || personaSaving) return
@@ -2781,6 +2803,15 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
                 disabled: !writable || personaSaving || personaDraft === null,
                 onClick: () => savePersona(),
               }, personaSaving ? '保存中…' : '保存人设'),
+              // 人设文件是用户的：想回到内置默认得自己点，插件不偷偷覆盖
+              createElement('button', {
+                key: 'ai-persona-reset',
+                type: 'button',
+                style: { ...buttonSecondaryStyle, opacity: personaSaving ? 0.6 : 1 },
+                disabled: !writable || personaSaving,
+                title: '用内置默认人设覆盖当前 persona.md',
+                onClick: () => { void resetPersona() },
+              }, '恢复默认'),
             ),
           ),
         ),

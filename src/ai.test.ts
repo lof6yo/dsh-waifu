@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -227,20 +227,6 @@ describe('标签与记忆行（ADR-037 输出格式）', () => {
   })
 })
 
-describe('loadPersona', () => {
-  it('缺失时落盘默认人设并返回内容', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
-    try {
-      const text = loadPersona(dir)
-      expect(text).toBe(DEFAULT_PERSONA)
-      expect(existsSync(join(dir, PERSONA_FILENAME))).toBe(true)
-      expect(readFileSync(join(dir, PERSONA_FILENAME), 'utf8')).toBe(DEFAULT_PERSONA)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-})
-
 describe('generateReply', () => {
   it('拼接文本增量并清理成单行台词', async () => {
     const llm = fakeLlm(['「好', '吧…', '就一下」\n多余行'])
@@ -304,6 +290,31 @@ describe('generateReply 结束原因', () => {
     expect(attempt.text).toBeNull()
     expect(attempt.error).toContain('UNKNOWN_MODEL')
     expect(attempt.error).toContain('no model x')
+  })
+})
+
+describe('loadPersona（人设文件是用户的，默认值不该被复制进去）', () => {
+  it('没有 persona.md 时用内置默认，且不会自动创建文件', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
+    expect(loadPersona(dir)).toBe(DEFAULT_PERSONA)
+    // 自动落盘过一次就再也收不到代码里的改进（老装机被钉死在旧文案上）
+    expect(existsSync(join(dir, PERSONA_FILENAME))).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('用户写过的人设原样返回，一个字都不改', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
+    writeFileSync(join(dir, PERSONA_FILENAME), '  我自己的人设  ')
+    expect(loadPersona(dir)).toBe('我自己的人设')
+    expect(readFileSync(join(dir, PERSONA_FILENAME), 'utf8')).toBe('  我自己的人设  ')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('空文件当没写过，回落内置默认', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
+    writeFileSync(join(dir, PERSONA_FILENAME), '   \n  ')
+    expect(loadPersona(dir)).toBe(DEFAULT_PERSONA)
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 
