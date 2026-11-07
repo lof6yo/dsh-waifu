@@ -464,7 +464,17 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let disposed = false
   pushCleanup(() => { disposed = true })
   // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
-  pushCleanup(() => { clearIdleTimer(); clearBubbleHideTimer(); clearPendingTap(); clearHover(); stopSpeaking() })
+  pushCleanup(() => {
+    clearIdleTimer()
+    clearBubbleHideTimer()
+    clearPendingTap()
+    clearHover()
+    if (mergeTimer !== undefined) {
+      window.clearTimeout(mergeTimer)
+      mergeTimer = undefined
+    }
+    stopSpeaking()
+  })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
