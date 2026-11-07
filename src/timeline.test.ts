@@ -240,13 +240,38 @@ describe('ClauseTimeline', () => {
     expect(timeline.length).toBe(3)
   })
 
-  it('正文里的目录标签剥掉，认不出的方括号原样保留', () => {
+  it('句中的目录标签变成本段 cue，认不出的方括号原样保留（ADR-048 P4）', () => {
     const fresh = new ClauseTimeline()
     fresh.push('好呀[Nod]我当然乐意。')
-    expect(fresh.end()).toEqual([{ index: 0, text: '好呀我当然乐意。', cues: [] }])
+    expect(fresh.end()).toEqual([
+      { index: 0, text: '好呀我当然乐意。', cues: [{ kind: 'motion', id: 'Nod' }] },
+    ])
     const keep = new ClauseTimeline()
     keep.push('参见 [附件] 一节。')
     expect(keep.end()).toEqual([{ index: 0, text: '参见 [附件] 一节。', cues: [] }])
+  })
+
+  it('尾巴上的标签顺延给下一句（「别、[Nod]」→ 摇头跟着后半句）', () => {
+    const timeline = new ClauseTimeline()
+    expect(timeline.push('唔…别、[Nod]别戳了啦')).toEqual([{ index: 0, text: '唔…别、', cues: [] }])
+    expect(timeline.end()).toEqual([{ index: 1, text: '别戳了啦', cues: [{ kind: 'motion', id: 'Nod' }] }])
+  })
+
+  it('没闭合的标签先扣住，不住正文里漏出半个标签', () => {
+    const timeline = new ClauseTimeline()
+    expect(timeline.push('好呀[No')).toEqual([])
+    expect(timeline.push('d]我当然乐意。')).toEqual([])
+    expect(timeline.end()).toEqual([
+      { index: 0, text: '好呀我当然乐意。', cues: [{ kind: 'motion', id: 'Nod' }] },
+    ])
+  })
+
+  it('中文名标签归一到目录 id（[脸红] → blush）', () => {
+    const timeline = new ClauseTimeline()
+    timeline.push('唔…[脸红]别看我。')
+    expect(timeline.end()).toEqual([
+      { index: 0, text: '唔…别看我。', cues: [{ kind: 'expression', id: 'blush' }] },
+    ])
   })
 
   it('cue 只归属第一段，空段被丢掉且不占序号', () => {

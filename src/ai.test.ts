@@ -202,8 +202,9 @@ describe('标签与记忆行（ADR-037 输出格式）', () => {
 
   it('中文标签也能认（表情/动作的中文名）', () => {
     const tags = parseLeadingTags('[脸红][摇头] 呜…')
-    expect(tags.expressions).toContain('脸红')
-    expect(tags.motions).toContain('摇头')
+    // 归一化成目录 id：下游只认英文 id，原样透传等于没有表情（ADR-048 P4 顺手修掉）
+    expect(tags.expressions).toEqual(['blush'])
+    expect(tags.motions).toEqual(['ShakeHead'])
     expect(tags.rest).toBe('呜…')
   })
 

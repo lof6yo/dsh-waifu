@@ -260,22 +260,39 @@ export interface LeadingTags {
   rest: string
 }
 
-/** 判断一个标签词是不是可执行的表情/动作（目录内才算控制信号）。 */
-function classifyTag(word: string): 'expression' | 'motion' | null {
-  const cleaned = word.trim().toLowerCase().replace(/[\s"'“”‘’`*_~·、,，。.!！?？:：]/g, '')
+/**
+ * 把一个标签词归一到目录 id（认中文名/释义关键词，统一回英文 id）。
+ *
+ * 认不出来就返回 null —— 调用方据此决定「剥掉还是原样保留」。
+ * 归一化很重要：模型偶尔写 `[脸红]`，下游只认 `blush`，不归一化就等于没有表情。
+ */
+export function resolveTag(word: string): { kind: 'expression' | 'motion'; id: string } | null {
+  const trimmed = word.trim()
+  const cleaned = trimmed.toLowerCase().replace(/[\s"'“”‘’`*_~·、,，。.!！?？:：]/g, '')
   if (!cleaned) return null
   // 目录词表：动作 id / 表情 id / 中文名 / meaning 关键词都不该念出来
   const motion = AI_MOTIONS.find((m) =>
-    m.id.toLowerCase() === cleaned || m.name === word.trim() || m.meaning.includes(word.trim()),
+    m.id.toLowerCase() === cleaned || m.name === trimmed || m.meaning.includes(trimmed),
   )
-  if (motion) return 'motion'
+  if (motion) return { kind: 'motion', id: motion.id }
   const expression = EXPRESSIONS.find((e) =>
-    e.id.toLowerCase() === cleaned || e.name === word.trim(),
+    e.id.toLowerCase() === cleaned || e.name === trimmed,
   )
-  if (expression) return 'expression'
-  if (isMotionId(cleaned)) return 'motion'
-  if (isExpressionId(cleaned)) return 'expression'
+  if (expression && expression.id !== 'none') return { kind: 'expression', id: expression.id }
+  if (isMotionId(cleaned)) return { kind: 'motion', id: cleaned }
+  if (isExpressionId(cleaned)) return { kind: 'expression', id: cleaned }
   return null
+}
+
+/** 判断一个标签词是不是可执行的表情/动作（目录内才算控制信号）。 */
+function classifyTag(word: string): 'expression' | 'motion' | null {
+  return resolveTag(word)?.kind ?? null
+}
+
+/** 正文尾部「还没闭合的标签」（`[`、`[No`）的起点下标；-1 表示没有。 */
+export function openTagStart(text: string): number {
+  const match = /[[［【(（〔〖][^\]］】）}〕〗\n]{0,16}$/.exec(text)
+  return match === null ? -1 : match.index
 }
 
 /**
@@ -289,9 +306,9 @@ export function parseLeadingTags(text: string): LeadingTags {
   for (let i = 0; i < 3; i += 1) {
     const match = TAG_PATTERN.exec(rest)
     if (!match) break
-    const kind = classifyTag(match[1])
-    if (kind === 'expression') expressions.push(match[1].trim().toLowerCase())
-    else if (kind === 'motion') motions.push(match[1].trim())
+    const hit = resolveTag(match[1])
+    if (hit?.kind === 'expression') expressions.push(hit.id)
+    else if (hit?.kind === 'motion') motions.push(hit.id)
     rest = rest.slice(match[0].length)
   }
   return { expressions, motions, rest: rest.trimStart() }
@@ -546,7 +563,9 @@ export async function* streamReply(
           }
           pending = ''
           prefixDone = true
-          streamed = stripInlineTags(tag.rest)
+          // 开头的标签已经吃掉；正文原样转发——句中的标签要留给时间线，
+          // 由它剥掉并挂到对应的台词段上（ADR-048 P4）。收尾的 done 仍是干净的。
+          streamed = tag.rest
           // 正文一出现就把攒下的标签一次性交出去：一次响应一个 tags 帧，
           // 客户端不会因为「表情/动作分两帧」把刚起的动作打断（重复的标签去重）。
           const allowed = filterTags(

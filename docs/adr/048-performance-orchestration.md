@@ -1,6 +1,6 @@
 # ADR-048：演出编排（剧本引擎 / 演员 / 编排器三层）
 
-- 状态：已采纳（Accepted）；P1（单标签帧 + `director.ts`）、P2（`timeline.ts` 谱子）、P3（播放器按段执行 cue）已实现，P4（提示词允许句中 cue）待实现
+- 状态：已采纳（Accepted）；P1（单标签帧 + `director.ts`）、P2（`timeline.ts` 谱子）、P3（播放器按段执行 cue）、P4（句中 cue）已实现，等 spike 数据定稿
 - 日期：2026-11-07
 
 ## 背景
@@ -69,6 +69,17 @@
 | 动作 | 串行队列，`motionFinish` 驱动；上限 `MOTION_QUEUE_MAX = 2`，满了丢最旧并在控制台记 `cue.dropped` |
 | 等不到 `motionFinish` | `MOTION_WAIT_MS = 6000` 兜底，队列不会卡死 |
 | 打断（隐藏页/气泡超时/卸载） | `stopSpeaking()` 清 cue 表、清队列、唤醒所有等待者、撤 sticky 表情 |
+
+**P4（2026-11-07）**：提示词允许把标签写在需要它的那一句前面（不再只认开头），Host 侧三处改动配合：
+
+| 改动 | 位置 | 理由 |
+|---|---|---|
+| 正文原样转发（句中标签不再提前剥掉） | `src/ai.ts` `streamReply` | 剥掉就没人知道这个动作属于哪一句了 |
+| 标签归属再到 cue | `src/timeline.ts` `extractTags()` | 段内标签归本段；**段尾标签顺延给下一段**（`唔…别、[Nod]` 的摇头跟后半句） |
+| 未闭合标签先扣住 | `src/timeline.ts` `push()` + `openTagStart()` | 否则 `[No` + `d]` 会先被念成半句话 |
+| 标签词归一化 | `src/ai.ts` `resolveTag()` | `[脸红]` → `blush`；原来中文名原样透传，下游只认英文 id，等于没有表情 |
+
+顺带修掉 v1 提示词里的自相矛盾：示例原来写 `[shy]`（不在目录里），现在换成真实 id。
 
 ## 取舍
 
