@@ -62,23 +62,22 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
   动作直接写它们无效，靠物理链被头部带动才有反应。
 - 非 `idle`、正在互动 / 预览、页面不可见时延后 4s 重试；设置页「显示 → 待机小动作」可整体关闭。
 
-### 3.2 触发调度（ADR-047，**目标行为，待实现**）
+### 3.2 触发调度（ADR-047，已实现）
 
-> 现状：触发判断散落 15 处（Host 3 处过滤 + 客户端 12 处），其中 `activityWindowSec` 是死设置、客户端触摸防抖是死代码、Host 另有一道 1.2s 硬拒。本节描述归一化之后**应当**有的行为；实现分五步，见 ADR-047「迁移顺序」。
-
-- **一个入口**：触摸 / 对话 / DSH 事件 / 静默超时四类触发都走 `dispatch()`，顺序固定为 过滤 → 时间门 → 占用门 → 被拦动作。
-- **三个动作**：`drop`（丢弃，控制台留一行 `trigger dropped | …`）、`defer`（延后补发最后一次）、`merge`（并入下一轮场景句，上限 6 条）。
+- **一个入口**：触摸 / 对话 / DSH 事件 / 静默超时四类触发都先送到 `src/client/schedule.ts` 的 `dispatchTrigger()`，判断顺序固定为 过滤 → 时间门 → 占用门 → 被拦动作；Host 只上报「发生了什么」（`activity(seq, kind)`），不按频率拒绝。
+- **四个动作**：`run`（立刻开一轮，带上一轮攒下的合并项）、`drop`（丢弃，控制台留一行 `dropped | …`）、`defer`（延后补发最后一次，仅触摸连点）、`merge`（并进下一次触发，控制台留一行 `merged | …`）。
 - **策略表**（唯一真值）：
 
   | 触发源 | 间隔 | 上一轮进行中 | 被拦动作 | 可合并 |
   |---|---|---|---|---|
-  | 触摸 `tap` | 1200ms（常量） | 恒打断 | 延后补发 | 否 |
-  | 对话 `chat` | 0 | 恒打断 | 丢弃 | 否 |
-  | 事件 `event` | `aiMinIntervalSec`（0 = 不限） | `triggerMode`：queue 排队 / interrupt 抢占 | 间隔内合并 | 是 |
-  | 静默 `idle` | 0（由 `idleTimeoutSec` 决定时机） | 恒丢弃 | 丢弃 | 否 |
+  | 触摸 `tap` | `tapGapMs`（默认 1200ms，0–5000） | 恒打断 | 延后补发 | 否 |
+  | 对话 `chat` | 0 | 恒打断 | 丢弃（无） | 否 |
+  | 事件 `event` | `aiMinIntervalSec`（默认 1s，0 = 不限） | `triggerMode`：queue 合并等说完 / interrupt 抢占 | 间隔内合并 | 是 |
+  | 静默 `idle` | 0（时机由 `idleTimeoutSec` 决定） | 恒丢弃 | 丢弃 | 否 |
 
-- **两种窗口分工**：同类聚合 `activityWindowSec`（同 kind 的事件在窗口内聚成一条）与事件最小间隔 `aiMinIntervalSec`（任意事件两次触发的最小间隔，间隔内**合并而非丢弃**）。
-- **Host 只当传感器**：`QUIET_TOOLS`、同类节流、子代理过滤不再在 Host 丢弃事件；Host 不再保留任何按频率拒绝的冷却。
+- **两种窗口分工**：同类聚合 `activityWindowSec`（默认 10s：同 kind 的事件在窗口内聚成一条并记次数）与事件最小间隔 `aiMinIntervalSec`（任意事件两次触发之间的最小时间差）。两者都是**合并**，键不同（同类 vs 任意）。
+- **合并轮何时补发**：`merge` 只往队列里攒；补发有两个时机——当前轮结束那一刻（`startTurn` 收尾），或最小间隔到期（定时器）。上限 `mergeMax`（默认 6 条，1–20），超出丢最旧并记 `merge overflow`。因此一次事件风暴的可见结果是「立刻一轮 + 补发一轮」，而不是中间全丢。
+- **唯一的绕过**：调试面板「场景演示」走 `force`，直接开一轮，不进策略表、也不改窗口状态。
 - **每次丢弃都有痕迹**：控制台能看到 `dropped` / `deferred` / `merged` 三类记录，用户不必猜「为什么没反应」。
 
 ## 4. 触摸互动（用户自定义 touchbox）
@@ -92,7 +91,7 @@ DSH Web GUI 中一只悬浮于角落的 Live2D 桌宠，实时镜像当前会话
 - 命中判定：点击点换算到包围盒比例坐标 (nx, ny)；**按图层顺序从上到下遍历**，返回第一个命中任意 box 的部位（box 重叠时上层部位生效）；未命中不响应
 - 命中检测不再依赖模型 HitArea，也不再使用旧的「空间回退阈值分档」（spatialTap 已移除）
 
-- 活动提示（ADR-036，与状态正交、不写气泡）：工具执行、审批批准/拒绝、会话开关、子代理进出各播一个短动作（`tool-read→Glance`、`tool-write→Perk`、`tool-run→Shift`、`tool-agent→Nod`、`tool-other→Tilt`、`approval-granted→Nod`、`approval-denied→ShakeHead`、`session-open→Perk`、`session-close→Sigh`、`subagent-start→Glance`、`subagent-end→Nod`）；NORMAL 优先级，不压状态与触摸；服务端 700ms 节流
+- 活动提示（ADR-036，与状态正交、不写气泡）：工具执行、审批批准/拒绝、会话开关、子代理进出各播一个短动作（`tool-read→Glance`、`tool-write→Perk`、`tool-run→Shift`、`tool-agent→Nod`、`tool-other→Tilt`、`approval-granted→Nod`、`approval-denied→ShakeHead`、`session-open→Perk`、`session-close→Sigh`、`subagent-start→Glance`、`subagent-end→Nod`）；NORMAL 优先级，不压状态与触摸。**Host 不再节流**（ADR-047）：同类事件由客户端调度器按 `activityWindowSec` 合并，超出的不会丢，只是并进下一轮场景句
 
 ### 4.2 命中后的表现
 

@@ -304,7 +304,8 @@ function parseTriggerInput(record: Record<string, unknown>): TriggerInput {
     : record.kind === 'idle' ? 'idle' as const
     : 'tap' as const
   const merged = Array.isArray(record.merged)
-    ? record.merged.filter((item): item is string => typeof item === 'string').slice(0, 8)
+    // 上限与设置项 mergeMax 的顶格一致（20）：调度器已经按用户配置裁过一次
+    ? record.merged.filter((item): item is string => typeof item === 'string').slice(0, 20)
     : undefined
   return {
     kind,

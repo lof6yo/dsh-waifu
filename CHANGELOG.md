@@ -2,8 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **触发调度归一化：事件与互动永远先到调度器（ADR-047）**
+  - 新增 `src/client/schedule.ts`：`dispatchTrigger(state, incoming, config, now)` 是唯一的调度判断（纯函数，12 条单测），客户端只执行它给出的 `run` / `defer` / `merge` / `drop`；`fireTrigger` 的十几条 if 全部删掉。
+  - 新增两个设置项（设置页「AI 驱动」）：**触摸连点窗口** `tapGapMs`（默认 1200 ms，0–5000）与**合并上限** `mergeMax`（默认 6 条，1–20）。
+  - 事件不再被丢弃：同类窗口 / 最小间隔 / 上一轮没演完这三种情况都改成**合并**（并进下一轮场景句，如「工具·读取×4」），补发时机是当前轮结束或最小间隔到期；控制台会记 `merged` / `deferred` / `dropped` 三类行，不再出现「点了没反应也没痕迹」。
+  - Host 退回纯传感器：删掉 `AI_COOLDOWN_MS`（1.2s 硬拒）与 `QUIET_TOOLS` 过滤、同类 3000ms 节流，`noteActivity` 每条活动都带序号上报；`activityWindowSec` 从死设置变为真正生效。
+  - 删掉从上线起就没跑过的客户端死代码（`lastAiRequestAt` / `pendingTap` / `AI_REQUEST_COOLDOWN_MS`）。
+
 ### Docs
-- **ADR-047（提议）：触发调度归一化**——把散落在 Host 与客户端的 15 处「拦 / 延后 / 合并」判断收敛成一个 `dispatch()` + 一张策略表：四类触发源（触摸 / 对话 / 事件 / 静默）统一走「过滤 → 时间门 → 占用门 → 被拦动作」，被拦只有 `drop` / `defer` / `merge` 三种后果且都留日志；Host 退回纯传感器（不再 `QUIET_TOOLS` 过滤、不再同类节流、不再有 1.2s 硬冷却），`activityWindowSec` 从死设置变为真正生效。spec 新增 §3.2（标注待实现）。
+- **ADR-047（已采纳）：触发调度归一化**——把散落在 Host 与客户端的 15 处「拦 / 延后 / 合并」判断收敛成一个调度器 + 一张策略表：四类触发源（触摸 / 对话 / 事件 / 静默）统一走「过滤 → 时间门 → 占用门 → 被拦动作」，被拦只有 `drop` / `defer` / `merge` 三种后果且都留日志；Host 退回纯传感器（不再 `QUIET_TOOLS` 过滤、不再同类节流、不再有 1.2s 硬冷却），`activityWindowSec` 从死设置变为真正生效。spec §3.2 已按实现重写。
 
 ### Fixed
 

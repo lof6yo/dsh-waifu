@@ -74,6 +74,8 @@ const BASE_SETTINGS: PetSettings = {
   aiMinIntervalSec: 3,
   idleTimeoutSec: 300,
   activityWindowSec: 3,
+  tapGapMs: 1200,
+  mergeMax: 6,
   eventTriggers: defaultEventTriggers(),
   eventTexts: {},
   motionTexts: {},

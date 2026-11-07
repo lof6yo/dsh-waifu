@@ -106,7 +106,7 @@ Open DSH **Settings → "dsh-waifu"**. One page, five groups top to bottom: **Di
 - **Inject memory** (default 20 entries) — the last N lines of `memory.md` go into the prompt
 - **Motions and expressions** card — lists the motions (8) and expressions (10) the model may choose from, each with a checkbox deciding whether it is offered (off = it leaves the prompt catalogue and is filtered out even if written); each row's "meaning" text can be edited (≤80 chars, empty = built-in) and previewed on the character. The "blood" expression is **not** offered by default
 - **Trigger mode** — `queue` (wait until the previous line finishes, default) or preempt (cut it off)
-- **Minimum interval** (default 1 s, event cooldown), **idle timeout** (default 600 s = speak up after 10 quiet minutes, 0 = off), **same-kind window** (default 10 s — same-kind events inside the window collapse into one; the host adds a further 700 ms throttle)
+- **Minimum interval** (default 1 s, 0 = unlimited), **idle timeout** (default 600 s = speak up after 10 quiet minutes, 0 = off), **same-kind window** (default 10 s — same-kind events collapse into one), **tap gap** (default 1200 ms — only the last tap of a burst survives) and **merge limit** (default 6 entries) — all five windows live in the client scheduler; the host never rejects by rate (ADR-047)
 - **Scenes** — 16 event kinds, each with a switch and a text box that can override "how this is described to the model" (empty = built-in, truncated to 60 chars). Only 8 are on by default: thinking / error / done / delivered / waiting / approval granted / approval denied / session open; the five tool kinds, session close and subagent traffic are off by default (too chatty during real sessions)
 - **Persona** — edit directly in the text box and "save persona" writes `$DSH_HOME/waifu/persona.md` (a template is generated the first time)
 - **Memory** — view / edit / save `$DSH_HOME/waifu/memory.md` on the same page
@@ -150,9 +150,11 @@ Activity events play a short motion (no bubble, no state change): `tool-read →
 | AI | on | `openrouter` / `google/gemma-4-31b-it` |
 | History / memory | 20 rounds / 20 entries | 0 = off |
 | Trigger mode | queue | or preempt |
-| Minimum interval | 1 s | event cooldown |
+| Minimum interval | 1 s | 0 = unlimited |
 | Idle timeout | 600 s | 0 = off |
-| Same-kind window | 10 s | |
+| Same-kind window | 10 s | same-kind merged |
+| Tap gap | 1200 ms | last tap of a burst |
+| Merge limit | 6 entries | oldest dropped |
 | Scene switches | 8 of 16 on | see above |
 | Speech | on | Flash + Longan Lingxi |
 | Lip-sync strength | 130 % | 0–300 |

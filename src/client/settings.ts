@@ -44,6 +44,8 @@ import {
   FOCUS_RANGE_LIMITS,
   IDLE_TIMEOUT_LIMITS,
   LIPSYNC_GAIN_LIMITS,
+  MERGE_MAX_LIMITS,
+  TAP_GAP_LIMITS,
   TRIGGER_EVENT_LABELS,
   TTS_MODELS,
   normalizeEventTexts,
@@ -123,8 +125,12 @@ export interface PetSettingsValue {
   aiMinIntervalSec: number
   /** 静默超时（秒，0 = 关闭）：多久没动静就让角色主动说一句。 */
   idleTimeoutSec: number
-  /** 同类事件的触发窗口（秒）：窗口内同类事件只触发一次。 */
+  /** 同类事件的触发窗口（秒）：窗口内同类事件并进合并队列（ADR-047）。 */
   activityWindowSec: number
+  /** 触摸连点窗口（毫秒）：窗口内的连续触摸只保留最后一次（ADR-047）。 */
+  tapGapMs: number
+  /** 合并上限（条）：一轮场景句里最多拼进多少条被压下的触发（ADR-047）。 */
+  mergeMax: number
   /** 按 DSH 事件类型的触发开关（触摸/对话始终可触发）。 */
   eventTriggers: Record<string, boolean>
   /** 事件文案覆写（空 = 内置文案；ADR-039）。 */
@@ -375,6 +381,46 @@ function FormLabel(props: { title: string; hint?: ReactNode }): ReactElement {
   )
 }
 
+/**
+ * 数字设置行（ADR-047）：调度窗口统一用这一副壳——输入框 + 失焦夹取 + 落库，
+ * 省掉每个窗口各写一遍 onBlur 校验。
+ */
+function NumberRow(props: {
+  title: string
+  hint?: ReactNode
+  limits: { min: number; max: number }
+  value: number
+  draft: string | undefined
+  writable: boolean
+  onDraft: (raw: string) => void
+  onCommit: (next: number) => void
+}): ReactElement {
+  const clamp = (n: number): number => Math.round(Math.min(props.limits.max, Math.max(props.limits.min, n)))
+  return createElement('div', { style: formRowInlineStyle },
+    createElement(FormLabel, { title: props.title, hint: props.hint }),
+    createElement('div', { style: formControlInlineStyle },
+      createElement('input', {
+        type: 'number',
+        min: props.limits.min,
+        max: props.limits.max,
+        step: 1,
+        value: props.draft ?? props.value,
+        disabled: !props.writable,
+        style: numberInputStyle,
+        onChange: (e: ChangeEvent<HTMLInputElement>) => props.onDraft(e.target.value),
+        onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        },
+        onBlur: (e: FocusEvent<HTMLInputElement>) => {
+          if (props.draft === undefined) return
+          const parsed = Number(e.target.value)
+          if (Number.isFinite(parsed)) props.onCommit(clamp(parsed))
+        },
+      }),
+    ),
+  )
+}
+
 /** 卡片内的折叠块：头部一行（标题 + 右侧展开/收起），展开内容用左侧细线缩进。 */
 const foldHeadStyle: CSSProperties = {
   display: 'flex',
@@ -528,6 +574,10 @@ const inputStyle: CSSProperties = {
   flex: 1,
   outline: 'none',
 }
+
+/** 数字输入框（设置页窄列）：行内右侧对齐，宽度固定便于对齐。 */
+const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
+
 
 /** 原生下拉：和输入框同尺寸（provider / 模型选择用）。 */
 const selectStyle: CSSProperties = {
@@ -1762,7 +1812,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
   const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
   const bubbleMaxSeconds = normalizeBubbleMax(state.value?.bubbleMaxSeconds, DEFAULT_VALUE.bubbleMaxSeconds)
-  const numberInputStyle: CSSProperties = { ...inputStyle, flex: '0 0 88px', width: 88, textAlign: 'right' }
   /** 偏移类输入（气泡垂直偏移 / 交互条偏移）统一 5px 一档。 */
   const OFFSET_STEP = 1
   // 交互条偏移是本机渲染态：不落盘就会被「关掉设置再打开」重置回 0
@@ -2550,33 +2599,45 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, { title: '同类事件窗口（秒）', hint: '窗口内同类 DSH 事件只触发一次（如连续读文件）；Host 侧同样有这层节流' }),
-        createElement('div', { style: formControlInlineStyle },
-          createElement('input', {
-            type: 'number',
-            min: ACTIVITY_WINDOW_LIMITS.min,
-            max: ACTIVITY_WINDOW_LIMITS.max,
-            step: 1,
-            value: numDrafts.activityWindowSec ?? value.activityWindowSec,
-            disabled: !writable,
-            style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => setNumDraft('activityWindowSec', e.target.value),
-            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-            },
-            onBlur: (e: FocusEvent<HTMLInputElement>) => {
-              if (numDrafts.activityWindowSec === undefined) return
-              const parsed = Number(e.target.value)
-              if (Number.isFinite(parsed)) {
-                const next = Math.round(Math.min(ACTIVITY_WINDOW_LIMITS.max, Math.max(ACTIVITY_WINDOW_LIMITS.min, parsed)))
-                if (next !== value.activityWindowSec) commitNumDraft('activityWindowSec', () => [{ op: 'set', path: ['activityWindowSec'], value: next }])
-                else commitNumDraft('activityWindowSec', () => [])
-              }
-            },
-          }),
-        ),
-      ),
+      createElement(NumberRow, {
+        title: '同类事件窗口（秒）',
+        hint: '窗口内同类事件并进下一轮，不各自触发（如连续读文件）',
+        limits: ACTIVITY_WINDOW_LIMITS,
+        value: value.activityWindowSec,
+        draft: numDrafts.activityWindowSec,
+        writable,
+        onDraft: (raw: string) => setNumDraft('activityWindowSec', raw),
+        onCommit: (next: number) => {
+          if (next !== value.activityWindowSec) commitNumDraft('activityWindowSec', () => [{ op: 'set', path: ['activityWindowSec'], value: next }])
+          else commitNumDraft('activityWindowSec', () => [])
+        },
+      }),
+      createElement(NumberRow, {
+        title: '触摸连点窗口（毫秒）',
+        hint: '窗口内连点只保留最后一次，到点补发（0 = 每次触摸都响应）',
+        limits: TAP_GAP_LIMITS,
+        value: value.tapGapMs,
+        draft: numDrafts.tapGapMs,
+        writable,
+        onDraft: (raw: string) => setNumDraft('tapGapMs', raw),
+        onCommit: (next: number) => {
+          if (next !== value.tapGapMs) commitNumDraft('tapGapMs', () => [{ op: 'set', path: ['tapGapMs'], value: next }])
+          else commitNumDraft('tapGapMs', () => [])
+        },
+      }),
+      createElement(NumberRow, {
+        title: '合并上限（条）',
+        hint: '一轮场景句里最多拼进多少条被压下的触发；超出丢最旧的',
+        limits: MERGE_MAX_LIMITS,
+        value: value.mergeMax,
+        draft: numDrafts.mergeMax,
+        writable,
+        onDraft: (raw: string) => setNumDraft('mergeMax', raw),
+        onCommit: (next: number) => {
+          if (next !== value.mergeMax) commitNumDraft('mergeMax', () => [{ op: 'set', path: ['mergeMax'], value: next }])
+          else commitNumDraft('mergeMax', () => [])
+        },
+      }),
       // 交互条（ADR-037 修订）：AI 驱动的对话输入入口
       createElement('div', { style: formRowInlineStyle },
         createElement(FormLabel, { title: '交互条' }),

@@ -31,6 +31,14 @@ import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
 import { stripTimestamps, hasDoubleInteraction, pickTapInteraction, DOUBLE_TAP_MS } from '../models.ts'
 import { clientLog, setClientLogObserver } from './client-log.ts'
 import {
+  dispatchTrigger,
+  flushMerged,
+  initialScheduleState,
+  type MergedTrigger,
+  type ScheduleConfig,
+  type ScheduleState,
+} from './schedule.ts'
+import {
   EXPRESSIONS,
   expressionParams,
   EXPRESSION_SWITCH_PARAMS,
@@ -63,6 +71,9 @@ import {
   normalizeBarPosition,
   type BarPosition,
   DEFAULT_TRIGGER_MODE,
+  DEFAULT_ACTIVITY_WINDOW_SEC,
+  DEFAULT_TAP_GAP_MS,
+  DEFAULT_MERGE_MAX,
   normalizeTriggerMode,
   TRIGGER_EVENTS,
   TRIGGER_EVENT_LABELS,
@@ -117,11 +128,6 @@ const DEBUG_PANEL_MIN_W = 180
 const DEBUG_PANEL_MIN_H = 140
 /** 面板与视口边缘的最小间距（px）。 */
 const DEBUG_PANEL_MARGIN = 8
-/**
- * 与 Host 的 `AI_COOLDOWN_MS` 对齐的客户端冷却：冷却内的点击**不发请求**（Host 会直接拒），
- * 也不能顺手 `stopSpeaking()` 把上一条已经说了一半的台词掐掉——否则连点两下等于「什么都没发生」。
- */
-const AI_REQUEST_COOLDOWN_MS = 1200
 /** AI 台词最短可见时长：状态切换再快，也要让这句露一脸（ADR-025 补丁）。 */
 /**
  * 默认渲染帧率上限（spec §2/§7）：未封顶时 PIXI ticker 可达 120–140fps，
@@ -604,15 +610,23 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let aiMinIntervalSec = 0
   /** 静默超时（秒，0 = 关闭）：多久没动静就让角色自己说一句（ADR-037）。 */
   let idleTimeoutSec = 0
-  /** 上次事件类触发的时间戳（最小间隔判定用）。 */
-  let lastEventTriggerAt = 0
+  /** 同类事件窗口（秒；ADR-047 起由客户端调度器执行，Host 不再节流）。 */
+  let activityWindowSec = DEFAULT_ACTIVITY_WINDOW_SEC
+  /** 触摸连点窗口（毫秒，ADR-047）。 */
+  let tapGapMs = DEFAULT_TAP_GAP_MS
+  /** 合并上限（条，ADR-047）。 */
+  let mergeMax = DEFAULT_MERGE_MAX
+  /** 触发调度的全部窗口/合并状态（ADR-047：唯一的判断来源）。 */
+  let scheduleState: ScheduleState = initialScheduleState()
+  /** 合并补发计时器（最小间隔到期那一下）。 */
+  let mergeTimer: number | undefined
+  /** 连点窗口内被延后的一次触摸（新的覆盖旧的）。 */
+  let deferredTap: { input: TriggerBody; timer: number } | null = null
   /** 静默超时计时器：任何触发都重排。 */
   let idleTimer: number | undefined
   /** 按 DSH 事件类型的触发开关（SSE config.eventTriggers；触摸/对话不在表内，必触发）。 */
   let eventTriggers: Record<string, boolean> = {}
-  /** queue 模式下攒着的触发（等上一轮说完再发；只留最新一条，ADR-037）。 */
-  let pendingTrigger: TriggerBody | null = null
-  /** 上一轮演绎是否还在进行中（queue 模式的判定依据）。 */
+  /** 上一轮演绎是否还在进行中（调度器的 busy 门）。 */
   let speakingTurnActive = false
   /** 说话时的身体语言（点头/挑眉）开关，与口型跟随一起生效。 */
   let bodyLanguageEnabled = true
@@ -638,11 +652,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let barKey = ''
   /** AI 回复请求序号：只采用最后一次请求的结果，避免连点时旧回复覆盖新回复。 */
   let aiRequestSeq = 0
-  /** 上一次真正发出的 AI 请求时间戳（与 Host 冷却同源，避免发出注定被拒的请求）。 */
-  let lastAiRequestAt = 0
-  /** 冷却期内被挡下的触摸：到点再补一次，让「点快了」不至于白点。 */
-  let pendingTap: TriggerBody | null = null
-  let pendingTapTimer: number | undefined
   /** 部位定义了双击交互时，单击要等一个双击窗口再结算（ADR-038）。 */
   let pendingDoublePart: { id: string; timer: number; flush: () => void } | null = null
   // 悬停（ADR-038 修订）：鼠标停在 box 内不点击，到时触发一次「停留」交互；
@@ -1119,38 +1128,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (last >= 0) revealClausesUntil(speakClauses[last]!.index)
   }
 
-  /** 距离下次允许发 AI 请求还有多久（ms）。 */
-  function aiCooldownLeft(): number {
-    const left = AI_REQUEST_COOLDOWN_MS - (Date.now() - lastAiRequestAt)
-    return left > 0 ? left : 0
-  }
-
-  /** 冷却期内的触摸：记下最后一下，等冷却结束补发（新的点击覆盖旧的）。 */
-  function deferTapRequest(input: TriggerBody, delay: number): void {
-    pendingTap = input
-    if (pendingTapTimer !== undefined) window.clearTimeout(pendingTapTimer)
-    pendingTapTimer = window.setTimeout(() => {
-      pendingTapTimer = undefined
-      const next = pendingTap
-      pendingTap = null
-      if (!next || disposed) return
-      void startTurn(next)
-    }, delay + 30)
-  }
-
   function clearPendingTap(): void {
     if (pendingDoublePart) {
       window.clearTimeout(pendingDoublePart.timer)
       pendingDoublePart = null
     }
-    pendingTap = null
-    if (pendingTapTimer !== undefined) {
-      window.clearTimeout(pendingTapTimer)
-      pendingTapTimer = undefined
+    if (deferredTap) {
+      window.clearTimeout(deferredTap.timer)
+      deferredTap = null
     }
   }
 
-  // ---- 触发调度（ADR-037）----
+  // ---- 触发调度（ADR-047：一个入口 + 一张策略表）----
   /**
    * 事件类触发开关（触摸/对话必触发，不在表内）。
    * 表内缺键按「开」处理：设置页只关显式关掉的那些。
@@ -1160,10 +1149,63 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     return value !== false
   }
 
-  /** 事件类触发的最小间隔是否已过（触摸/对话不受限）。 */
-  function eventIntervalPassed(): boolean {
-    if (!(aiMinIntervalSec > 0)) return true
-    return Date.now() - lastEventTriggerAt >= aiMinIntervalSec * 1000
+  /** 当前策略配置：所有窗口都来自设置项，调度器自己不存默认值。 */
+  function scheduleConfig(): ScheduleConfig {
+    return {
+      aiEnabled,
+      hidden,
+      busy: speakingTurnActive,
+      tapGapMs,
+      eventGapMs: Math.round(aiMinIntervalSec * 1000),
+      sameKindWindowMs: Math.round(activityWindowSec * 1000),
+      mergeMax,
+      triggerMode,
+    }
+  }
+
+  /** 合并项 → 场景句里的「这期间还发生了…」条目（同类合并成「×N」，主事件不重复报）。 */
+  function mergeLines(merged: readonly MergedTrigger[], mainEvent?: string): string[] {
+    const lines: string[] = []
+    for (const item of merged) {
+      const label = TRIGGER_EVENT_LABELS[item.event] ?? item.event
+      if (item.event === mainEvent) {
+        if (item.count > 1) lines.push(`${label}又来了 ${item.count - 1} 次`)
+        continue
+      }
+      lines.push(item.count > 1 ? `${label}×${item.count}` : label)
+    }
+    return lines
+  }
+
+  /** 连点窗口内的触摸：只留最后一次，到点补发（届时窗口已过，会直接触发）。 */
+  function deferTrigger(input: TriggerBody, delayMs: number): void {
+    if (deferredTap) window.clearTimeout(deferredTap.timer)
+    const timer = window.setTimeout(() => {
+      deferredTap = null
+      if (disposed) return
+      fireTrigger(input)
+    }, delayMs + 30)
+    deferredTap = { input, timer }
+  }
+
+  /** 合并队列到点补发（只在空闲时发；忙的时候交给轮次结束那一刻）。 */
+  function flushSchedule(): void {
+    if (disposed || !aiEnabled || speakingTurnActive) return
+    const flushed = flushMerged(scheduleState)
+    if (flushed.incoming === null) return
+    scheduleState = flushed.state
+    const mainEvent = flushed.incoming.event
+    void startTurn({ kind: 'event', event: mainEvent, merged: mergeLines(flushed.merged, mainEvent) })
+  }
+
+  /** 事件最小间隔到期后补发合并轮。 */
+  function scheduleMergeFlush(nextAt: number): void {
+    if (mergeTimer !== undefined) window.clearTimeout(mergeTimer)
+    const delay = Math.max(0, nextAt - Date.now())
+    mergeTimer = window.setTimeout(() => {
+      mergeTimer = undefined
+      flushSchedule()
+    }, delay + 20)
   }
 
   /** 静默超时：任何真实触发都重排；0 = 关闭。 */
@@ -1181,70 +1223,58 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     idleTimer = window.setTimeout(() => {
       idleTimer = undefined
       if (disposed || !aiEnabled) return
-      void startTurn({ kind: 'idle' })
+      fireTrigger({ kind: 'idle' })
     }, idleTimeoutSec * 1000 + IDLE_TIMER_SLACK_MS)
   }
 
   /**
-   * 触发入口（ADR-037）：统一走这条。
-   * - 触摸/对话：必触发；冷却内触摸记 defer 到点补发。
-   * - 事件类（DSH 状态/活动）：先过 eventTriggers 开关，再过最小间隔；
-   *   interrupt 模式直接开新一轮（旧一轮的 SSE 由 speakSeq 作废）；
-   *   queue 模式下若上一轮还在说，攒 pendingTrigger 等本轮结束后发（只留最新）。
-   * - 上一轮进行中到达的事件（interrupt 模式下被截断前的窗口内事件）合并进 `merged`。
+   * 唯一触发入口（ADR-047）：事件与互动**永远先到这里**，由策略表决定怎么处理。
+   * - run：立刻开一轮（带上一轮攒下的合并项）；
+   * - defer：连点窗口内，等窗口过了再发；
+   * - merge：并进下一次触发（同类窗口 / 最小间隔 / 上一轮没演完），丢弃的每一条都有日志；
+   * - drop：真的不发（AI 关、页面隐藏、场景开关关、静默撞上进行中的一轮）。
+   * `force` 只给调试面板「场景演示」用：显式绕过策略表，也不改窗口状态。
    */
   function fireTrigger(input: TriggerBody, options?: { force?: boolean }): void {
-    const force = options?.force === true
-    if (!aiEnabled) {
-      clientLog('info', `trigger skipped | ai disabled | ${input.kind}${input.event ? `:${input.event}` : ''}`)
-      return
-    }
-    // 页面隐藏（切标签页/最小化）：不请求、不排队——活动照常累积在 Host，回来再看
-    if (hidden) {
-      clientLog('info', `trigger skipped | page hidden | ${input.kind}${input.event ? `:${input.event}` : ''}`)
-      return
-    }
-    if (input.kind === 'tap' || input.kind === 'chat') {
+    const label = input.kind === 'event' ? `${input.kind}:${input.event ?? '-'}` : input.kind
+    if (options?.force === true) {
+      conPush('trigger', `force | ${label}`)
       scheduleIdleTimer()
-      if (input.kind === 'tap') {
-        const cooldownLeft = aiCooldownLeft()
-        if (cooldownLeft > 0) {
-          deferTapRequest(input, cooldownLeft)
-          return
-        }
-      }
       void startTurn(input)
       return
     }
-    // 事件类：idle 状态本身不是触发（静默超时另行处理）
-    if (input.kind === 'event') {
-      // force = 调试面板「场景演示」强制触发：跳过场景开关与最小间隔，也不占用真实事件的时间预算
-      if (!force) {
-        if (input.event !== undefined && !eventTriggerEnabled(input.event)) return
-        if (!eventIntervalPassed()) return
-        lastEventTriggerAt = Date.now()
-      }
-      scheduleIdleTimer()
-      if (triggerMode === 'queue' && speakingTurnActive) {
-        // 排队等完成：只留最新一条
-        pendingTrigger = input
+    const switchOff = input.kind === 'event' && input.event !== undefined && !eventTriggerEnabled(input.event)
+    const { decision, state } = dispatchTrigger(
+      scheduleState,
+      { kind: input.kind, event: input.event, switchOff },
+      scheduleConfig(),
+      Date.now(),
+    )
+    scheduleState = state
+    switch (decision.action) {
+      case 'run':
+        scheduleIdleTimer()
+        void startTurn({ ...input, merged: mergeLines(decision.merged, input.event) })
         return
-      }
-      void startTurn(input)
+      case 'defer':
+        conPush('trigger', `deferred | ${label} | ${decision.reason} ${decision.delayMs}ms`)
+        deferTrigger(input, decision.delayMs)
+        return
+      case 'merge':
+        conPush('trigger', `merged | ${label} | ${decision.reason}`)
+        if (decision.overflowed > 0) conPush('trigger', `merge overflow | 丢掉最旧 ${decision.overflowed} 条`)
+        if (decision.nextAt > 0) scheduleMergeFlush(decision.nextAt)
+        return
+      case 'drop':
+        clientLog('info', `trigger dropped | ${label} | ${decision.reason}`)
+        conPush('trigger', `dropped | ${label} | ${decision.reason}`)
+        return
     }
   }
 
-  /** interrupt 模式开新轮：作废旧轮的 SSE 结果与音频。 */
+  /** 开一轮：interrupt 模式作废旧轮；queue 模式下轮次结束时补发合并队列。 */
   function startTurn(input: TriggerBody): Promise<string | null> {
     if (hidden) return Promise.resolve(null)
-    // 触发期间攒下的其他事件：并进这轮场景（「这期间还发生了：…」）
-    if (pendingTrigger !== null && pendingTrigger.kind === 'event') {
-      const extra = pendingTrigger.event
-      if (extra !== undefined && extra !== input.event) {
-        input = { ...input, merged: [...(input.merged ?? []), extra] }
-      }
-      pendingTrigger = null
-    }
     // 控制台第一行永远是「这轮是什么触发的」（ADR-043）
     conPushJson('trigger', input)
     if (triggerMode === 'interrupt') {
@@ -1252,14 +1282,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       speakSeq += 1
     }
     speakingTurnActive = true
-    // 轮次真正结束（语音播完或一次性回复返回）才解锁；queue 模式随即补发攒下的下一条
+    // 轮次真正结束（语音播完或一次性回复返回）才解锁；queue 模式随即补发攒下的合并项
     return requestSpeak(input).finally(() => {
       speakingTurnActive = false
-      if (triggerMode === 'queue' && pendingTrigger !== null && aiEnabled) {
-        const next = pendingTrigger
-        pendingTrigger = null
-        void startTurn(next)
-      }
+      flushSchedule()
     })
   }
 
@@ -3372,6 +3398,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         aiEnabled = view.config.aiEnabled === true
         triggerMode = normalizeTriggerMode(view.config.triggerMode, triggerMode)
         aiMinIntervalSec = Number.isFinite(view.config.aiMinIntervalSec) ? Math.max(0, view.config.aiMinIntervalSec!) : aiMinIntervalSec
+        activityWindowSec = Number.isFinite(view.config.activityWindowSec) ? Math.max(0, view.config.activityWindowSec!) : activityWindowSec
+        tapGapMs = Number.isFinite(view.config.tapGapMs) ? Math.max(0, view.config.tapGapMs!) : tapGapMs
+        mergeMax = Number.isFinite(view.config.mergeMax) ? Math.max(1, view.config.mergeMax!) : mergeMax
         idleTimeoutSec = Number.isFinite(view.config.idleTimeoutSec) ? Math.max(0, view.config.idleTimeoutSec!) : idleTimeoutSec
         eventTriggers = (view.config.eventTriggers && typeof view.config.eventTriggers === 'object')
           ? view.config.eventTriggers

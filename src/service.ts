@@ -102,6 +102,10 @@ export interface PetStateView {
     idleTimeoutSec: number
     /** 同类事件触发窗口（秒）。 */
     activityWindowSec: number
+    /** 触摸连点窗口（毫秒）。 */
+    tapGapMs: number
+    /** 合并上限（条）。 */
+    mergeMax: number
     /** 按 DSH 事件类型粒度的触发开关。 */
     eventTriggers: Record<string, boolean>
     /** 语音合成与口型（ADR-033）。 */
@@ -125,26 +129,6 @@ export interface PetStateView {
 /** "完成/交付"庆祝状态在回到空闲前的保持时长（ms）。 */
 const DONE_HOLD_MS = 3500
 
-/**
- * 同类活动的最小间隔（ms）：读文件/跑命令一秒好几次，全播会像抽筋、也像话痨（ADR-036）。
- * 只对「同类」节流 —— 否则派子代理时 `tool-agent` 会把紧随其后的 `subagent-start` 吞掉。
- * 窗口时长来自设置项 activityWindowSec（ADR-037），默认 3 秒。
- */
-const ACTIVITY_THROTTLE_MS = 3000
-
-/**
- * 不参与活动提示的工具：上下文压缩、记忆、技能、提问这类内部动作太频繁，
- * 全播会变成一路「顺手做了。」的噪音。
- */
-const QUIET_TOOLS = new Set([
-  'compress', 'acp_status', 'acp_cache', 'decompress', 'search_context',
-  'todo_write', 'skill', 'present', 'ask_user_question',
-  'mnemon_runtime_memory', 'mnemon_recall', 'mnemon_remember', 'mnemon_status',
-  'mnemon_document_search', 'mnemon_document_create', 'mnemon_document_manage',
-  'mnemon_memory_bodies', 'mnemon_memory_body_create', 'mnemon_memory_body_update',
-  'mnemon_memory_body_merge', 'mnemon_link', 'mnemon_forget', 'mnemon_related',
-])
-
 /** 变化通知监听器（状态/显示/配置变化时触发，供 SSE 推送使用）。 */
 type ChangeListener = () => void
 
@@ -157,7 +141,6 @@ export class PetService {
   private holdTimerId: ReturnType<typeof setTimeout> | undefined
   private activity: PetActivity | null = null
   private activitySeq = 0
-  private lastActivityAtByKind = new Map<PetActivityKind, number>()
   /** 子代理的会话 id：它们的 status/turn-stopping 不该驱动宠物状态（ADR-036 修订）。 */
   private readonly subagentIds = new Set<string>()
   private listeners = new Set<ChangeListener>()
@@ -265,8 +248,6 @@ export class PetService {
   private noteTool(name: string | undefined): void {
     if (!name) return
     const tool = name.toLowerCase()
-    if (tool.startsWith('mcp__')) return
-    if (QUIET_TOOLS.has(tool)) return
     if (/^(bash|terminal|kill|job)/.test(tool)) this.noteActivity('tool-run')
     else if (/^(write|edit|multi_edit|apply_patch|notebook_edit)/.test(tool)) this.noteActivity('tool-write')
     else if (/^(read|glob|grep|ls|list|search|web)/.test(tool)) this.noteActivity('tool-read')
@@ -274,11 +255,11 @@ export class PetService {
     else this.noteActivity('tool-other')
   }
 
-  /** 记录一次性活动；同类活动 700ms 内只播一次，避免动作乱蹦（ADR-036）。 */
+  /**
+   * 记录一次性活动（ADR-047）：Host 只当传感器，不按类型节流、不按工具名过滤——
+   * 每一次活动都带序号推给客户端，由那边的调度器按 `activityWindowSec` 合并。
+   */
   private noteActivity(kind: PetActivityKind): void {
-    const now = Date.now()
-    if (now - (this.lastActivityAtByKind.get(kind) ?? 0) < ACTIVITY_THROTTLE_MS) return
-    this.lastActivityAtByKind.set(kind, now)
     this.activitySeq += 1
     this.activity = { seq: this.activitySeq, kind }
     this.version += 1
@@ -361,6 +342,8 @@ export class PetService {
         aiMinIntervalSec: settings.aiMinIntervalSec,
         idleTimeoutSec: settings.idleTimeoutSec,
         activityWindowSec: settings.activityWindowSec,
+        tapGapMs: settings.tapGapMs,
+        mergeMax: settings.mergeMax,
         eventTriggers: settings.eventTriggers,
         ttsEnabled: settings.ttsEnabled,
         ttsModel: settings.ttsModel,

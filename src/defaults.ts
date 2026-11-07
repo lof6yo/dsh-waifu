@@ -41,10 +41,10 @@ export const DEFAULT_AI_HISTORY = 20
 export const DEFAULT_AI_MEMORY = 20
 
 /**
- * 触发频率策略（ADR-037）：
+ * 触发频率策略（ADR-037 / ADR-047）：
  * - `interrupt`：截断抢占——新触发直接掐掉上一轮（说话/语音立刻断，动作表情立刻换）；
- * - `queue`：排队等完成——上一轮「气泡出完 + 语音念完」后才处理下一条（只留最新一条，
- *   等待期间到达的事件合并进下一条的场景里）。
+ * - `queue`：排队等完成——上一轮「气泡出完 + 语音念完」后才处理下一条；等待期间到达的
+ *   事件不丢，攒进合并队列后并进下一轮场景句（上限见 `mergeMax`）。
  */
 export const TRIGGER_MODES = ['interrupt', 'queue'] as const
 export type TriggerMode = (typeof TRIGGER_MODES)[number]
@@ -63,9 +63,17 @@ export const AI_MIN_INTERVAL_LIMITS = { min: 0, max: 600 } as const
 export const DEFAULT_IDLE_TIMEOUT_SEC = 600
 export const IDLE_TIMEOUT_LIMITS = { min: 0, max: 3600 } as const
 
-/** 同类事件触发窗口（秒，Host 节流）：窗口内同类活动只触发一次。 */
+/** 同类事件触发窗口（秒，客户端）：窗口内的同类活动并进合并队列，不各自触发（ADR-047）。 */
 export const DEFAULT_ACTIVITY_WINDOW_SEC = 10
 export const ACTIVITY_WINDOW_LIMITS = { min: 0, max: 300 } as const
+
+/** 触摸连点窗口（毫秒）：窗口内的连续触摸只保留最后一次，到点补发（ADR-047）。 */
+export const DEFAULT_TAP_GAP_MS = 1200
+export const TAP_GAP_LIMITS = { min: 0, max: 5000 } as const
+
+/** 合并上限（条）：一轮场景句里最多拼进多少条被压下的触发，超出丢最旧的（ADR-047）。 */
+export const DEFAULT_MERGE_MAX = 6
+export const MERGE_MAX_LIMITS = { min: 1, max: 20 } as const
 
 /** 场景开关表（Record 形式持久化在 settings.jsonc）。 */
 export type EventTriggers = Record<string, boolean>
@@ -360,6 +368,10 @@ export const DEFAULT_SETTINGS = {
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT_SEC,
   /** 同类事件触发窗口（秒）。 */
   activityWindowSec: DEFAULT_ACTIVITY_WINDOW_SEC,
+  /** 触摸连点窗口（毫秒；0 = 不合并）。 */
+  tapGapMs: DEFAULT_TAP_GAP_MS,
+  /** 一轮场景句里最多拼进多少条被压下的触发。 */
+  mergeMax: DEFAULT_MERGE_MAX,
   /** 按事件类型的触发开关（v8 起持久化；normalizeSettings 会补全键）。 */
   eventTriggers: defaultEventTriggers(),
   /** 事件文案覆写（空 = 用内置文案；键为事件键）。 */

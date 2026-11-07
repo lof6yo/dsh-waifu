@@ -31,6 +31,10 @@ import {
   DEFAULT_AI_MIN_INTERVAL_SEC,
   DEFAULT_IDLE_TIMEOUT_SEC,
   DEFAULT_ACTIVITY_WINDOW_SEC,
+  DEFAULT_MERGE_MAX,
+  DEFAULT_TAP_GAP_MS,
+  MERGE_MAX_LIMITS,
+  TAP_GAP_LIMITS,
   DEFAULT_TRIGGER_MODE,
   BAR_OFFSET_LIMITS,
   DEFAULT_BAR_OFFSET,
@@ -174,8 +178,12 @@ export const Config: Schema<Config> = Schema.object({
   aiMinIntervalSec: Schema.number().min(0).max(600).default(DEFAULT_AI_MIN_INTERVAL_SEC),
   /** 静默超时（秒，0 = 关闭）：多久没有任何事件/互动就自动让角色说一句话（ADR-037）。 */
   idleTimeoutSec: Schema.number().min(0).max(3600).default(DEFAULT_IDLE_TIMEOUT_SEC),
-  /** 同类 DSH 事件的触发窗口（秒）：窗口内同类事件只触发一次（ADR-037）。 */
+  /** 同类 DSH 事件的触发窗口（秒）：窗口内同类事件并进合并队列（ADR-047）。 */
   activityWindowSec: Schema.number().min(0).max(300).default(DEFAULT_ACTIVITY_WINDOW_SEC),
+  /** 触摸连点窗口（毫秒，0 = 不合并）：窗口内的连续触摸只保留最后一次（ADR-047）。 */
+  tapGapMs: Schema.number().min(TAP_GAP_LIMITS.min).max(TAP_GAP_LIMITS.max).default(DEFAULT_TAP_GAP_MS),
+  /** 合并上限（条）：一轮场景句里最多拼进多少条被压下的触发（ADR-047）。 */
+  mergeMax: Schema.number().min(MERGE_MAX_LIMITS.min).max(MERGE_MAX_LIMITS.max).default(DEFAULT_MERGE_MAX),
   /** 交互条贴在模型上方 / 下方，或干脆不显示（静音 + 对话输入）。 */
   barPosition: Schema.union([
     Schema.const('top'),
@@ -232,6 +240,8 @@ export function apply(ctx: Context, config: Config): void {
     aiMinIntervalSec: config.aiMinIntervalSec,
     idleTimeoutSec: config.idleTimeoutSec,
     activityWindowSec: config.activityWindowSec,
+    tapGapMs: config.tapGapMs,
+    mergeMax: config.mergeMax,
     eventTriggers: defaultEventTriggers(),
     eventTexts: {},
     motionTexts: {},
@@ -271,9 +281,7 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   // AI 驱动（ADR-037）：全部反应（台词/动作/表情/记忆）由一次 LLM 调用产生。
-  // 冷却：1.2s 内只接一次新触发（触摸/对话在客户端另有一层调度；这里是最后防线）
-  const AI_COOLDOWN_MS = 1200
-  let lastAiAt = 0
+  // 频率控制一律在客户端调度器里（ADR-047）：Host 不按时间拒绝，只如实转发。
   // 最近对话（ADR-030）：只存内存，进程重启即清空；条数由设置页 `aiHistoryCount` 决定注入多少
   let aiHistory: AiHistoryEntry[] = []
   // 最近一次真正发给模型的载荷（排查注入是否生效；ADR-030 追加 /ai-debug）
@@ -282,17 +290,15 @@ export function apply(ctx: Context, config: Config): void {
   let lastSpeakPayload: TtsPayload | null = null
   let payloadSink: 'tts' | 'speak' = 'tts'
   /**
-   * AI 触发的公共前置（/interact 与 /speak 共用）：开关 → 1.2s 冷却 → 时区归一化。
-   * 触发频率策略（interrupt/queue）在客户端执行；Host 只挡最基本的刷屏。
+   * AI 触发的公共前置（/interact 与 /speak 共用）：开关 → 时区归一化。
+   * 触发频率策略（interrupt/queue / 各种窗口）全在客户端调度器里执行（ADR-047）：
+   * Host 只是传感器与转发层，不按频率拒绝、也不替角色做任何状态推导。
    */
   const beginAiTurn = (
     input: TriggerInput,
   ): { ok: true; settings: PetSettings; context: ReplyContext } | { ok: false; error: string } => {
     const settings = settingsStore.get()
     if (!settings.aiEnabled) return { ok: false, error: 'ai-disabled' }
-    const now = Date.now()
-    if (now - lastAiAt < AI_COOLDOWN_MS) return { ok: false, error: 'cooldown' }
-    lastAiAt = now
     // 时区来自浏览器（宿主可能在 UTC 上跑），非法或缺省时 formatNow 会回落本地时区
     const tz = normalizeTimeZone(input.tz)
     const context: ReplyContext = {

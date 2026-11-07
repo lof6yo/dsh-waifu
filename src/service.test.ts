@@ -38,6 +38,8 @@ const BASE_SETTINGS: PetSettings = {
   aiMinIntervalSec: 3,
   idleTimeoutSec: 300,
   activityWindowSec: 3,
+  tapGapMs: 1200,
+  mergeMax: 6,
   eventTriggers: defaultEventTriggers(),
   eventTexts: {},
   motionTexts: {},
@@ -302,22 +304,18 @@ describe('PetService 变更订阅', () => {
 })
 
 describe('PetService 活动提示（ADR-036）', () => {
-  it('工具调用按名字归类，同类 3s 内只播一次（不同类互不压制）', () => {
+  it('工具调用按名字归类，每一次都带新序号推出去（ADR-047：Host 不再节流）', () => {
     const { service, emit } = makeHarness()
     expect(service.snapshot().activity).toBeNull()
     emit('tools/pre-execute', { name: 'read' })
     const first = service.snapshot().activity
     expect(first?.kind).toBe('tool-read')
     const seq = first!.seq
-    // 同类再来一次：被节流
+    // 同类连打：照样每次都发（合并交给客户端调度器）
     emit('tools/pre-execute', { name: 'read' })
-    expect(service.snapshot().activity?.seq).toBe(seq)
-    // 不同类：立即播（否则派代理会吞掉紧随其后的 subagent/start）
+    expect(service.snapshot().activity).toMatchObject({ kind: 'tool-read', seq: seq + 1 })
     emit('tools/pre-execute', { name: 'bash' })
-    expect(service.snapshot().activity).toMatchObject({ kind: 'tool-run', seq: seq + 1 })
-    vi.advanceTimersByTime(3200)
-    emit('tools/pre-execute', { name: 'bash' })
-    expect(service.snapshot().activity?.seq).toBe(seq + 2)
+    expect(service.snapshot().activity).toMatchObject({ kind: 'tool-run', seq: seq + 2 })
   })
 
   it('写文件 / 派子代理 / 其它工具各自归类', () => {
@@ -332,12 +330,16 @@ describe('PetService 活动提示（ADR-036）', () => {
     expect(service.snapshot().activity?.kind).toBe('tool-other')
   })
 
-  it('内部工具（压缩/记忆/待办/提问）不触发活动', () => {
+  it('内部工具也照常上报（Host 只当传感器，噪音由客户端同类窗口合并）', () => {
     const { service, emit } = makeHarness()
+    const before = service.snapshot().activity
     for (const name of ['compress', 'acp_status', 'todo_write', 'mnemon_recall', 'skill', 'ask_user_question']) {
       emit('tools/pre-execute', { name })
     }
-    expect(service.snapshot().activity).toBeNull()
+    const after = service.snapshot().activity
+    expect(after).not.toBeNull()
+    expect(after!.kind).toBe('tool-other')
+    expect(after!.seq).toBeGreaterThan(before?.seq ?? 0)
   })
 
   it('派子代理的 tool-agent 不吞掉 subagent/start', () => {

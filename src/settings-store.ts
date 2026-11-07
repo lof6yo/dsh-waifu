@@ -21,6 +21,8 @@ import {
   AI_MIN_INTERVAL_LIMITS,
   BAR_OFFSET_LIMITS,
   IDLE_TIMEOUT_LIMITS,
+  MERGE_MAX_LIMITS,
+  TAP_GAP_LIMITS,
   defaultEventTriggers,
   normalizeBarPosition,
   normalizeEventTriggers,
@@ -100,8 +102,12 @@ export interface PetSettings {
   aiMinIntervalSec: number
   /** 静默超时（秒，0 = 关闭）：多久没有任何事件/互动就自动让角色说一句话。 */
   idleTimeoutSec: number
-  /** 同类 DSH 事件的触发窗口（秒）：窗口内同类事件只触发一次。 */
+  /** 同类 DSH 事件的触发窗口（秒）：窗口内同类事件并进合并队列，不各自触发（ADR-047）。 */
   activityWindowSec: number
+  /** 触摸连点窗口（毫秒）：窗口内的连续触摸只保留最后一次（ADR-047）。 */
+  tapGapMs: number
+  /** 合并上限（条）：一轮场景句里最多拼进多少条被压下的触发（ADR-047）。 */
+  mergeMax: number
   /** 按 DSH 事件类型粒度的触发开关（触摸/对话始终可触发，不在此表）。 */
   eventTriggers: EventTriggers
   /** 事件文案覆写（空 = 内置文案；ADR-039）。 */
@@ -149,7 +155,7 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
 //        aiEnabled / aiProvider / aiModel / aiHistoryCount / aiMemoryCount / triggerMode /
-//        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / eventTriggers /
+//        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / tapGapMs / mergeMax / eventTriggers /
 //        ttsEnabled / ttsEngine / ttsModel / ttsVoice / lipsyncEnabled / lipsyncGain`
 
 /**
@@ -290,6 +296,8 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     aiMinIntervalSec: clampInt(record.aiMinIntervalSec, base.aiMinIntervalSec, AI_MIN_INTERVAL_LIMITS.min, AI_MIN_INTERVAL_LIMITS.max),
     idleTimeoutSec: clampInt(record.idleTimeoutSec, base.idleTimeoutSec, IDLE_TIMEOUT_LIMITS.min, IDLE_TIMEOUT_LIMITS.max),
     activityWindowSec: clampInt(record.activityWindowSec, base.activityWindowSec, ACTIVITY_WINDOW_LIMITS.min, ACTIVITY_WINDOW_LIMITS.max),
+    tapGapMs: clampInt(record.tapGapMs, base.tapGapMs, TAP_GAP_LIMITS.min, TAP_GAP_LIMITS.max),
+    mergeMax: clampInt(record.mergeMax, base.mergeMax, MERGE_MAX_LIMITS.min, MERGE_MAX_LIMITS.max),
     eventTriggers: version >= SETTINGS_SCHEMA_VERSION ? eventTriggers : defaultEventTriggers(),
     eventTexts,
     motionTexts,

@@ -1,6 +1,6 @@
 # ADR-047：触发调度归一化（一个调度器 + 一张策略表）
 
-- 状态：提议（Proposed，待实现）
+- 状态：已采纳（Accepted，2026-11-07 实现）
 - 日期：2026-11-07
 
 ## 背景
@@ -62,18 +62,18 @@ tap / chat / event / idle  →  dispatch(trigger)  →  startTurn(trigger, merge
 | `defer` | 记住最后一次，到点补发 | 反应延后，不会消失 |
 | `merge` | 带原始时间与来源排进 `merged[]`，并入下一轮场景句 | 下一轮台词里会提到「这期间还发生了…」 |
 
-`merged` 上限 `MERGE_MAX = 6` 条，超出按时间丢最旧并记 `merge overflow`。
+`merged` 上限由设置项 `mergeMax`（默认 6，1–20）决定，超出按时间丢最旧并记 `merge overflow`。
 
 ### 4. 策略表（唯一真值）
 
 | 触发源 | `gap` | 占用门（上一轮进行中） | 被拦动作 | 合并 |
 |---|---|---|---|---|
-| `tap`（触摸） | `TAP_GAP_MS = 1200`（常量，不暴露） | 恒为 `interrupt`（打断上一轮） | `defer` | 否 |
+| `tap`（触摸） | `tapGapMs`（设置项，默认 1200ms，0–5000） | 恒为 `interrupt`（打断上一轮） | `defer` | 否 |
 | `chat`（对话框） | 0 | 恒为 `interrupt` | `drop` | 否 |
 | `event`（DSH 事件） | `aiMinIntervalSec`（0 = 不限） | `triggerMode`（`queue` / `interrupt`） | 间隔内 `merge`；忙时按占用门 | 是 |
 | `idle`（静默超时） | 0（由 `idleTimeoutSec` 控制时机） | 恒为 `drop` | `drop` | 否 |
 
-触摸恒抢占、事件听 `triggerMode`、idle 绝不插话——这三条是手感决定，不下放成设置。
+触摸恒抢占、事件听 `triggerMode`、idle 绝不插话——这三条是手感决定，不下放成设置；窗口长度则全部下放（`tapGapMs` / `aiMinIntervalSec` / `activityWindowSec` / `mergeMax`）。
 
 ### 5. 事件的两种「窗口」分工明确
 
@@ -84,7 +84,7 @@ tap / chat / event / idle  →  dispatch(trigger)  →  startTurn(trigger, merge
 
 ### 6. 删除 Host 频率冷却
 
-`AI_COOLDOWN_MS` / `lastAiAt` / `beginAiTurn` 的拒绝分支整体删除。全系统的频率控制只在客户端策略表出现一次。同时补上 `lastAiRequestAt = Date.now()`，让触摸的 `defer` 真正生效（否则又把「连点丢第二次」原样搬回来）。
+`AI_COOLDOWN_MS` / `lastAiAt` / `beginAiTurn` 的拒绝分支整体删除。全系统的频率控制只在客户端策略表出现一次。触摸的「连点只留最后一次」不再依赖 `lastAiRequestAt`（那是个从没赋过值的死变量），改由调度器状态 `lastTapAt` 承担。
 
 ### 7. 每条丢弃都必须留痕
 
@@ -102,20 +102,29 @@ tap / chat / event / idle  →  dispatch(trigger)  →  startTurn(trigger, merge
 
 ## 影响
 
-- 新增 `src/client/schedule.ts`（策略表 + 纯函数 `decide(source, now, state)`，可单测）。
-- 改 `src/client/index.ts`：`fireTrigger` / `startTurn` / `scheduleIdleTimer` 收敛到 `dispatch`；删除死代码分支。
-- 改 `src/service.ts`：`noteActivity` 去掉同类节流与 `QUIET_TOOLS` 过滤（保留 kind 归类），`activityWindowSec` 由客户端读取。
-- 改 `src/index.ts`：删 `AI_COOLDOWN_MS` 与拒绝分支；`activityWindowSec` 语义变为客户端聚合窗口。
-- 文档：spec §3.2 触发调度；本 ADR；CHANGELOG。
-- 测试：调度器纯函数单测（假时钟）+ 端口级回归（现有 197 条）+ 线上实测脚本按源各跑一遍。
+- 新增 `src/client/schedule.ts`：策略表 + 纯函数 `dispatchTrigger(state, incoming, config, now)` / `flushMerged(state)`，不读时钟、不碰 DOM。
+- 改 `src/client/index.ts`：`fireTrigger` 收敛成调度器调用方；`startTurn` 在轮次结束补发合并队列；删掉 `pendingTrigger` / `pendingTap` / `lastAiRequestAt` / `AI_REQUEST_COOLDOWN_MS` 等旧门与死代码。
+- 改 `src/service.ts`：`noteActivity` 去掉同类节流与 `QUIET_TOOLS` 过滤（保留 kind 归类），`activityWindowSec` 移交客户端。
+- 改 `src/index.ts`：删 `AI_COOLDOWN_MS` 与拒绝分支；新增 `tapGapMs` / `mergeMax` 设置项（schema + 快照下发）。
+- 改 `src/settings-store.ts` / `src/defaults.ts`：两个新设置项的默认值（1200ms / 6）与夹取范围。
+- 改 `src/client/settings.ts`：AI 驱动分组新增「触摸连点窗口」「合并上限」两行；三行数字设置统一用 `NumberRow`。
+- 测试：`src/client/schedule.test.ts` 12 条纯函数用例（假时钟）；`src/service.test.ts` 两条旧断言改为「Host 不节流」；全量 209 条通过。
+- 文档：spec §3.2 触发调度；本 ADR；README 默认值表；CHANGELOG。
 
-## 迁移顺序（每步可独立验收）
+## 实现（2026-11-07）
 
-1. `schedule.ts` 骨架 + 策略表常量 + 单测（不改行为）
-2. 入口归一：`fireTrigger` / `startTurn` / idle 并入 `dispatch`，行为等价
-3. 过滤归一：Host 的 `QUIET_TOOLS` / 同类节流搬到客户端，`activityWindowSec` 接上
-4. 删除 Host 冷却；补 `lastAiRequestAt`
-5. spec / README / CHANGELOG 收尾 + 线上按源验收
+按原计划五步落地，行为细节三处与提议稿不同，以本节为准：
+
+1. **事件与互动「永远先到调度器」**：`applyActivity` / `applyState` / 触摸 / 对话 / 静默五个来源都只调 `fireTrigger`，没有任何一处再自行判断频率。
+2. **合并轮什么时候发**：`merge` 只把事件攒进队列；真正补发有两个时机——① 当前轮结束（`startTurn` 的 `finally`）；② 最小间隔到期（`scheduleMergeFlush` 定时器，`nextAt > 0` 时）。因此「一次事件风暴」= 立刻一轮 + 补发一轮，而不是把中间的事件全丢掉。
+3. **`force` 是唯一绕过**：调试面板「场景演示」直接 `startTurn`，不进策略表、也不改窗口状态（否则演示会污染真实节奏）。
+
+设置项（设置页「AI 驱动」分组，本次新增两项）：
+
+| 设置项 | key | 范围 / 默认 | 作用 |
+|---|---|---|---|
+| 触摸连点窗口（毫秒） | `tapGapMs` | 0–5000 / 1200 | 窗口内连点只留最后一次，到点补发 |
+| 合并上限（条） | `mergeMax` | 1–20 / 6 | 一轮场景句最多拼进多少条被压下的触发 |
 
 ## 明确不做
 
