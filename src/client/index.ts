@@ -28,6 +28,7 @@ import type { ReactNode } from 'react'
 import type { PetState, PetStateView } from '../service.ts'
 import { PetSettingsSection } from './settings.ts'
 import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
+import { type Cue, MOTION_QUEUE_MAX, pushMotion, readCues, splitCues } from './cue-queue.ts'
 import { stripTimestamps, hasDoubleInteraction, pickTapInteraction, DOUBLE_TAP_MS } from '../models.ts'
 import { clientLog, setClientLogObserver } from './client-log.ts'
 import {
@@ -184,6 +185,8 @@ const TOUCHBOX_PALETTE = [
 const EXPRESSION_FADE_MS = 280
 /** AI 标签表情的临时保持时长（ms）：到期回落默认表情（ADR-037）。 */
 const TAG_EXPRESSION_HOLD_MS = 4200
+/** 单个动作最长等多久（motionFinish 丢信号时不让队列卡死）。 */
+const MOTION_WAIT_MS = 6000
 /** 静默超时兜底步长（ms）：计时器误差容忍，避免和设置值贴边抖动。 */
 const IDLE_TIMER_SLACK_MS = 250
 
@@ -1062,6 +1065,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let speakSeq = 0
   /** 本轮已经下发的句读（气泡按音频进度逐段显示）。 */
   let speakClauses: { index: number; text: string }[] = []
+  /** 每段台词该演什么（ADR-048 P3）：`clause` 帧里的 cues，按段号索引。 */
+  let speakCues = new Map<number, Cue[]>()
+  /** 已经执行过 cue 的最大段号（跳过没音频的段也不漏演）。 */
+  let speakCueIndex = -1
+  /** 还没被 cue 接管的 `tags` 帧（旧 Host 没有 cues 时仍按它播）。 */
+  let pendingTags: { expressions: string[]; motions: string[] } | null = null
+  /** 动作串行队列：一段一句，播完（motionFinish）再放下一个。 */
+  let motionQueue: string[] = []
+  let motionBusy = false
+  let motionWaiters: (() => void)[] = []
   /** 已经显示到第几段（-1 = 还没显示）。 */
   let speakRevealed = -1
   /** 音频播放串行链：保证第 0 段播完才播第 1 段。 */
@@ -1114,6 +1127,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     resolve?.(null)
     speakClauses = []
     speakRevealed = -1
+    speakCues = new Map()
+    speakCueIndex = -1
+    pendingTags = null
+    motionQueue = []
+    const waiters = motionWaiters
+    motionWaiters = []
+    for (const wake of waiters) wake()
+    clearStickyExpression()
     mouthLevel = 0
   }
 
@@ -1372,13 +1393,24 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 演出（动作/表情）期间让头眼固定在正前方，避免跟随不断叠加到关键帧上；
    * 表情窗口结束、动作 motionFinish 时再恢复跟随（`releaseFocusSuppression`）。
    */
-  function holdTemporaryExpression(ids: readonly string[]): void {
+  function holdTemporaryExpression(ids: readonly string[], sticky = false): void {
     tempExpressions = [...ids]
-    tempExpressionUntil = Date.now() + TAG_EXPRESSION_HOLD_MS
+    // sticky：演到下一个表情 cue 或本轮结束（ADR-048 P3），不再 4.2s 自动回落
+    tempExpressionUntil = sticky ? Number.POSITIVE_INFINITY : Date.now() + TAG_EXPRESSION_HOLD_MS
     repaintDebugExpressions?.()
     focusSuppressed = true
     try { model?.internalModel?.focusController?.focus(0, 0, true) } catch { /* 模型未就绪 */ }
     refreshExpressionTargets()
+  }
+
+  /** 本轮结束：撤掉 sticky 表情，恢复常态（ADR-048 P3）。 */
+  function clearStickyExpression(): void {
+    if (tempExpressionUntil !== Number.POSITIVE_INFINITY) return
+    tempExpressions = []
+    tempExpressionUntil = 0
+    repaintDebugExpressions?.()
+    refreshExpressionTargets()
+    releaseFocusSuppression()
   }
 
   /** 解除非 idle 动作期间的 focus 抑制；若有最近指针位置则立即恢复跟随。 */
@@ -1471,6 +1503,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 注意该事件在库内部 state.complete()/自动回 idle 之前同步触发，恢复动作需延到微任务，
    * 避免在 MotionManager.update 中间重入修改 MotionState。 */
   function handleMotionFinish(): void {
+    const waiters = motionWaiters
+    motionWaiters = []
+    for (const wake of waiters) wake()
     const wasPreview = previewActive
     previewActive = false
     const wasInteraction = interactionActive
@@ -3204,6 +3239,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * 气泡按「音频播到第几段」逐段显示，口型吃同一段音频的波形，tags 立刻换表情/动作。
    * 由 startTurn 统一调度；语音关闭时回落到一次性回复。
    */
+  /** 取走尚未落地的 `tags`（闭包里赋值不会被 TS 的控制流分析看见，故用函数取值）。 */
+  function takePendingTags(): { expressions: string[]; motions: string[] } | null {
+    const tag = pendingTags
+    pendingTags = null
+    return tag
+  }
+
   async function requestSpeak(input: TriggerBody): Promise<string | null> {
     const withTz = CLIENT_TIME_ZONE ? { ...input, tz: CLIENT_TIME_ZONE } : input
     if (!ttsEnabled) return requestAiReply(withTz)
@@ -3214,6 +3256,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     speakAbort = controller
     speakClauses = []
     speakRevealed = -1
+    speakCues = new Map()
+    speakCueIndex = -1
+    pendingTags = null
+    clearStickyExpression()
     speakChain = Promise.resolve()
     let finalText: string | null = null
     let sawClause = false
@@ -3226,6 +3272,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           if (typeof item.index !== 'number' || typeof item.text !== 'string') return
           sawClause = true
           speakClauses.push({ index: item.index, text: item.text })
+          const cues = readCues((item as { cues?: unknown }).cues, isExpressionId, isMotionId)
+          speakCues.set(item.index, cues)
+          // 新 Host 把开场演出挂在第 0 段的 cues 上；只有旧 Host（没有 cues）才按 tags 帧播，
+          // 否则同一次演出会被执行两遍（动作刚起就被自己打断）。
+          const tag = takePendingTags()
+          if (tag !== null && cues.length === 0) applyTags(tag.expressions, tag.motions)
           return
         }
         if (event === 'audio') {
@@ -3236,7 +3288,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           // 串行播放：后段音频必须等前段播完，口型才对得上
           speakChain = speakChain.then(async () => {
             if (seq !== speakSeq) return
-            revealClausesUntil(index)
+            enterClause(index)
             const seconds = await playClip(item.data as string, mime)
             conPushJson('play.audio', {
               index,
@@ -3248,7 +3300,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         }
         if (event === 'tags') {
           const payload = data as { expressions?: unknown; motions?: unknown }
-          applyTags(payload.expressions, payload.motions)
+          const expressions = Array.isArray(payload.expressions)
+            ? payload.expressions.filter((item): item is string => typeof item === 'string')
+            : []
+          const motions = Array.isArray(payload.motions)
+            ? payload.motions.filter((item): item is string => typeof item === 'string')
+            : []
+          pendingTags = { expressions, motions }
           return
         }
         if (event === 'memory') {
@@ -3279,6 +3337,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     // 合成失败被跳过的段也要补上文字
     revealAllClauses()
+    const leftover = takePendingTags()
+    if (leftover !== null) applyTags(leftover.expressions, leftover.motions)
+    // 本轮演完：sticky 表情撤回常态（ADR-048 P3）
+    clearStickyExpression()
     if (finalText !== null) {
       showAiBubble(finalText)
       return finalText
@@ -3404,6 +3466,78 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       MotionPriority.FORCE,
       { suppressFocus: true, isInteraction: true },
     )
+  }
+
+  /** 动作串行队列（ADR-048 P3）：一次只演一个，播完再放下一个；满了丢最旧。 */
+  function enqueueCueMotion(name: string): void {
+    if (!model || !name) return
+    const result = pushMotion(motionQueue, name)
+    if (result.dropped !== null) {
+      clientLog('info', 'cue dropped', result.dropped)
+      conPush('cue.dropped', `queue full (${MOTION_QUEUE_MAX}) | dropped ${result.dropped}`)
+    }
+    motionQueue = result.queue
+    void drainCueMotions()
+  }
+
+  async function drainCueMotions(): Promise<void> {
+    if (motionBusy) return
+    motionBusy = true
+    try {
+      while (motionQueue.length > 0) {
+        const name = motionQueue.shift()
+        if (name === undefined) break
+        if (!model || hidden) {
+          motionQueue = []
+          break
+        }
+        await playInteractionMotion([name])
+        await waitMotionFinish()
+      }
+    } finally {
+      motionBusy = false
+    }
+  }
+
+  /** 等这一个动作真的播完（motionFinish）；拿不到信号就按上限兜底。 */
+  function waitMotionFinish(timeoutMs: number = MOTION_WAIT_MS): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const done = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      motionWaiters.push(done)
+      window.setTimeout(done, timeoutMs)
+    })
+  }
+
+  /** 执行一段 cue：表情立刻换（sticky），动作进串行队列。 */
+  function applyCues(cues: readonly Cue[]): void {
+    // 真实表情优先：清掉调试面板残留的预览，免得把 AI 表情挡掉
+    debugExpression = null
+    const { expressions, motions } = splitCues(cues)
+    if (expressions.length > 0) {
+      clientLog('info', 'ai expressions', expressions.join('+'))
+      conPushJson('play.expression', { applied: expressions })
+      holdTemporaryExpression(expressions, true)
+    }
+    for (const name of motions) {
+      clientLog('info', 'ai motions', name)
+      conPushJson('play.motion', { applied: [name] })
+      enqueueCueMotion(name)
+    }
+  }
+
+  /** 进入第 `index` 段：先把文字露出来，再执行这一段（含被跳过的段）的 cue。 */
+  function enterClause(index: number): void {
+    revealClausesUntil(index)
+    for (let cursor = speakCueIndex + 1; cursor <= index; cursor += 1) {
+      const cues = speakCues.get(cursor)
+      if (cues !== undefined && cues.length > 0) applyCues(cues)
+    }
+    if (index > speakCueIndex) speakCueIndex = index
   }
 
   // ---- 主流程 ----

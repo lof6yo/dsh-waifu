@@ -1,6 +1,6 @@
 # ADR-048：演出编排（剧本引擎 / 演员 / 编排器三层）
 
-- 状态：已采纳（Accepted）；P1（单标签帧 + `director.ts`）、P2（`timeline.ts` 谱子）已实现，P3（播放器按段执行）、P4（提示词允许句中 cue）待实现
+- 状态：已采纳（Accepted）；P1（单标签帧 + `director.ts`）、P2（`timeline.ts` 谱子）、P3（播放器按段执行 cue）已实现，P4（提示词允许句中 cue）待实现
 - 日期：2026-11-07
 
 ## 背景
@@ -51,6 +51,24 @@
 - 丢弃必须留痕（控制台 `cue.dropped | queue full`）。
 
 **8. 剧本引擎是纯函数，行为用 golden 哈希钉住。** 改动提示词必须在 `src/director.test.ts` 留下 diff；搬代码不许改行为（P1 的三份哈希就是搬迁当天的现场记录）。
+
+## 实现记录
+
+**P1（2026-11-07）**：`src/director.ts` + `src/time.ts` 抽出，`ai.ts` 857 → 590 行；`streamReply` 把开头标签攒进 `collected`，正文出现时合并去重只发一帧。剧本内容用 golden 哈希钉住（system / messages / payload 三份）。
+
+**P2（2026-11-07）**：`src/timeline.ts` 的 `ClauseTimeline` 增量切段并给每段挂 `cues`；`speak.ts` 的 `buffer` / `nextIndex` / 局部 `flush` 全部交给它。等价性用**搬迁前现场录的帧序列**做快照（四类输入），`withoutCues()` 后逐帧相等。
+
+**P3（2026-11-07）**：客户端按段执行，规则入 `src/client/cue-queue.ts`（纯函数，可单测）：
+
+| 情形 | 行为 |
+|---|---|
+| `clause` 帧带 `cues` | 记进 `speakCues[段号]`；该段音频开始播时执行 |
+| 没有音频的段 | `enterClause()` 按段号补执行，不漏演 |
+| 旧 Host（无 `cues`） | `tags` 帧照旧立刻播；两种来源都到位时**只播 cues**，避免同一次演出执行两遍 |
+| 表情 | sticky：保持到下一个表情 cue 或本轮结束（`clearStickyExpression()`），不再 4.2 s 自动回落 |
+| 动作 | 串行队列，`motionFinish` 驱动；上限 `MOTION_QUEUE_MAX = 2`，满了丢最旧并在控制台记 `cue.dropped` |
+| 等不到 `motionFinish` | `MOTION_WAIT_MS = 6000` 兜底，队列不会卡死 |
+| 打断（隐藏页/气泡超时/卸载） | `stopSpeaking()` 清 cue 表、清队列、唤醒所有等待者、撤 sticky 表情 |
 
 ## 取舍
 
