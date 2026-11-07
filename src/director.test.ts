@@ -37,8 +37,8 @@ const CATALOG = { motionTexts: { Nod: '轻轻点头' }, expressionEnabled: { blo
 describe('剧本引擎（纯函数，ADR-047 P1）', () => {
   it('system 提示词的内容稳定（golden 哈希）', () => {
     const system = systemPrompt(DEFAULT_PERSONA, '- 主人喜欢猫\n- 主人怕痒', CATALOG)
-    expect(system.length).toBe(1335)
-    expect(fnv(system)).toBe('b56d05a5')
+    expect(system.length).toBe(1436)
+    expect(fnv(system)).toBe('af2eac05')
   })
 
   it('同一输入两次组装结果完全一致（不读状态、不累积）', () => {
@@ -82,7 +82,7 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
     expect(payload).not.toBeNull()
     expect(payload!.temperature).toBe(0.9)
     expect(payload!.maxTokens).toBe(160)
-    expect(fnv(stable(JSON.stringify(payload)))).toBe('c8634fda')
+    expect(fnv(stable(JSON.stringify(payload)))).toBe('4a74cd88')
   })
 
   it('目录里的每个 id 都有一行释义；关掉的表情不出现', () => {
@@ -185,7 +185,7 @@ describe('ADR-049：提示词重排', () => {
 
   it('表情只允许一个（78/78 从未用过第二个，允许两个只会打开互斥组的坑）', () => {
     const system = systemPrompt(DEFAULT_PERSONA)
-    expect(system).toContain('## 你能做的表情\n一次最多一个：')
+    expect(system).toContain('## 你能做的表情\n每轮只写一个：')
     expect(system).not.toContain('一到两个')
   })
 
