@@ -19,6 +19,8 @@ import {
   historySceneText,
   loadPersona,
   parseLeadingTags,
+  openTagStart,
+  stripInlineTags,
   extractMemoryNote,
   memoryTailStart,
   personaPath,
@@ -107,10 +109,10 @@ describe('systemPrompt（动作/表情释义可覆写 + 可关闭，ADR-040）',
       motionEnabled: { Nod: false },
       expressionEnabled: { blush: false },
     })
-    expect(prompt).not.toContain('- Nod：')
-    expect(prompt).toContain('- ShakeHead：')
-    expect(prompt).not.toContain('- blush：')
-    expect(prompt).toContain('- angry：')
+    expect(prompt).not.toContain('- [Nod]：')
+    expect(prompt).toContain('- [ShakeHead]：')
+    expect(prompt).not.toContain('- <blush>：')
+    expect(prompt).toContain('- <angry>：')
     const tags = filterTags({ expressions: ['blush', 'angry'], motions: ['Nod', 'Tilt'] }, {
       motionEnabled: { Nod: false },
       expressionEnabled: { blush: false },
@@ -123,9 +125,9 @@ describe('systemPrompt（动作/表情释义可覆写 + 可关闭，ADR-040）',
       motionTexts: { Nod: '酷酷地点头' },
       expressionTexts: { blush: '羞到冒烟' },
     })
-    expect(prompt).toContain('- Nod：酷酷地点头')
-    expect(prompt).toContain('- blush：羞到冒烟')
-    expect(prompt).toContain('- ShakeHead：否认、嘴硬、拒绝、被说中要害')
+    expect(prompt).toContain('- [Nod]：酷酷地点头')
+    expect(prompt).toContain('- <blush>：羞到冒烟')
+    expect(prompt).toContain('- [ShakeHead]：否认、嘴硬、拒绝、被说中要害')
   })
 })
 
@@ -657,6 +659,48 @@ describe('流式记忆行（ADR-037：不进气泡、不进 TTS）', () => {
     expect(memoryTailStart('好呀\n[')).toBe(2)
     expect(memoryTailStart('好呀[记] 不是独立行')).toBe(-1)
     expect(memoryTailStart('好呀')).toBe(-1)
+  })
+})
+
+describe('ADR-050：表情用尖括号、动作用方括号', () => {
+  it('两种外壳分开认：<blush> 是表情、[Nod] 是动作', () => {
+    const tags = parseLeadingTags('<blush>[ShakeHead] 唔…别')
+    expect(tags.expressions).toEqual(['blush'])
+    expect(tags.motions).toEqual(['ShakeHead'])
+    expect(tags.rest).toBe('唔…别')
+  })
+
+  it('外壳写错也按目录认（老历史 [blush] / 手滑 <Nod> 都不至于失效）', () => {
+    const oldStyle = parseLeadingTags('[blush][ShakeHead] 唔…')
+    expect(oldStyle.expressions).toEqual(['blush'])
+    expect(oldStyle.motions).toEqual(['ShakeHead'])
+    const swapped = parseLeadingTags('<Nod> 唔…')
+    expect(swapped.motions).toEqual(['Nod'])
+  })
+
+  it('句中标签两种外壳都剥得掉', () => {
+    expect(stripInlineTags('唔<blush>…[Nod]好')).toBe('唔…好')
+  })
+
+  it('半截的尖括号也要扣住，不能先露半个 <blu', () => {
+    expect(openTagStart('唔…<blu')).toBe(2)
+    expect(openTagStart('唔…<blush>')).toBe(-1)
+  })
+
+  it('契约是「一个表情 + 一个动作」：多写的按后写的收敛（不许第二个把第一个打断）', () => {
+    const filtered = filterTags({ expressions: ['blush', 'star'], motions: ['Sway', 'Glance'] }, {})
+    expect(filtered.expressions).toEqual(['star'])
+    expect(filtered.motions).toEqual(['Glance'])
+  })
+
+  it('流式里 <表情> 与 [动作] 合成同一个 tags 帧', async () => {
+    const frames: { expressions: string[]; motions: string[] }[] = []
+    for await (const chunk of streamReply(fakeLlm(['<blush>[Sway]', ' 唔…']), {
+      provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' },
+    })) {
+      if (chunk.type === 'tags') frames.push({ expressions: chunk.expressions, motions: chunk.motions })
+    }
+    expect(frames).toEqual([{ expressions: ['blush'], motions: ['Sway'] }])
   })
 })
 

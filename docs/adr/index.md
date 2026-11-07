@@ -53,3 +53,4 @@
 | 047 | [触发调度归一化（一个调度器 + 一张策略表）](./047-trigger-scheduling.md) | 已采纳 |
 | 048 | [演出编排（剧本引擎 / 演员 / 编排器三层）](./048-performance-orchestration.md) | 已采纳 |
 | 049 | [提示词信噪比与台词契约（in-character 回归）](./049-prompt-signal-to-noise.md) | 已采纳 |
+| 050 | [标签分形：表情用尖括号、动作用方括号](./050-tag-shapes.md) | 已采纳 |

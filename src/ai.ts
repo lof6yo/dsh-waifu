@@ -244,9 +244,17 @@ function describeFinish(reason: unknown): string | undefined {
  * 开头的标签（表情/动作）：`[shy]`、`【害羞】`、`(blush)`，允许 markdown 记号与中英文混合。
  * 认不出的标签也剥掉——它是写给前端的控制信号，绝不能显示或念出来。
  */
-const TAG_PATTERN = /^\s*[*_`~]*\s*[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]\s*[*_`~]*\s*/
-const TAG_PARTIAL = /^\s*[*_`~]*\s*[[［【(（〔〖][^\]］】）}〕〗\n]{0,16}$/
-const TAG_ANY = /[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]/g
+/** 标签外壳：尖括号写表情、方括号写动作（ADR-050）。 */
+export type TagStyle = 'angle' | 'square'
+
+/** 一次标签扫描：`<blush>` 与 `[Nod]` 都认，全角方括号也认。 */
+const TAG_ANY = /<\s*([^<>\n]{1,32})\s*>|[[［【]\s*([^\]］】\n]{1,32})\s*[\]］】]/g
+
+/** 开头的标签（含反引号/星号包裹），`[*_`~]` 是模型偶尔用来强调的噪声。 */
+const TAG_HEAD = /^\s*[*_`~]*\s*(?:<\s*([^<>\n]{1,32})\s*>|[[［【]\s*([^\]］】\n]{1,32})\s*[\]］】])\s*[*_`~]*\s*/
+
+/** 尾部没闭合的标签（`[No` / `<blu`）：切句与上屏都要先扣住它。 */
+const TAG_PARTIAL = /(?:<\s*[^<>\n]{0,16}|[[［【][^\]］】\n]{0,16})$/
 
 /** 开头标签的解析结果：表情/动作 id（在目录内才算数）。 */
 export interface LeadingTags {
@@ -261,7 +269,7 @@ export interface LeadingTags {
  * 认不出来就返回 null —— 调用方据此决定「剥掉还是原样保留」。
  * 归一化很重要：模型偶尔写 `[脸红]`，下游只认 `blush`，不归一化就等于没有表情。
  */
-export function resolveTag(word: string): { kind: 'expression' | 'motion'; id: string } | null {
+export function resolveTag(word: string, style?: TagStyle): { kind: 'expression' | 'motion'; id: string } | null {
   const trimmed = word.trim()
   const cleaned = trimmed.toLowerCase().replace(/[\s"'“”‘’`*_~·、,，。.!！?？:：]/g, '')
   if (!cleaned) return null
@@ -269,14 +277,20 @@ export function resolveTag(word: string): { kind: 'expression' | 'motion'; id: s
   const motion = AI_MOTIONS.find((m) =>
     m.id.toLowerCase() === cleaned || m.name === trimmed || m.meaning.includes(trimmed),
   )
-  if (motion) return { kind: 'motion', id: motion.id }
   const expression = EXPRESSIONS.find((e) =>
     e.id.toLowerCase() === cleaned || e.name === trimmed,
   )
-  if (expression && expression.id !== 'none') return { kind: 'expression', id: expression.id }
-  if (isMotionId(cleaned)) return { kind: 'motion', id: cleaned }
-  if (isExpressionId(cleaned)) return { kind: 'expression', id: cleaned }
-  return null
+  const expressionHit = expression && expression.id !== 'none'
+    ? { kind: 'expression' as const, id: expression.id }
+    : isExpressionId(cleaned) ? { kind: 'expression' as const, id: cleaned } : null
+  const motionHit = motion
+    ? { kind: 'motion' as const, id: motion.id }
+    : isMotionId(cleaned) ? { kind: 'motion' as const, id: cleaned } : null
+  // 外壳只是「意图」：尖括号想写表情、方括号想写动作。目录说了算——写错壳也照样认，
+  // 但不能让 `[blush]`（老历史）或 `<Nod>`（模型手滑）变成无效标签。
+  if (style === 'angle') return expressionHit ?? motionHit
+  if (style === 'square') return motionHit ?? expressionHit
+  return motionHit ?? expressionHit
 }
 
 /** 判断一个标签词是不是可执行的表情/动作（目录内才算控制信号）。 */
@@ -284,9 +298,9 @@ function classifyTag(word: string): 'expression' | 'motion' | null {
   return resolveTag(word)?.kind ?? null
 }
 
-/** 正文尾部「还没闭合的标签」（`[`、`[No`）的起点下标；-1 表示没有。 */
+/** 正文尾部「还没闭合的标签」（`[`、`[No`、`<blu`）的起点下标；-1 表示没有。 */
 export function openTagStart(text: string): number {
-  const match = /[[［【(（〔〖][^\]］】）}〕〗\n]{0,16}$/.exec(text)
+  const match = TAG_PARTIAL.exec(text)
   return match === null ? -1 : match.index
 }
 
@@ -299,9 +313,10 @@ export function parseLeadingTags(text: string): LeadingTags {
   const expressions: string[] = []
   const motions: string[] = []
   for (let i = 0; i < 3; i += 1) {
-    const match = TAG_PATTERN.exec(rest)
+    const match = TAG_HEAD.exec(rest)
     if (!match) break
-    const hit = resolveTag(match[1])
+    const style: TagStyle = match[1] !== undefined ? 'angle' : 'square'
+    const hit = resolveTag(match[1] ?? match[2], style)
     if (hit?.kind === 'expression') expressions.push(hit.id)
     else if (hit?.kind === 'motion') motions.push(hit.id)
     rest = rest.slice(match[0].length)
@@ -312,7 +327,9 @@ export function parseLeadingTags(text: string): LeadingTags {
 /** 去掉句中那些「能认出来是表情/动作」的方括号标签（模型偶尔把标签写在句子中间）。 */
 /** 剥掉正文里残留的表情/动作标签（只认目录内的，别的方括号原样保留）。 */
 export function stripInlineTags(text: string): string {
-  return text.replace(TAG_ANY, (all, inner: string) => (classifyTag(inner) ? '' : all))
+  return text
+    .replace(TAG_ANY, (all, angle: string, square: string) =>
+      (resolveTag(angle ?? square, angle !== undefined ? 'angle' : 'square') ? '' : all))
     .replace(/\s{2,}/g, ' ')
     .trimStart()
 }
@@ -321,8 +338,8 @@ export function stripInlineTags(text: string): string {
 export function takeInlineTags(text: string): { expressions: string[]; motions: string[]; text: string } {
   const expressions: string[] = []
   const motions: string[] = []
-  const stripped = text.replace(TAG_ANY, (all, inner: string) => {
-    const hit = resolveTag(inner)
+  const stripped = text.replace(TAG_ANY, (all, angle: string, square: string) => {
+    const hit = resolveTag(angle ?? square, angle !== undefined ? 'angle' : 'square')
     if (!hit) return all
     if (hit.kind === 'expression') expressions.push(hit.id)
     else motions.push(hit.id)
@@ -384,10 +401,13 @@ export function filterTags<T extends { expressions: string[]; motions: string[] 
   tags: T,
   options: CatalogOptions,
 ): T {
+  // 契约是「一个表情 + 一个动作」（ADR-049）：模型偶尔仍会写两个，按「后写的算」收敛，
+  // 与互斥组同一套规则——宁可只演一个，也不要让第二个把第一个拦腰打断。
+  const last = (ids: string[]) => (ids.length === 0 ? [] : [ids[ids.length - 1]])
   return {
     ...tags,
-    expressions: tags.expressions.filter((id) => catalogAllowed(options.expressionEnabled, id)),
-    motions: tags.motions.filter((id) => catalogAllowed(options.motionEnabled, id)),
+    expressions: last(tags.expressions.filter((id) => catalogAllowed(options.expressionEnabled, id))),
+    motions: last(tags.motions.filter((id) => catalogAllowed(options.motionEnabled, id))),
   }
 }
 

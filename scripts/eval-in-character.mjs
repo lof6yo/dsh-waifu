@@ -112,20 +112,20 @@ async function speak(cookie, body) {
   return out
 }
 
-/** 首行的前导标签：`[blush][Sway]台词`。 */
+/** 首行的前导标签：`<blush>[Nod]台词`（ADR-050：尖括号=表情、方括号=动作）。 */
 function leadingTags(raw) {
   const ids = []
   let rest = raw.trimStart()
   for (let i = 0; i < 3; i += 1) {
-    const match = /^[[［【]\s*([^\]］】\n]{1,32})\s*[\]］】]\s*/.exec(rest)
+    const match = /^(?:<\s*([^<>\n]{1,32})\s*>|[[［【]\s*([^\]］】\n]{1,32})\s*[\]］】])\s*/.exec(rest)
     if (!match) break
-    ids.push(match[1].trim())
+    ids.push((match[1] ?? match[2]).trim())
     rest = rest.slice(match[0].length)
   }
   return { ids, body: rest }
 }
 
-const stripTags = (text) => text.replace(/[[［【]\s*[^\]］】\n]{1,32}\s*[\]］】]/g, '').trim()
+const stripTags = (text) => text.replace(/<\s*[^<>\n]{1,32}\s*>|[[［【]\s*[^\]］】\n]{1,32}\s*[\]］】]/g, '').trim()
 
 /** 3-gram 集合的 Jaccard（用来抓「换几个字把上一句再说一遍」）。 */
 function jaccard(a, b) {

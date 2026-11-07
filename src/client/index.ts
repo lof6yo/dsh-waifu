@@ -450,7 +450,8 @@ function PetAnchor(): ReturnType<typeof createElement> {
 }
 
 /** 气泡兜底：行首的 `[shy]`、`［害羞］`、`** [smug] **` 一律当控制标签剥掉（客户端没有情绪词表，就看位置）。 */
-const LEADING_TAG = /^\s*[*_`~]*\s*[[［【(（〔〖][^\]］】）}〕〗\n]{1,24}[\])］】）}〕〗]\s*[*_`~]*\s*/
+// 气泡兜底：Host 已经剥过标签，这里只防「旧 Host / 半截流」把标签漏到脸上（<表情> 与 [动作] 都认）
+const LEADING_TAG = /^\s*[*_`~]*\s*(?:<\s*[^<>\n]{1,24}>|[[［【][^\]］】\n]{1,24}[\]］】])\s*[*_`~]*\s*/
 
 function stripLeadingTagText(text: string): string {
   let out = text

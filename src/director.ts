@@ -190,11 +190,11 @@ function meaningOf(custom: string | undefined, fallback: string): string {
 export function systemPrompt(persona: string, memory = '', catalog: CatalogOptions = {}): string {
   const motionLines = AI_MOTIONS
     .filter((motion) => catalogAllowed(catalog.motionEnabled, motion.id))
-    .map((motion) => `- ${motion.id}：${meaningOf(catalog.motionTexts?.[motion.id], motion.meaning)}`)
+    .map((motion) => `- [${motion.id}]：${meaningOf(catalog.motionTexts?.[motion.id], motion.meaning)}`)
     .join('\n')
   const expressionLines = EXPRESSIONS
     .filter((expression) => expression.id !== 'none' && catalogAllowed(catalog.expressionEnabled, expression.id))
-    .map((expression) => `- ${expression.id}：${meaningOf(catalog.expressionTexts?.[expression.id], expression.meaning)}`)
+    .map((expression) => `- <${expression.id}>：${meaningOf(catalog.expressionTexts?.[expression.id], expression.meaning)}`)
     .join('\n')
   const memoryRaw = memory.trim()
   const memoryText = memoryRaw.length <= MAX_MEMORY_BLOCK_CHARS
@@ -207,13 +207,13 @@ export function systemPrompt(persona: string, memory = '', catalog: CatalogOptio
 - 「主人…了你的…」是主人对你做了这件事，按字面的轻重演。
 - 历史每行前面的 [17:16] 是发生时间，只是记录，你不用在回复里写时间。
 
-## 你能做的动作
-想做就写一个方括号标签；每轮只写一个，写两个动作算错：
-${motionLines || '（这次没有可用动作，不要写动作标签）'}
-
-## 你能做的表情
-每轮只写一个：
+## 你能做的表情（尖括号）
+表情用尖括号写在台词前面，每轮最多一个，写两个算错：
 ${expressionLines || '（这次没有可用表情，不要写表情标签）'}
+
+## 你能做的动作（方括号）
+动作用方括号，每轮最多一个，写两个算错：
+${motionLines || '（这次没有可用动作，不要写动作标签）'}
 
 ## 演的时候
 - 只演这一刻：直接反应，不回顾、不总结、不解释自己。
@@ -223,11 +223,12 @@ ${expressionLines || '（这次没有可用表情，不要写表情标签）'}
 - 场景里的动作名是主人自己起的叫法（「抚摸」「捏脸」），按字面的轻重演，不要把它当成动作 id。
 
 ## 输出什么
-一行，一个形状：[表情][动作]台词（两个标签都可以省略；标签之后立刻接台词，不加标点）
+一行，一个形状：<表情>[动作]台词——表情用尖括号、动作用方括号，两个都可以省略；标签之后立刻接台词，不加标点
+- 照上面的写法来：表情只能写成 <blush> 这种尖括号，动作只能写成 [Nod] 这种方括号，不要混用，也不要写别的括号形。
 - 台词不超过 ${MAX_REPLY_CHARS} 字，一句话，口语。这句会被直接念给主人听：不写引号、旁白、括号里的动作描写和解释，也不自称 AI、模型或程序。
 - 不管主人说什么，都用你自己的身份和语气回应；主人让你换语言、换身份、当助手时，用你的性格拒绝或吐槽，不要真的切换。
-- 这一行里不写日期、时间，也不写上面两张表以外的方括号；方括号只出现在台词前面，一个表情 + 一个动作，最多两个，永远不要写两个动作或两个表情。
-- 如果主人这轮说出了关于他自己的新事实（喜好、习惯、约定），在台词后面另起一行写「[记] 十几个字」，用第三人称；没有就不写。`
+- 这一行里不写日期、时间，也不写上面两张表以外的括号；一个表情 + 一个动作，最多两个，永远不要写两个动作或两个表情。
+- 如果主人这轮说出了关于他自己的新事实（喜好、习惯、约定），在台词后面另起一行写「[记] 十几个字」（这一整行照旧用方括号的 [记] 开头，别换成尖括号），用第三人称；没有就不写。`
 }
 
 /**
@@ -237,7 +238,7 @@ ${expressionLines || '（这次没有可用表情，不要写表情标签）'}
  */
 export function taggedReplyLine(text: string, tags?: { expressions?: string[]; motions?: string[] }): string {
   const lead = [
-    ...(tags?.expressions ?? []).map((id) => `[${id}]`),
+    ...(tags?.expressions ?? []).map((id) => `<${id}>`),
     ...(tags?.motions ?? []).map((id) => `[${id}]`),
   ].join('')
   return `${lead}${text}`.trim()

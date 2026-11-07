@@ -13,8 +13,8 @@
 import { openTagStart, resolveTag } from './ai.ts'
 import { endsAtClauseBreak, splitClauses } from './tts.ts'
 
-/** 正文里的方括号标签（只认目录内的，别的方括号原样保留）。 */
-const TAG_ANY = /[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]/g
+/** 正文里的标签：`<表情>` 与 `[动作]` 都认（只认目录内的，别的括号原样保留）。 */
+const TAG_ANY = /<\s*([^<>\n]{1,32})\s*>|[[［【]\s*([^\]］】\n]{1,32})\s*[\]］】]/g
 
 /** 一个演出指令：改脸/改眼的表情，或一个动作。 */
 export interface TimelineCue {
@@ -113,7 +113,8 @@ function extractTags(
   let cursor = 0
   TAG_ANY.lastIndex = 0
   for (let match = TAG_ANY.exec(piece); match !== null; match = TAG_ANY.exec(piece)) {
-    const hit = resolveTag(match[1])
+    const angle = match[1] !== undefined
+    const hit = resolveTag(angle ? match[1] : match[2], angle ? 'angle' : 'square')
     if (hit === null) continue
     text += piece.slice(cursor, match.index)
     cursor = match.index + match[0].length
