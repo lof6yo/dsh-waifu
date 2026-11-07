@@ -7,6 +7,7 @@ import {
   historyMessages,
   historySceneText,
   systemPrompt,
+  taggedReplyLine,
 } from './director.ts'
 import { DEFAULT_EVENT_TEXTS } from './defaults.ts'
 import { AI_MOTION_IDS, EXPRESSION_IDS } from './models.ts'
@@ -36,8 +37,8 @@ const CATALOG = { motionTexts: { Nod: '轻轻点头' }, expressionEnabled: { blo
 describe('剧本引擎（纯函数，ADR-047 P1）', () => {
   it('system 提示词的内容稳定（golden 哈希）', () => {
     const system = systemPrompt(DEFAULT_PERSONA, '- 主人喜欢猫\n- 主人怕痒', CATALOG)
-    expect(system.length).toBe(1191)
-    expect(fnv(system)).toBe('ca46c5e5')
+    expect(system.length).toBe(1335)
+    expect(fnv(system)).toBe('b56d05a5')
   })
 
   it('同一输入两次组装结果完全一致（不读状态、不累积）', () => {
@@ -65,7 +66,7 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
       memory: '- 主人喜欢猫',
       context: { kind: 'tap', part: '脸', interaction: '捏', tz: 'Asia/Shanghai' },
       history: [
-        { role: 'user', text: '主人「捏」了「脸」', at: 1 },
+        { role: 'user', text: '主人「捏」了你的「脸」', at: 1 },
         { role: 'assistant', text: '唔…别、别捏啦', at: 2, provider: 'openrouter', model: 'google/gemma-4-31b-it' },
       ],
       historyCount: 10,
@@ -76,12 +77,12 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
       content: message.content.map((part) => String((part as { text?: unknown }).text ?? '')).join(''),
     }))
     expect(flat.length).toBe(3)
-    expect(fnv(stable(JSON.stringify(flat)))).toBe('b991a75a')
+    expect(fnv(stable(JSON.stringify(flat)))).toBe('55b22958')
     // 载荷记录的就是实际发出去的东西：采样参数 + system + 全部 messages
     expect(payload).not.toBeNull()
-    expect(payload!.temperature).toBe(1)
+    expect(payload!.temperature).toBe(0.9)
     expect(payload!.maxTokens).toBe(160)
-    expect(fnv(stable(JSON.stringify(payload)))).toBe('0d3d5dae')
+    expect(fnv(stable(JSON.stringify(payload)))).toBe('c8634fda')
   })
 
   it('目录里的每个 id 都有一行释义；关掉的表情不出现', () => {
@@ -102,7 +103,7 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
 
   it('场景句：触摸/对话/事件/静默各有固定句式，合并事件尾随其后', () => {
     const tap = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '捏' })
-    expect(tap).toMatch(/^现在是 .+。主人「捏」了你的「脸」。按你的人设回应。$/)
+    expect(tap).toMatch(/^现在是 .+。主人「捏」了你的「脸」。$/)
 
     const bare = buildSceneMessage({ kind: 'tap', part: '腰' })
     expect(bare).toContain('主人碰了你的「腰」')
@@ -111,11 +112,13 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
     expect(chat).toContain('主人对你说「在吗」')
 
     const event = buildSceneMessage(
-      { kind: 'event', event: 'done', merged: ['工具·读取×4', '  '] },
+      { kind: 'event', event: 'done', merged: [{ event: 'tool-read', count: 4 }, { event: '', count: 9 }] },
       { done: '你完成了任务' },
     )
     expect(event).toContain('眼下你完成了任务')
-    expect(event).toContain('这期间还发生了：工具·读取×4。')
+    // 合并事件由剧本引擎翻成场景语言（不再把「工具·读取×4」这种 UI 标签塞进句子里）
+    expect(event).toContain(`这期间还发生了：${DEFAULT_EVENT_TEXTS['tool-read']}（连着 4 次）。`)
+    expect(event).not.toContain('工具·读取')
 
     expect(buildSceneMessage({ kind: 'idle' })).toContain('有一阵子没人理你')
   })
@@ -127,10 +130,10 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
   })
 
   it('历史场景只留最短事实，合并事件折算成数量', () => {
-    expect(historySceneText({ kind: 'tap', part: '脸', interaction: '捏' })).toBe('主人「捏」了「脸」')
+    expect(historySceneText({ kind: 'tap', part: '脸', interaction: '捏' })).toBe('主人「捏」了你的「脸」')
     expect(historySceneText({ kind: 'chat', text: '在吗' })).toBe('主人说「在吗」')
-    expect(historySceneText({ kind: 'event', event: 'done', merged: ['a', 'b'] }, { done: '你完成了任务' }))
-      .toBe('你完成了任务（另有 2 件事）')
+    expect(historySceneText({ kind: 'event', event: 'done', merged: [{ event: 'thinking', count: 2 }] }, { done: '你完成了任务' }))
+      .toBe('你完成了任务（这期间还发生了：你正在思考（连着 2 次）。）')
   })
 
   it('历史消息：按轮换算条数、丢掉开头的 assistant、空文本过滤', () => {
@@ -164,5 +167,42 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
       'UTC',
     )
     expect(stamped[0].content[0].text).toMatch(/^\[(?:\d{1,2}\/\d{1,2} )?\d\d:\d\d\] 刚才$/)
+  })
+})
+
+describe('ADR-049：提示词重排', () => {
+  it('人设与记忆之间有空行（卡带不能被下一节吞进作用域）', () => {
+    const system = systemPrompt(DEFAULT_PERSONA, '- 主人喜欢猫')
+    expect(system.startsWith(`${DEFAULT_PERSONA.trim()}\n\n## 你记得的事\n- 主人喜欢猫\n`)).toBe(true)
+  })
+
+  it('「这台机器怎么跟你说话」解释最后一条消息、代词与时间戳', () => {
+    const system = systemPrompt(DEFAULT_PERSONA)
+    expect(system).toContain('最后一条消息是刚刚发生的事，不是主人说的话')
+    expect(system).toContain('里面的「你」都是你自己')
+    expect(system).toContain('历史每行前面的 [17:16] 是发生时间')
+  })
+
+  it('表情只允许一个（78/78 从未用过第二个，允许两个只会打开互斥组的坑）', () => {
+    const system = systemPrompt(DEFAULT_PERSONA)
+    expect(system).toContain('## 你能做的表情\n一次最多一个：')
+    expect(system).not.toContain('一到两个')
+  })
+
+  it('角色锁定：换语言 / 换身份 / 接任务都要用性格挡回去', () => {
+    const system = systemPrompt(DEFAULT_PERSONA)
+    expect(system).toContain('主人让你换语言、换身份、当助手时，用你的性格拒绝或吐槽，不要真的切换')
+  })
+
+  it('不再示范句中标签（唯一示例教了 0/78 执行率的行为）', () => {
+    const system = systemPrompt(DEFAULT_PERSONA)
+    expect(system).not.toContain('[blush]唔…别、[Nod]别戳了啦')
+    expect(system).not.toContain('[shy]')
+  })
+
+  it('历史记「带标签的原文」：模型看得到标签长在台词前面', () => {
+    expect(taggedReplyLine('唔…别捏啦', { expressions: ['blush'], motions: ['ShakeHead'] }))
+      .toBe('[blush][ShakeHead]唔…别捏啦')
+    expect(taggedReplyLine('唔…别捏啦')).toBe('唔…别捏啦')
   })
 })

@@ -79,6 +79,7 @@ import {
   type AiReplyTrace,
   type ReplyContext,
 } from './ai.ts'
+import { taggedReplyLine } from './director.ts'
 import {
   loadMemory,
   appendMemory,
@@ -348,7 +349,12 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /** 只记录成功的往来：失败的请求不该污染上下文；场景描述不携带参考台词（ADR-030/037）。 */
-  const recordAiTurn = (context: ReplyContext, text: string, settings: PetSettings): void => {
+  const recordAiTurn = (
+    context: ReplyContext,
+    text: string,
+    settings: PetSettings,
+    tags?: { expressions?: string[]; motions?: string[] },
+  ): void => {
     const at = Date.now()
     aiHistory = appendHistory(aiHistory, {
       role: 'user',
@@ -356,9 +362,16 @@ export function apply(ctx: Context, config: Config): void {
       text: historySceneText(context, settings.eventTexts),
       at,
     })
+    // assistant 记「带标签的原文」（ADR-049 B3）：模型才能在历史里看到标签长在台词里的样子。
     aiHistory = appendHistory(
       aiHistory,
-      { role: 'assistant', text, at: Date.now(), provider: settings.aiProvider, model: settings.aiModel },
+      {
+        role: 'assistant',
+        text: taggedReplyLine(text, tags),
+        at: Date.now(),
+        provider: settings.aiProvider,
+        model: settings.aiModel,
+      },
       AI_HISTORY_MAX_ENTRIES,
     )
   }
@@ -376,7 +389,10 @@ export function apply(ctx: Context, config: Config): void {
         trace.push(traceStep('llm.reply', reply))
       }))
       if (attempt.text) {
-        recordAiTurn(turn.context, attempt.text, turn.settings)
+        recordAiTurn(turn.context, attempt.text, turn.settings, {
+          expressions: attempt.expressions,
+          motions: attempt.motions,
+        })
         if (attempt.memory) rememberNote(attempt.memory, input.tz)
         return {
           ok: true,
@@ -429,6 +445,15 @@ export function apply(ctx: Context, config: Config): void {
         persona: loadPersona(waifuHome),
         memory: memoryContext(loadMemory(waifuHome).entries, settings.aiMemoryCount),
         context: { kind: 'tap', part: '脸', interaction: '轻碰' },
+        // 与真实链路用同一套目录与事件文案：否则「自检」看到的 system 和线上不是同一个
+        // （目录会被替换成「这次没有可用动作」，据此调提示词会被误导）。
+        eventTexts: settings.eventTexts,
+        catalog: {
+          motionTexts: settings.motionTexts,
+          expressionTexts: settings.expressionTexts,
+          motionEnabled: settings.motionEnabled,
+          expressionEnabled: settings.expressionEnabled,
+        },
         timeoutMs: 20000,
       })
       if (attempt.text) return { ok: true, text: attempt.text }
@@ -519,7 +544,7 @@ export function apply(ctx: Context, config: Config): void {
         }
       }
       const result = await runSpeakPipeline({ chunks, synthesize, emit, signal })
-      if (result.text) recordAiTurn(context, result.text, settings)
+      if (result.text) recordAiTurn(context, result.text, settings, result.tags)
       // 记忆行（ADR-037）：管线收尾时若 AI 留了 [记]，落盘 memory.md
       if (result.memory) rememberNote(result.memory, input.tz)
     },

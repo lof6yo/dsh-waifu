@@ -102,7 +102,7 @@ Open DSH **Settings → "dsh-waifu"**. One page, five groups top to bottom: **Di
 
 - Master switch — when on, everything she says and does is generated live by the model, reusing the provider and key already configured in DSH; when off she is completely silent
 - **Provider / model** are dropdowns fed by `GET /api/dsh-waifu/ai-options` (the LLM catalogue registered in DSH); the "test" button runs a self-check and prints the result in the "self-check" row
-- **Inject history** (default 20 rounds; 0 = off) — recent successful exchanges are sent along so she can pick up the thread. History entries are one-line snippets like `[16:22] 主人「捏」了「脸」`; only the current round uses the full scene sentence, so 20 rounds no longer repeat the same template 20 times
+- **Inject history** (default 10 rounds; 0 = off) — recent successful exchanges are sent along so she can pick up the thread. Entries are one-line snippets, **only the user side carries a timestamp**, and her own lines keep the tags she used (`[blush][ShakeHead] 别…`) so the model sees in its own history how lines should be written; only the current round uses the full scene sentence
 - **Inject memory** (default 20 entries) — the last N lines of `memory.md` go into the prompt
 - **Motions and expressions** card — lists the motions (8) and expressions (10) the model may choose from, each with a checkbox deciding whether it is offered (off = it leaves the prompt catalogue and is filtered out even if written); each row's "meaning" text can be edited (≤80 chars, empty = built-in) and previewed on the character. The "blood" expression is **not** offered by default
 - **Trigger mode** — `queue` (wait until the previous line finishes, default) or preempt (cut it off)
@@ -148,7 +148,7 @@ Activity events play a short motion (no bubble, no state change): `tool-read →
 | Idle micro-motions | on | every 7–16 s when idle |
 | Interaction bar | above model, -30 px | can be hidden |
 | AI | on | `openrouter` / `google/gemma-4-31b-it` |
-| History / memory | 20 rounds / 20 entries | 0 = off |
+| History / memory | 10 rounds / 20 entries | 0 = off |
 | Trigger mode | queue | or preempt |
 | Minimum interval | 1 s | 0 = unlimited |
 | Idle timeout | 600 s | 0 = off |

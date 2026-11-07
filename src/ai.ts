@@ -82,6 +82,14 @@ export interface WaifuLlmRequest {
 export type WaifuLlmChunk = { type: 'text-delta'; text: string } | { type: string; text?: string }
 
 /** 触摸交互类型（轻碰/戳戳/抚摸，按按住时长区分；ADR-037）。 */
+/** 被调度器合并进来的一个事件（ADR-047：只报事实，由剧本引擎翻成场景语言）。 */
+export interface MergedEvent {
+  /** 事件键（`TRIGGER_EVENTS` 里的一类）。 */
+  event: string
+  /** 同一类事件在这段窗口里出现了几次。 */
+  count: number
+}
+
 /** 一次 AI 触发的场景描述（客户端上报的「发生了什么」）。 */
 export interface ReplyContext {
   /** 触发来源：触摸（`tap`）、DSH 事件（`event`）、用户对话（`chat`）或静默超时（`idle`）。 */
@@ -95,8 +103,8 @@ export interface ReplyContext {
   text?: string
   /** DSH 事件键（`kind: 'event'`：状态或活动）。 */
   event?: string
-  /** 上一轮反应开始后，本窗口内被合并进来的事件描述（ADR-037 事件合并）。 */
-  merged?: string[]
+  /** 上一轮反应开始后，本窗口内被合并进来的事件（ADR-037 事件合并 / ADR-047 调度器）。 */
+  merged?: MergedEvent[]
   /** 请求方（浏览器）的 IANA 时区，用来把「现在几点」换算到用户所在时区。 */
   tz?: string
 }
@@ -309,6 +317,20 @@ export function stripInlineTags(text: string): string {
     .trimStart()
 }
 
+/** 收集正文里的标签并剥掉它（非流式路径用：句中标签既要生效，也不能漏进气泡）。 */
+export function takeInlineTags(text: string): { expressions: string[]; motions: string[]; text: string } {
+  const expressions: string[] = []
+  const motions: string[] = []
+  const stripped = text.replace(TAG_ANY, (all, inner: string) => {
+    const hit = resolveTag(inner)
+    if (!hit) return all
+    if (hit.kind === 'expression') expressions.push(hit.id)
+    else motions.push(hit.id)
+    return ''
+  })
+  return { expressions, motions, text: stripped.replace(/\s{2,}/g, ' ').trimStart() }
+}
+
 /** 「[记] …」记忆行：句尾单独一行（或紧跟在句尾）。 */
 const MEMORY_LINE = /(?:^|\n)\s*[[［【(（〔〖]\s*(?:记|memory|remember|note)\s*[\])］】）}〕〗]\s*(.+)$/i
 
@@ -421,12 +443,19 @@ export async function generateReply(
       // 记忆行剥掉，只留正文
       const { text: withoutMemory, note } = extractMemoryNote(text)
       const tags = filterTags(parseLeadingTags(withoutMemory), options.catalog ?? {})
-      const line = sanitizeLine(tags.rest)
+      // 句中标签也要生效：这条链路（关语音时的回落路径）不跑时间线，
+      // 否则 `[Sigh]` 会以字面形式出现在气泡里、还被 TTS 念出来（ADR-049）。
+      const inline = takeInlineTags(tags.rest)
+      const merged = filterTags({
+        expressions: [...new Set([...tags.expressions, ...inline.expressions])],
+        motions: [...new Set([...tags.motions, ...inline.motions])],
+      }, options.catalog ?? {})
+      const line = sanitizeLine(inline.text)
       if (line) {
         return {
           text: line,
-          expressions: tags.expressions,
-          motions: tags.motions,
+          expressions: merged.expressions,
+          motions: merged.motions,
           ...(note ? { memory: note } : {}),
         }
       }
@@ -456,7 +485,7 @@ export async function generateReply(
 
 /** 流式回复的一块：标签（表情/动作）、文本增量、记忆、或收尾。 */
 export type ReplyChunk =
-  | { type: 'tags'; expressions: string[]; motions: string[] }
+  | { type: 'tags'; expressions: string[]; motions: string[]; dropped?: string[] }
   | { type: 'delta'; text: string }
   | { type: 'memory'; note: string }
   | { type: 'done'; text: string }
@@ -555,13 +584,23 @@ export async function* streamReply(
           streamed = tag.rest
           // 正文一出现就把攒下的标签一次性交出去：一次响应一个 tags 帧，
           // 客户端不会因为「表情/动作分两帧」把刚起的动作打断（重复的标签去重）。
-          const allowed = filterTags(
-            { expressions: [...new Set(collected.expressions)], motions: [...new Set(collected.motions)] },
-            options.catalog ?? {},
-          )
+          const wanted = {
+            expressions: [...new Set(collected.expressions)],
+            motions: [...new Set(collected.motions)],
+          }
+          const allowed = filterTags(wanted, options.catalog ?? {})
           if (allowed.expressions.length > 0 || allowed.motions.length > 0) {
             sentTags = true
-            yield { type: 'tags', expressions: allowed.expressions, motions: allowed.motions }
+            const dropped = [
+              ...wanted.expressions.filter((id) => !allowed.expressions.includes(id)),
+              ...wanted.motions.filter((id) => !allowed.motions.includes(id)),
+            ]
+            yield {
+              type: 'tags',
+              expressions: allowed.expressions,
+              motions: allowed.motions,
+              ...(dropped.length > 0 ? { dropped } : {}),
+            }
           }
         }
         // 记忆行（`[记] …`）不进气泡、不进 TTS：一看到它的开头就停发，

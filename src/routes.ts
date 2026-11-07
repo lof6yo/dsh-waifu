@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { PetService } from './service.ts'
 import type { TouchPart } from './models.ts'
+import type { MergedEvent } from './ai.ts'
 import { appendClientLog, clientLogPath } from './client-log.ts'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 
@@ -268,8 +269,8 @@ export interface TriggerInput {
   event?: string
   text?: string
   tz?: string
-  /** 本轮触发时窗口内合并进来的其他事件。 */
-  merged?: string[]
+  /** 本轮触发时窗口内合并进来的其他事件（只报事实，场景语言由剧本引擎生成）。 */
+  merged?: MergedEvent[]
 }
 
 /** AI 回复 API（ADR-025 / ADR-037）：Host 侧由 `ctx.llm` 实现，测试可注入假实现。 */
@@ -315,9 +316,18 @@ function parseTriggerInput(record: Record<string, unknown>): TriggerInput {
     : record.kind === 'chat' ? 'chat' as const
     : record.kind === 'idle' ? 'idle' as const
     : 'tap' as const
+  // 合并事件只收 `{event, count}`：调度器报事实，文案由剧本引擎（eventSceneText）决定，
+  // 否则「工具·执行命令×5」这种 UI 标签会直接进场景句（ADR-049）。
+  // 上限与设置项 mergeMax 的顶格一致（20）：调度器已经按用户配置裁过一次。
   const merged = Array.isArray(record.merged)
-    // 上限与设置项 mergeMax 的顶格一致（20）：调度器已经按用户配置裁过一次
-    ? record.merged.filter((item): item is string => typeof item === 'string').slice(0, 20)
+    ? record.merged
+      .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+      .map((item) => ({
+        event: typeof item.event === 'string' ? item.event.slice(0, 20) : '',
+        count: Math.max(1, Math.min(99, Math.round(Number(item.count) || 1))),
+      }))
+      .filter((item) => item.event !== '')
+      .slice(0, 20)
     : undefined
   return {
     kind,

@@ -91,7 +91,7 @@ const BASE_SETTINGS: PetSettings = {
 }
 
 function makeRoutes(
-  ai?: { reply: (input: { kind: 'tap' | 'event' | 'chat' | 'idle'; part?: string; tapKind?: 'light' | 'poke' | 'stroke'; durationMs?: number; event?: string; text?: string; tz?: string; merged?: string[] }) => Promise<{ ok: boolean; text?: string; expressions?: string[]; motions?: string[]; memory?: string; error?: string }> },
+  ai?: { reply: (input: { kind: 'tap' | 'event' | 'chat' | 'idle'; part?: string; event?: string; text?: string; tz?: string; merged?: { event: string; count: number }[] }) => Promise<{ ok: boolean; text?: string; expressions?: string[]; motions?: string[]; memory?: string; error?: string }> },
   aiSettings?: {
     options: () => Promise<{ providers: { id: string; name: string }[]; models: Record<string, { id: string; name: string }[]> }>
     readPersona: () => { text: string; path: string }

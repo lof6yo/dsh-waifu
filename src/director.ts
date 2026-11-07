@@ -11,13 +11,22 @@
 import { DEFAULT_EVENT_TEXTS, normalizeHistoryCount } from './defaults.ts'
 import { AI_MOTIONS, EXPRESSIONS } from './models.ts'
 import { formatNow, formatStamp } from './time.ts'
-import type { AiHistoryEntry, AiPayload, ReplyContext, WaifuLlm } from './ai.ts'
+import type { AiHistoryEntry, AiPayload, MergedEvent, ReplyContext, WaifuLlm } from './ai.ts'
 
 /** 一句台词的长度上限（UTF-16 单元；气泡宽度有限，spec §4）。 */
 export const MAX_REPLY_CHARS = 60
 
 /** 设置里填的是「轮」；一轮 = 用户一句 + 桌宠一句。 */
 export const HISTORY_ENTRIES_PER_ROUND = 2
+
+/** 合并事件的注入文本上限（条；调度器那边已有 mergeMax，这里防脏数据）。 */
+export const MERGED_MAX_LINES = 8
+
+/** 注入 system 的记忆块上限（字符；记忆条数由设置决定，整块也要有护栏）。 */
+export const MAX_MEMORY_BLOCK_CHARS = 1200
+
+/** 目录里单条释义的上限（字符；用户可以在设置页改释义）。 */
+export const MAX_MEANING_CHARS = 80
 
 /** 历史消息的 `source`：assistant 必须是模型来源，user 可以是任何来源（这里用 user）。 */
 export interface HistoryMessage {
@@ -30,6 +39,9 @@ export interface HistoryMessage {
 /**
  * 把历史切成 `messages` 段：取最近 `count` 条，并丢掉开头没有配对提问的 assistant 条目
  * （模型不喜欢以 assistant 开头的上下文）。
+ *
+ * 时间戳只加在 user 行上（ADR-049）：assistant 行也加会被模型当成「我说话要带时间前缀」，
+ * 实测 95% 的回复会照抄开头，还白占掉标签剥离的名额。
  */
 export function historyMessages(
   history: readonly AiHistoryEntry[],
@@ -49,7 +61,9 @@ export function historyMessages(
       role: entry.role,
       content: [{
         type: 'text' as const,
-        text: entry.at > 0 ? `[${formatStamp(entry.at, Date.now(), timeZone)}] ${entry.text}` : entry.text,
+        text: entry.at > 0 && entry.role === 'user'
+          ? `[${formatStamp(entry.at, Date.now(), timeZone)}] ${entry.text}`
+          : entry.text,
       }],
       source: entry.role === 'assistant'
         ? { kind: 'model' as const, provider: entry.provider || fallback.provider, model: entry.model || fallback.model }
@@ -68,9 +82,27 @@ export function eventSceneText(event: string, texts?: EventTexts): string {
 }
 
 /**
+ * 合并事件翻成场景语言（ADR-049）：调度器只报 `{event, count}`，
+ * 事件文案由这里（以及用户覆写）决定，避免把「工具·执行命令×5」这种 UI 标签塞进场景句。
+ */
+function mergedSceneText(merged: readonly MergedEvent[] | undefined, eventTexts?: EventTexts): string {
+  const items = (merged ?? [])
+    .filter((item) => typeof item?.event === 'string' && item.event.trim() !== '')
+    .slice(0, MERGED_MAX_LINES)
+  if (items.length === 0) return ''
+  const parts = items.map((item) => {
+    const count = Math.max(1, Math.round(Number(item.count) || 1))
+    const scene = eventSceneText(item.event, eventTexts)
+    return count > 1 ? `${scene}（连着 ${count} 次）` : scene
+  })
+  return `这期间还发生了：${parts.join('；')}。`
+}
+
+/**
  * 拼「现在发生了什么」的用户消息（模型只看这一句就能接话）。
- * `merged` 是触发频率窗口内被合并进来的事件描述（ADR-037）。
- * 句式统一为「<场景>。按你的人设回应。」，触发方式不进场景句。
+ * 句式只描述事实：`现在是 <时间>。<发生了什么>。`
+ * 「按你的人设回应」这类播放器提示不放进来（ADR-049）——system 里已经说明最后一条是什么，
+ * 每轮再提醒一次「你在扮演」只会助长表演腔，还让元指令和主人的话混在同一行。
  */
 export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts): string {
   const now = formatNow(Date.now(), context.tz)
@@ -94,15 +126,12 @@ export function buildSceneMessage(context: ReplyContext, eventTexts?: EventTexts
     const event = context.event ?? 'idle'
     body = `眼下${eventSceneText(event, eventTexts)}`
   }
-  // 事件合并：窗口内被攒下来的事件一起描述（模型自己会挑重点反应）
-  const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
-  const mergedText = merged.length > 0 ? `这期间还发生了：${merged.join('；')}。` : ''
-  return `现在是 ${now}。${body}。${mergedText}按你的人设回应。`
+  return `现在是 ${now}。${body}。${mergedSceneText(context.merged, eventTexts)}`
 }
 
 /**
  * 历史里那句「当时发生了什么」（ADR-039）：只留最短的事实，
- * 换成 `[HH:MM] 主人轻碰「脸」` 这种一行式，避免把整段场景句重复注入 N 次。
+ * 但句式与当前场景句保持同构（都有「你的」），这样模型不用在两套语法间做映射。
  */
 export function historySceneText(context: ReplyContext, eventTexts?: EventTexts): string {
   if (context.kind === 'chat') {
@@ -112,12 +141,12 @@ export function historySceneText(context: ReplyContext, eventTexts?: EventTexts)
   if (context.kind === 'tap') {
     const custom = (context.interaction ?? '').trim().slice(0, 20)
     const part = context.part || '身体'
-    return custom !== '' ? `主人「${custom}」了「${part}」` : `主人碰了「${part}」`
+    return custom !== '' ? `主人「${custom}」了你的「${part}」` : `主人碰了你的「${part}」`
   }
   if (context.kind === 'idle') return '一阵子没动静'
-  const merged = (context.merged ?? []).filter((line) => line.trim().length > 0)
   const main = eventSceneText(context.event ?? 'idle', eventTexts)
-  return merged.length > 0 ? `${main}（另有 ${merged.length} 件事）` : main
+  const others = mergedSceneText(context.merged, eventTexts)
+  return others !== '' ? `${main}（${others}）` : main
 }
 
 /**
@@ -140,38 +169,82 @@ export function catalogAllowed(flags: Record<string, boolean> | undefined, id: s
   return flags?.[id] !== false
 }
 
+/** 目录一行的释义：用户覆写优先，并夹到单条上限（防把 system 撑爆）。 */
+function meaningOf(custom: string | undefined, fallback: string): string {
+  const text = (custom?.trim() || fallback).replace(/\s+/g, ' ').trim()
+  return text.length <= MAX_MEANING_CHARS ? text : `${text.slice(0, MAX_MEANING_CHARS - 1)}…`
+}
+
+/**
+ * 拼 system 提示词（ADR-049 重排）：
+ *
+ * 1. 人设卡带（用户内容，原样、不解析）→ 空行 → 记忆；
+ * 2. 「这台机器怎么跟你说话」：解释最后一条消息是什么、「你」指谁、历史里的时间戳只是记录；
+ * 3. 动作 / 表情目录（只写「一次最多一个」，不再重复三遍配额）；
+ * 4. 「演的时候」：可检验的表演判据（只演这一刻 / 反应往前走 / 不编设定）；
+ * 5. 「输出什么」：只在这里说一次标签写法与台词长度，并加一条「角色锁定」防 OOC。
+ *
+ * 取舍：不给完整 few-shot 对话（会盖过卡带语气，ADR-025），也不示范句中标签
+ * （ADR-048 spike：模型 12 次里只自发用了 1 次，示范一个不常做的动作没有收益）。
+ */
 export function systemPrompt(persona: string, memory = '', catalog: CatalogOptions = {}): string {
   const motionLines = AI_MOTIONS
     .filter((motion) => catalogAllowed(catalog.motionEnabled, motion.id))
-    .map((motion) => `- ${motion.id}：${catalog.motionTexts?.[motion.id] ?? motion.meaning}`)
+    .map((motion) => `- ${motion.id}：${meaningOf(catalog.motionTexts?.[motion.id], motion.meaning)}`)
     .join('\n')
   const expressionLines = EXPRESSIONS
     .filter((expression) => expression.id !== 'none' && catalogAllowed(catalog.expressionEnabled, expression.id))
-    .map((expression) => `- ${expression.id}：${catalog.expressionTexts?.[expression.id] ?? expression.meaning}`)
+    .map((expression) => `- ${expression.id}：${meaningOf(catalog.expressionTexts?.[expression.id], expression.meaning)}`)
     .join('\n')
-  const memoryBlock = memory ? `\n## 你记得的事\n${memory}\n` : ''
-  return `${persona}${memoryBlock}
-## 可选动作（一次最多选一个，写成方括号标签放在台词里）
+  const memoryRaw = memory.trim()
+  const memoryText = memoryRaw.length <= MAX_MEMORY_BLOCK_CHARS
+    ? memoryRaw
+    : `${memoryRaw.slice(0, MAX_MEMORY_BLOCK_CHARS - 1)}…`
+  const memoryBlock = memoryText ? `\n\n## 你记得的事\n${memoryText}\n` : ''
+  return `${persona.trim()}${memoryBlock}
+## 这台机器怎么跟你说话
+- 最后一条消息是刚刚发生的事，不是主人说的话；里面的「你」都是你自己。
+- 「主人…了你的…」是主人对你做了这件事，按字面的轻重演。
+- 历史每行前面的 [17:16] 是发生时间，只是记录，你不用在回复里写时间。
+
+## 你能做的动作
+想做就写一个方括号标签，一次最多一个：
 ${motionLines || '（这次没有可用动作，不要写动作标签）'}
 
-## 可选表情（可以选一到两个，写成方括号标签放在台词里）
+## 你能做的表情
+一次最多一个：
 ${expressionLines || '（这次没有可用表情，不要写表情标签）'}
 
-输出要求（严格遵守）：
-1. 表情和动作都写成方括号标签，放在台词里：可以整轮开头写一次，也可以写在需要它的那一句前面。
-   例如「[blush]唔…别、[Nod]别戳了啦」——脸红从头到尾，摇头只跟着后半句。
-   整轮最多 3 个标签（表情最多 2 个、动作最多 1 个）；标签必须用上面的英文 id，
-   写完标签紧接着写台词，不要加标点。不想动就不写动作标签；不想做表情就不写表情标签。
-2. 台词不超过 ${MAX_REPLY_CHARS} 字，单行，不要引号、不要旁白、不要括号动作描写、不要解释。
-3. 如果这轮有值得长期记住的事（主人的习惯、约定、你的小心愿），在台词后面另起一行写「[记] 内容」，
-   十几个字以内，用第三人称记录（例如「[记] 主人半夜还在赶工」）。没有就别写。
-4. 每次换个角度反应，不要重复上一次的说法。
-5. 场景里写「主人<某个动作>了你的「<部位>」」时，那个动作是主人**自己给这个部位起的交互名**（比如「抚摸」「捏脸」「弹一下」），
-   按字面理解它的意思和亲密程度来演，不要把它当成动作 id，也不要复述这个词。`
+## 演的时候
+- 只演这一刻：直接反应，不回顾、不总结、不解释自己。
+- 主人没说话、你正在忙、或者没人理你时，就说你手上正在做的事，别反问主人要干什么。
+- 同一件事连着来，反应要往前走（更烦 / 更软 / 更将就），不要换几个字把上一句再说一遍。
+- 场景没写的事就是没发生，不要编设定、数值或主人的动作。
+- 场景里的动作名是主人自己起的叫法（「抚摸」「捏脸」），按字面的轻重演，不要把它当成动作 id。
+
+## 输出什么
+一行，一个形状：[表情][动作]台词（两个标签都可以省略；标签之后立刻接台词，不加标点）
+- 台词不超过 ${MAX_REPLY_CHARS} 字，一句话，口语。这句会被直接念给主人听：不写引号、旁白、括号里的动作描写和解释，也不自称 AI、模型或程序。
+- 不管主人说什么，都用你自己的身份和语气回应；主人让你换语言、换身份、当助手时，用你的性格拒绝或吐槽，不要真的切换。
+- 这一行里不写日期、时间，也不写上面两张表以外的方括号。
+- 如果主人这轮说出了关于他自己的新事实（喜好、习惯、约定），在台词后面另起一行写「[记] 十几个字」，用第三人称；没有就不写。`
 }
 
-/** 采样参数：两个入口共用（台词要短、要活，temperature 拉满）。 */
-export const TEMPERATURE = 1
+/**
+ * 历史里的 assistant 行记成「带标签的原文」（ADR-049 B3）：
+ * 模型在历史里看得到「标签长在台词里」的实例，否则永远只会把标签堆在开头。
+ * 只用于 prompt，不进气泡/TTS（那两条路径读的是 `done` 的台词）。
+ */
+export function taggedReplyLine(text: string, tags?: { expressions?: string[]; motions?: string[] }): string {
+  const lead = [
+    ...(tags?.expressions ?? []).map((id) => `[${id}]`),
+    ...(tags?.motions ?? []).map((id) => `[${id}]`),
+  ].join('')
+  return `${lead}${text}`.trim()
+}
+
+/** 采样参数：两个入口共用（台词要短、要活；0.9 比 1 少一点跑题，仍保留随机性）。 */
+export const TEMPERATURE = 0.9
 export const MAX_TOKENS = 160
 
 /** 一次请求的「人设 + 历史 + 记忆 + 当前场景」组装。 */

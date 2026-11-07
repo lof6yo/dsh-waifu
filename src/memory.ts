@@ -101,16 +101,26 @@ function parseStamp(content: string): number {
   return Number.isFinite(at) ? at : 0
 }
 
+/** 去掉条目开头的时间戳，只留正文（比较去重时用）。 */
+function stripStamp(text: string): string {
+  return text.replace(/^\[[^\]]*\]\s*/, '').trim()
+}
+
 /**
  * 追加一条记忆（AI 输出的「[记] …」行；ADR-037）。
  * 时间戳用 `formatStamp`（浏览器时区由调用方传入）。
+ * 最近 5 条里已有同一件事就不重复记（ADR-049：重复条目会白占注入预算）。
  * 文件超长时丢最旧的 `- ` 行（保留文件头与其余内容）。
  */
 export function appendMemory(homeDir: string, note: string, timeZone?: string): void {
   const cleaned = note.replace(/\s+/g, ' ').trim().slice(0, MAX_MEMORY_CHARS)
   if (!cleaned) return
   const file = memoryPath(homeDir)
-  const { text } = loadMemory(homeDir)
+  const { text, entries } = loadMemory(homeDir)
+  const duplicate = entries
+    .slice(-5)
+    .some((entry) => stripStamp(entry.text) === cleaned)
+  if (duplicate) return
   const line = `- [${stampNow(timeZone)}] ${cleaned}`
   let next = `${text.trimEnd()}\n${line}\n`
   if (next.length > MAX_MEMORY_FILE_CHARS) {

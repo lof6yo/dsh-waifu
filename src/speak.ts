@@ -40,12 +40,14 @@ export interface SpeakPipelineOptions {
   signal?: AbortSignal
 }
 
-/** 管线结果：最终整句 + 实际下发的段数 + AI 留下的记忆行。 */
+/** 管线结果：最终整句 + 实际下发的段数 + AI 留下的记忆行 + 这轮的标签。 */
 export interface SpeakResult {
   text: string
   clauses: number
   audio: number
   memory?: string
+  /** 这轮实际生效的标签（写历史用，ADR-049：让模型看得到「标签长在台词里」）。 */
+  tags?: { expressions: string[]; motions: string[] }
 }
 
 /**
@@ -58,6 +60,7 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
   const tasks = new Map<number, Promise<TtsAudio | null>>()
   let pumpIndex = 0
   let audioCount = 0
+  let tagsOut: { expressions: string[]; motions: string[] } | undefined
   let total = ''
   let result = ''
   let memory: string | undefined
@@ -122,7 +125,12 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       // 目录标签先于台词到达：转给前端驱动表情/动作，不进气泡也不进 TTS。
       // 同时登记到时间线上——P3 起客户端按「段」执行 cue，老客户端仍只认这个帧。
       timeline.tag(chunk.expressions, chunk.motions)
-      emit('tags', { expressions: chunk.expressions, motions: chunk.motions })
+      tagsOut = { expressions: chunk.expressions, motions: chunk.motions }
+      emit('tags', {
+        expressions: chunk.expressions,
+        motions: chunk.motions,
+        ...(chunk.dropped === undefined ? {} : { dropped: chunk.dropped }),
+      })
       continue
     }
     if (chunk.type === 'memory') {
@@ -141,7 +149,13 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       await kick()
       emit('error', { error: chunk.error })
       emit('done', { text: stripInlineTags(result || total) })
-      return { text: stripInlineTags(result || total), clauses: timeline.length, audio: audioCount, memory }
+      return {
+        text: stripInlineTags(result || total),
+        clauses: timeline.length,
+        audio: audioCount,
+        memory,
+        ...(tagsOut === undefined ? {} : { tags: tagsOut }),
+      }
     }
   }
 
@@ -156,5 +170,11 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     await kick()
   }
   emit('done', { text: stripInlineTags(result || total) })
-  return { text: stripInlineTags(result || total), clauses: timeline.length, audio: audioCount, memory }
+  return {
+    text: stripInlineTags(result || total),
+    clauses: timeline.length,
+    audio: audioCount,
+    memory,
+    ...(tagsOut === undefined ? {} : { tags: tagsOut }),
+  }
 }

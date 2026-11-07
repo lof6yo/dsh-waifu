@@ -125,7 +125,7 @@ describe('systemPrompt（动作/表情释义可覆写 + 可关闭，ADR-040）',
     })
     expect(prompt).toContain('- Nod：酷酷地点头')
     expect(prompt).toContain('- blush：羞到冒烟')
-    expect(prompt).toContain('- ShakeHead：无语、不敢相信、傲娇、拒绝、欲拒还迎')
+    expect(prompt).toContain('- ShakeHead：否认、嘴硬、拒绝、被说中要害')
   })
 })
 
@@ -133,7 +133,7 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
   it('部位自定义交互名优先于时长三档（ADR-038）', () => {
     const scene = buildSceneMessage({ kind: 'tap', part: '脸', interaction: '抚摸', tz: 'Asia/Shanghai' })
     // 统一句式（2026-11-06）：触发方式（单击/双击/停留）不进场景句，只说交互名
-    expect(scene).toBe('现在是 ' + formatNow(Date.now(), 'Asia/Shanghai') + '。主人「抚摸」了你的「脸」。按你的人设回应。')
+    expect(scene).toBe('现在是 ' + formatNow(Date.now(), 'Asia/Shanghai') + '。主人「抚摸」了你的「脸」。')
     expect(scene).not.toContain('鼠标')
     expect(scene).not.toContain('按了约')
     expect(scene).not.toContain('戳了戳')
@@ -159,11 +159,12 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
 
   it('历史只记最短事实，不重复整段场景句（ADR-039）', () => {
     // 历史短句与场景句同一句式，只是省略时间前缀与「按你的人设回应」
-    expect(historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸' })).toBe('主人「抚摸」了「脸」')
+    expect(historySceneText({ kind: 'tap', part: '脸', interaction: '抚摸' })).toBe('主人「抚摸」了你的「脸」')
     expect(historySceneText({ kind: 'chat', text: '你在干嘛' })).toBe('主人说「你在干嘛」')
     expect(historySceneText({ kind: 'idle' })).toBe('一阵子没动静')
     expect(historySceneText({ kind: 'event', event: 'thinking' })).toBe(DEFAULT_EVENT_TEXTS.thinking)
-    expect(historySceneText({ kind: 'event', event: 'tool-run', merged: ['a', 'b'] })).toBe('主人让你跑命令，你刚按下回车（另有 2 件事）')
+    expect(historySceneText({ kind: 'event', event: 'tool-run', merged: [{ event: 'tool-read', count: 2 }] }))
+      .toBe(`${DEFAULT_EVENT_TEXTS['tool-run']}（这期间还发生了：${DEFAULT_EVENT_TEXTS['tool-read']}（连着 2 次）。）`)
   })
 
   it('事件情景按事件键给出不同描述（状态 + 活动）', () => {
@@ -176,13 +177,13 @@ describe('buildSceneMessage（ADR-037 场景描述）', () => {
 
   it('对话情景带上主人原话；静默超时说明「没人理你」', () => {
     expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('主人对你说「今天累不累？」')
-    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).toContain('按你的人设回应')
+    expect(buildSceneMessage({ kind: 'chat', text: '今天累不累？' })).not.toContain('按你的人设回应')
     expect(buildSceneMessage({ kind: 'idle' })).toContain('有一阵子没人理你')
   })
 
   it('窗口内合并的事件一起描述', () => {
-    const message = buildSceneMessage({ kind: 'event', event: 'done', merged: ['主人又看了个文件', '主人跑了个命令'] })
-    expect(message).toContain('这期间还发生了：主人又看了个文件；主人跑了个命令。')
+    const message = buildSceneMessage({ kind: 'event', event: 'done', merged: [{ event: 'tool-read', count: 1 }, { event: 'tool-run', count: 3 }] })
+    expect(message).toContain(`这期间还发生了：${DEFAULT_EVENT_TEXTS['tool-read']}；${DEFAULT_EVENT_TEXTS['tool-run']}（连着 3 次）。`)
   })
 })
 
@@ -467,7 +468,7 @@ describe('链路记录（ADR-043）', () => {
     expect(replies).toHaveLength(1)
     expect(replies[0].raw).toBe('[Nod] 好呀')
     // 请求报文里带上采样参数，控制台能完整复现这次请求
-    expect(payloads[0].temperature).toBe(1)
+    expect(payloads[0].temperature).toBe(0.9)
     expect(payloads[0].maxTokens).toBe(160)
   })
 
@@ -656,5 +657,42 @@ describe('流式记忆行（ADR-037：不进气泡、不进 TTS）', () => {
     expect(memoryTailStart('好呀\n[')).toBe(2)
     expect(memoryTailStart('好呀[记] 不是独立行')).toBe(-1)
     expect(memoryTailStart('好呀')).toBe(-1)
+  })
+})
+
+describe('ADR-049：历史格式与标签留痕', () => {
+  it('时间戳只加在 user 行上（assistant 行照抄时间戳是 95% 回复跑偏的源头）', () => {
+    const rows = historyMessages([
+      { role: 'user', text: '主人「捏」了你的「脸」', at: 1 },
+      { role: 'assistant', text: '[blush]唔…别捏啦', at: 2, provider: 'p', model: 'm' },
+    ], 5, { provider: 'p', model: 'm' }, 'Asia/Shanghai')
+    expect(rows).toHaveLength(2)
+    const [user, assistant] = rows
+    expect(user.content[0].text).toMatch(/^\[[^\]]+\] 主人「捏」了你的「脸」$/)
+    expect(assistant.content[0].text).toBe('[blush]唔…别捏啦')
+  })
+
+  it('/interact（非流式）也会剥掉句中标签：不然 [Sigh] 会被念出来', async () => {
+    const llm = fakeLlm(['[whites]又要写代码…[Sigh]真是拿你没办法'])
+    const reply = await generateReply(llm, {
+      provider: 'p', model: 'm', persona: DEFAULT_PERSONA,
+      context: { kind: 'tap', part: '脸', interaction: '捏' },
+    })
+    expect(reply.text).toBe('又要写代码…真是拿你没办法')
+    expect(reply.expressions).toEqual(['whites'])
+    expect(reply.motions).toEqual(['Sigh'])
+  })
+
+  it('被目录开关拦下的标签会随 tags 帧回报（丢弃必须留痕）', async () => {
+    const llm = fakeLlm(['[blush][whites][Nod] 唔…别'])
+    const frames: unknown[] = []
+    for await (const chunk of streamReply(llm, {
+      provider: 'p', model: 'm', persona: DEFAULT_PERSONA,
+      context: { kind: 'tap', part: '脸', interaction: '捏' },
+      catalog: { expressionEnabled: { blush: false } },
+    })) {
+      if (chunk.type === 'tags') frames.push(chunk)
+    }
+    expect(frames).toEqual([{ type: 'tags', expressions: ['whites'], motions: ['Nod'], dropped: ['blush'] }])
   })
 })

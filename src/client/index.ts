@@ -307,6 +307,12 @@ async function readJson<T>(res: Response): Promise<T> {
   return await res.json() as T
 }
 
+/** 被调度器合并进来的事件（ADR-049：只报事实，场景语言由 Host 的剧本引擎生成）。 */
+interface MergedEventBody {
+  event: string
+  count: number
+}
+
 /** 触发场景（ADR-037）：与 Host 的 TriggerInput 同构；`merged` 由本侧调度器填。 */
 interface TriggerBody {
   kind: 'tap' | 'event' | 'chat' | 'idle'
@@ -315,7 +321,7 @@ interface TriggerBody {
   interaction?: string
   event?: string
   text?: string
-  merged?: string[]
+  merged?: MergedEventBody[]
   tz?: string
 }
 
@@ -1221,18 +1227,20 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 合并项 → 场景句里的「这期间还发生了…」条目（同类合并成「×N」，主事件不重复报）。 */
-  function mergeLines(merged: readonly MergedTrigger[], mainEvent?: string): string[] {
-    const lines: string[] = []
+  /**
+   * 合并项 → 只报事实 `{event, count}`（同类合并计数，主事件扣掉已经算过的那一次）。
+   * 文案由 Host 的剧本引擎用 `eventSceneText` 生成 —— 客户端不掺场景语言（ADR-049）。
+   */
+  function mergeEvents(merged: readonly MergedTrigger[], mainEvent?: string): MergedEventBody[] {
+    const out: MergedEventBody[] = []
     for (const item of merged) {
-      const label = TRIGGER_EVENT_LABELS[item.event] ?? item.event
-      if (item.event === mainEvent) {
-        if (item.count > 1) lines.push(`${label}又来了 ${item.count - 1} 次`)
-        continue
-      }
-      lines.push(item.count > 1 ? `${label}×${item.count}` : label)
+      const count = item.event === mainEvent ? item.count - 1 : item.count
+      if (count <= 0) continue
+      const existing = out.find((entry) => entry.event === item.event)
+      if (existing) existing.count += count
+      else out.push({ event: item.event, count })
     }
-    return lines
+    return out
   }
 
   /** 连点窗口内的触摸：只留最后一次，到点补发（届时窗口已过，会直接触发）。 */
@@ -1253,7 +1261,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (flushed.incoming === null) return
     scheduleState = flushed.state
     const mainEvent = flushed.incoming.event
-    void startTurn({ kind: 'event', event: mainEvent, merged: mergeLines(flushed.merged, mainEvent) })
+    void startTurn({ kind: 'event', event: mainEvent, merged: mergeEvents(flushed.merged, mainEvent) })
   }
 
   /** 事件最小间隔到期后补发合并轮。 */
@@ -1312,7 +1320,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     switch (decision.action) {
       case 'run':
         scheduleIdleTimer()
-        void startTurn({ ...input, merged: mergeLines(decision.merged, input.event) })
+        void startTurn({ ...input, merged: mergeEvents(decision.merged, input.event) })
         return
       case 'defer':
         conPush('trigger', `deferred | ${label} | ${decision.reason} ${decision.delayMs}ms`)
@@ -3301,7 +3309,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           return
         }
         if (event === 'tags') {
-          const payload = data as { expressions?: unknown; motions?: unknown }
+          const payload = data as { expressions?: unknown; motions?: unknown; dropped?: unknown }
           const expressions = Array.isArray(payload.expressions)
             ? payload.expressions.filter((item): item is string => typeof item === 'string')
             : []
@@ -3309,6 +3317,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
             ? payload.motions.filter((item): item is string => typeof item === 'string')
             : []
           pendingTags = { expressions, motions }
+          // 被目录开关或互斥组拦下的标签要留痕（ADR-049）：不然「选了的没演」无从排查
+          if (Array.isArray(payload.dropped) && payload.dropped.length > 0) {
+            conPush('tags dropped', payload.dropped.join(', '))
+          }
           return
         }
         if (event === 'memory') {

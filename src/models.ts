@@ -91,15 +91,15 @@ export interface ExpressionDef {
 /** 全部内置表情（`none` 表示恢复无表情；目录同时是 AI 可选表情与设置页勾选清单）。 */
 export const EXPRESSIONS: readonly ExpressionDef[] = [
   { id: 'none', name: '无', params: {}, meaning: '' },
-  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin', meaning: '娇羞、害羞、被戳中软处、舒服' },
-  { id: 'angry', name: '生气', params: { ParamSwitch4: 1 }, meaning: '生气、发脾气、炸毛' },
-  { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 }, exclusive: 'eye', meaning: '开心、崇拜、两眼放光' },
-  { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 }, exclusive: 'eye', meaning: '无语、嫌弃、不屑' },
-  { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 }, exclusive: 'eye', meaning: '委屈、含着泪' },
-  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 }, exclusive: 'eye', meaning: '喜欢、心里小鹿乱撞、性奋' },
-  { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 }, exclusive: 'eye', meaning: '哭出来、伤心' },
-  { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 }, exclusive: 'skin', meaning: '不爽、阴沉下来' },
-  { id: 'blood', name: '羞愤', params: { ParamSwitch3: 1 }, exclusive: 'skin', meaning: '又羞又气、脸上挂不住' },
+  { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin', meaning: '害羞、被夸到、被碰到软处（正面）' },
+  { id: 'angry', name: '生气', params: { ParamSwitch4: 1 }, meaning: '被惹到当场发火' },
+  { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 }, exclusive: 'eye', meaning: '开心、崇拜、被夸得两眼放光' },
+  { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 }, exclusive: 'eye', meaning: '无语、嫌弃、被蠢到（不出声的不满）' },
+  { id: 'tear', name: '泪花', params: { ParamSwitch7: 1 }, exclusive: 'eye', meaning: '眼眶湿了，还在忍' },
+  { id: 'heart', name: '爱心眼', params: { ParamSwitch8: 1 }, exclusive: 'eye', meaning: '喜欢到眼睛发光' },
+  { id: 'cry', name: '眼泪', params: { ParamSwitch9: 1 }, exclusive: 'eye', meaning: '已经哭出来' },
+  { id: 'dark', name: '脸黑', params: { ParamSwitch1: 1 }, exclusive: 'skin', meaning: '不爽到脸沉下来，冷笑、要算账' },
+  { id: 'blood', name: '羞愤', params: { ParamSwitch3: 1 }, exclusive: 'skin', meaning: '羞到极点又要发作，脸绷不住' },
   { id: 'dim', name: '高光消失', params: { ParamSwitch21: 1 }, meaning: '失落、没精神、蔫了' },
 ]
 
@@ -112,14 +112,14 @@ export interface MotionDef {
 }
 
 export const AI_MOTIONS: readonly MotionDef[] = [
-  { id: 'Nod', name: '点头', meaning: '同意、得意、敷衍地应一声' },
-  { id: 'ShakeHead', name: '摇头', meaning: '无语、不敢相信、傲娇、拒绝、欲拒还迎' },
+  { id: 'Nod', name: '点头', meaning: '同意、得意、被哄好' },
+  { id: 'ShakeHead', name: '摇头', meaning: '否认、嘴硬、拒绝、被说中要害' },
   { id: 'Tilt', name: '歪头', meaning: '好奇、疑惑、没听懂、质疑' },
   { id: 'Sway', name: '左右晃', meaning: '撒娇、放松、妩媚、吸引' },
   { id: 'Glance', name: '瞥一眼', meaning: '偷瞄、关注' },
   { id: 'Perk', name: '竖起耳朵', meaning: '警觉' },
   { id: 'Shift', name: '换重心', meaning: '活动身体、调皮' },
-  { id: 'Sigh', name: '叹气', meaning: '叹气' },
+  { id: 'Sigh', name: '叹气', meaning: '无奈、认命、被折腾到没脾气' },
 ]
 
 /** AI 可选动作组 id 列表。 */
