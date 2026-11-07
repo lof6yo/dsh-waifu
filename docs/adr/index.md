@@ -54,3 +54,4 @@
 | 048 | [演出编排（剧本引擎 / 演员 / 编排器三层）](./048-performance-orchestration.md) | 已采纳 |
 | 049 | [提示词信噪比与台词契约（in-character 回归）](./049-prompt-signal-to-noise.md) | 已采纳 |
 | 050 | [标签分形：表情用尖括号、动作用方括号](./050-tag-shapes.md) | 已采纳 |
+| 051 | [语音合成走直连 + 自持连接池（省掉每轮 TLS 握手）](./051-tts-direct-transport.md) | 已采纳 |

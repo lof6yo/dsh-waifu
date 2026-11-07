@@ -13,6 +13,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https'
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -173,6 +174,104 @@ async function writeCache(dir: string, key: string, audio: Buffer): Promise<void
 /** OpenRouter 的语音端点（OpenAI 兼容，返回原始音频字节）。 */
 export const OPENROUTER_SPEECH_URL = 'https://openrouter.ai/api/v1/audio/speech'
 
+/**
+ * 合成专用连接池。
+ *
+ * 两个目的（ADR-051）：
+ * - **绕开系统 HTTP 代理**：`NODE_USE_ENV_PROXY=1` 时全局 `fetch` 会走
+ *   `HTTPS_PROXY`，跨境代理的 TLS 握手实测 0.6–1.3 s；直连 0.4 s，且少一跳。
+ * - **跨轮保持连接**：`keepAlive` 60 s，同一轮的第 2、3 段与下一轮都能复用同一条
+ *   TLS 连接，不再每轮重新握手（全局 fetch 的空闲窗口只有 4 s，等下一次开口
+ *   早就断了）。
+ */
+const ttsAgent = new HttpsAgent({ keepAlive: true, keepAliveMsecs: 60_000, maxSockets: 4, maxFreeSockets: 2 })
+
+/** 合成请求的应答（只用到这几样，方便测试注入假实现）。 */
+export interface TtsResponseLike {
+  ok: boolean
+  status: number
+  headers: { get(name: string): string | null }
+  json(): Promise<unknown>
+  arrayBuffer(): Promise<ArrayBuffer>
+}
+
+/** 合成请求的发送器类型：默认直连，测试可注入假实现。 */
+export type TtsFetcher = (endpoint: string, init: {
+  method: string
+  headers: Record<string, string>
+  body: string
+  signal: AbortSignal
+}) => Promise<TtsResponseLike>
+
+/**
+ * 直连发送器：`node:https` 不读 `HTTPS_PROXY`，配合 {@link ttsAgent} 复用连接。
+ * 设 `WAIFU_TTS_DIRECT=0` 时退回全局 `fetch`（只给「必须走代理才能出网」的环境用）。
+ */
+/** 退回全局 `fetch`（会走 `HTTPS_PROXY`）：直连不通时的兜底，免得整台机器没声音。 */
+const proxiedTtsFetcher: TtsFetcher = async (endpoint, init) => {
+  const response = await fetch(endpoint, { ...init })
+  return {
+    ok: response.ok,
+    status: response.status,
+    headers: response.headers,
+    json: () => response.json(),
+    arrayBuffer: () => response.arrayBuffer(),
+  }
+}
+
+export const directTtsFetcher: TtsFetcher = async (endpoint, init) => {
+  if (process.env.WAIFU_TTS_DIRECT === '0') return await proxiedTtsFetcher(endpoint, init)
+  try {
+    return await directPost(endpoint, init)
+  } catch {
+    // 直连不通（公司网/被墙/DNS 污染）时退回代理：宁可慢一点，也不要没声音。
+    return await proxiedTtsFetcher(endpoint, init)
+  }
+}
+
+const directPost: TtsFetcher = async (endpoint, init) => {
+  const url = new URL(endpoint)
+  const payload = Buffer.from(init.body, 'utf8')
+  return await new Promise<TtsResponseLike>((resolve, reject) => {
+    const request = httpsRequest(
+      {
+        method: init.method,
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: `${url.pathname}${url.search}`,
+        agent: ttsAgent,
+        headers: { ...init.headers, 'content-length': String(payload.byteLength) },
+      },
+      (response) => {
+        const chunks: Buffer[] = []
+        response.on('data', (chunk: Buffer) => chunks.push(chunk))
+        response.on('error', reject)
+        response.on('end', () => {
+          const body = Buffer.concat(chunks)
+          const status = response.statusCode ?? 0
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            headers: {
+              get: (name: string) => {
+                const value = response.headers[name.toLowerCase()]
+                return Array.isArray(value) ? value.join(', ') : value ?? null
+              },
+            },
+            json: async () => JSON.parse(body.toString('utf8')) as unknown,
+            arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer,
+          })
+        })
+      },
+    )
+    request.on('error', reject)
+    const abort = () => request.destroy(new Error('tts-aborted'))
+    if (init.signal.aborted) abort()
+    else init.signal.addEventListener('abort', abort, { once: true })
+    request.end(payload)
+  })
+}
+
 /** 解析凭据：调用方每次操作都要重新取（凭据更新后无需重启）。 */
 export type ApiKeyResolver = () => Promise<string | undefined>
 
@@ -181,7 +280,7 @@ export class OpenRouterTtsEngine implements TtsEngine {
   constructor(
     private readonly resolveKey: ApiKeyResolver,
     private readonly cacheHome: string,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: TtsFetcher = directTtsFetcher,
     private readonly endpoint: string = OPENROUTER_SPEECH_URL,
     /** 排查钩子：每次合成前把要发的 body 报出去（缓存的也报，标 cached）。 */
     private readonly onPayload?: (payload: TtsPayload) => void,
