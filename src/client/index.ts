@@ -603,6 +603,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 当前模型 motionManager 的 motionFinish 解绑函数（模型重载/卸载时清理）。 */
   let detachMotionFinish: (() => void) | null = null
   let bubbleHideTimer: number | undefined
+  /** 一轮演绎期间气泡不自动消失（ADR-052）：文字比声音早到，2.5s 计时会在播到一半时把气泡收走。 */
+  let bubbleHeld = false
   /** 气泡最长可见计时器：从「隐藏 → 可见」那一刻起算，替换文案不重置（ADR-027）。 */
   let bubbleMaxTimer: number | undefined
   let bubbleMaxMs = BUBBLE_MAX_DEFAULT * 1000
@@ -739,6 +741,27 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       window.clearTimeout(bubbleMaxTimer)
       bubbleMaxTimer = undefined
     }
+  }
+
+  /** 到期隐藏气泡（ADR-052：只在一轮演完之后计时，演绎过程中由 bubbleHeld 按住）。 */
+  function armBubbleHideTimer(): void {
+    clearBubbleHideTimer()
+    bubbleHideTimer = window.setTimeout(() => {
+      bubbleHideTimer = undefined
+      bubbleVisible = false
+      clearBubbleMaxTimer()
+      if (bubble) bubble.style.opacity = '0'
+    }, BUBBLE_DISPLAY_MS)
+  }
+
+  /** 按住 / 放开气泡：演绎期间按住（不自动消失），放开时重新起算展示时长。 */
+  function setBubbleHold(held: boolean): void {
+    bubbleHeld = held
+    if (held) {
+      clearBubbleHideTimer()
+      return
+    }
+    if (bubbleVisible) armBubbleHideTimer()
   }
 
   /**
@@ -1041,17 +1064,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     updateBubblePosition()
   }
 
-  /** 立刻替换气泡文案（不经 AI 排队），到时隐藏。 */
+  /** 立刻替换气泡文案（不经 AI 排队），到时隐藏；演绎期间只换文案、不收气泡（ADR-052）。 */
   function showBubbleNow(text: string): void {
     if (!bubble) return
     clearBubbleHideTimer()
     setBubbleText(text)
-    bubbleHideTimer = window.setTimeout(() => {
-      bubbleHideTimer = undefined
-      bubbleVisible = false
-      clearBubbleMaxTimer()
-      if (bubble) bubble.style.opacity = '0'
-    }, BUBBLE_DISPLAY_MS)
+    if (!bubbleHeld) armBubbleHideTimer()
   }
 
   /** AI 台词上屏（ADR-037：不再有预置台词排队，直接换文案）。 */
@@ -1346,9 +1364,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     conPushJson('trigger', input)
     if (triggerMode === 'interrupt') stopSpeaking()
     speakingTurnActive = true
+    // 一轮之内气泡不自动消失（ADR-052）：台词比声音早到，2.5s 计时会在播到一半时把气泡收走
+    setBubbleHold(true)
     // 轮次真正结束（语音播完或一次性回复返回）才解锁；queue 模式随即补发攒下的合并项
     return requestSpeak(input).finally(() => {
       speakingTurnActive = false
+      setBubbleHold(false)
       flushSchedule()
     })
   }
