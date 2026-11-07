@@ -115,7 +115,7 @@ const ICON_SEND = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" s
 const ICON_SPEAKER_OFF = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16.5 9.5 5 5"/><path d="m21.5 9.5-5 5"/></svg>'
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
-/** 气泡最长连续可见时长兜底（秒）：默认 30；0 = 不限（spec §3，ADR-027）。 */
+/** 气泡最长连续可见时长兜底（秒）：默认 10；0 = 不限（spec §3，ADR-027）。 */
 const BUBBLE_MAX_DEFAULT = DEFAULT_BUBBLE_MAX_SECONDS
 /**
  * 调试面板手动摆放（spec §2 / ADR-044）：拖动标题栏移动、拖四角缩放后，几何存浏览器本地。
@@ -1066,6 +1066,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let speakRevealed = -1
   /** 音频播放串行链：保证第 0 段播完才播第 1 段。 */
   let speakChain: Promise<void> = Promise.resolve()
+  /** 正在播的那一段：stopSpeaking 要真的把它掐掉（只 abort 请求停不下已排队的音频）。 */
+  let activeSource: AudioBufferSourceNode | null = null
+  /** 对应段的 resolve：掐掉时按 null（没播完）结束，别让链一直挂着。 */
+  let activeResolve: ((seconds: number | null) => void) | null = null
 
   /** 懒创建 AudioContext + 分析器；被浏览器挂起时顺手恢复。 */
   function ensureAudio(): AudioContext | null {
@@ -1088,12 +1092,26 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     return audioCtx
   }
 
-  /** 中止当前演绎（新触摸/状态切换/卸载时调用）。 */
+  /** 中止当前演绎（新触摸/状态切换/隐藏/卸载时调用）：连带掐掉正在播的音频与排队段。 */
   function stopSpeaking(): void {
     if (speakAbort !== null) {
       try { speakAbort.abort() } catch { /* 已结束 */ }
       speakAbort = null
     }
+    // 递增序号：已经排进 speakChain 的回调不再往下播（原来只有 interrupt 分支自增，隐藏/卸载停不住）
+    speakSeq += 1
+    speakChain = Promise.resolve()
+    const source = activeSource
+    const resolve = activeResolve
+    activeSource = null
+    activeResolve = null
+    if (source !== null) {
+      try {
+        source.onended = null
+        source.stop()
+      } catch { /* 已经播完 */ }
+    }
+    resolve?.(null)
     speakClauses = []
     speakRevealed = -1
     mouthLevel = 0
@@ -1108,14 +1126,23 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0))
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
     return new Promise<number | null>((resolve) => {
-      const finish = (seconds: number | null) => { try { analyser.disconnect() } catch { /* 已断开 */ } resolve(seconds) }
+      const finish = (seconds: number | null) => {
+        activeResolve = null
+        try { analyser.disconnect() } catch { /* 已断开 */ }
+        resolve(seconds)
+      }
       ctx.decodeAudioData(buffer, (decoded) => {
         try {
           const source = ctx.createBufferSource()
           source.buffer = decoded
           source.connect(analyser)
           analyser.connect(ctx.destination)
-          source.onended = () => finish(decoded.duration)
+          activeSource = source
+          activeResolve = finish
+          source.onended = () => {
+            if (activeSource === source) activeSource = null
+            finish(decoded.duration)
+          }
           source.start()
         } catch {
           finish(null)
@@ -1287,10 +1314,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (hidden) return Promise.resolve(null)
     // 控制台第一行永远是「这轮是什么触发的」（ADR-043）
     conPushJson('trigger', input)
-    if (triggerMode === 'interrupt') {
-      stopSpeaking()
-      speakSeq += 1
-    }
+    if (triggerMode === 'interrupt') stopSpeaking()
     speakingTurnActive = true
     // 轮次真正结束（语音播完或一次性回复返回）才解锁；queue 模式随即补发攒下的合并项
     return requestSpeak(input).finally(() => {

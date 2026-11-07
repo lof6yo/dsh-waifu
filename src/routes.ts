@@ -7,7 +7,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { TraceStep } from './trace.ts'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
@@ -46,12 +46,6 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-function requireMethod(req: IncomingMessage, res: ServerResponse, method: string): boolean {
-  if (req.method === method) return true
-  json(res, 405, { ok: false, error: 'method-not-allowed' })
-  return false
-}
-
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let size = 0
@@ -80,70 +74,60 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   })
 }
 
-function getRoute(path: string, run: () => Promise<unknown>): WebRoute {
-  return {
-    kind: 'exact',
-    path,
-    handler: (req: IncomingMessage, res: ServerResponse): void => {
-      if (!requireMethod(req, res, 'GET')) return
-      run().then((value) => json(res, 200, value), (error) => {
-        json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
-      })
-    },
-  }
+/** 统一响应：成功 200，GET 失败 500，POST 失败（含 body 解析失败）400。 */
+function fail(res: ServerResponse, status: number, error: unknown): void {
+  json(res, status, { ok: false, error: error instanceof Error ? error.message : String(error) })
 }
 
-function postRoute(path: string, run: (body: Record<string, unknown>) => Promise<unknown>): WebRoute {
+type JsonHandler = (body: Record<string, unknown>) => Promise<unknown> | unknown
+
+/**
+ * 统一的 JSON 路由包装：GET / POST 共用「解析 body、区分 400/405/500」这一套，
+ * 三种入口只是它的薄包装，新增路由不必再各写一遍错误格式。
+ */
+function jsonRoute(path: string, handlers: { get?: () => Promise<unknown> | unknown; post?: JsonHandler }): WebRoute {
   return {
     kind: 'exact',
     path,
     handler: (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      if (!requireMethod(req, res, 'POST')) return Promise.resolve()
-      return readJsonBody(req).then((body) => {
-        const record = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {}
-        return run(record).then(
+      if (req.method === 'GET' && handlers.get !== undefined) {
+        const run = handlers.get
+        return Promise.resolve().then(run).then(
           (value) => json(res, 200, value),
-          (error) => json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }),
+          (error) => fail(res, 500, error),
         )
-      }, (error) => {
-        json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
-      })
+      }
+      if (req.method === 'POST' && handlers.post !== undefined) {
+        const run = handlers.post
+        return readJsonBody(req).then((body) => {
+          const record = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {}
+          return Promise.resolve().then(() => run(record)).then(
+            (value) => json(res, 200, value),
+            (error) => fail(res, 400, error),
+          )
+        }, (error) => fail(res, 400, error))
+      }
+      json(res, 405, { ok: false, error: 'method-not-allowed' })
+      return Promise.resolve()
     },
   }
 }
 
-/**
- * 同一 path 上挂 GET + POST（webServer 按 path 唯一注册，不按 method 分表；
- * 见 dsh-host-webserver register：duplicate exact route）。
- */
+function getRoute(path: string, run: () => Promise<unknown> | unknown): WebRoute {
+  return jsonRoute(path, { get: run })
+}
+
+function postRoute(path: string, run: (body: Record<string, unknown>) => Promise<unknown>): WebRoute {
+  return jsonRoute(path, { post: run })
+}
+
+/** 同一 path 上挂 GET + POST（webServer 按 path 唯一注册，不按 method 分表）。 */
 function getPostRoute(
   path: string,
   get: () => Promise<unknown> | unknown,
   post: (body: Record<string, unknown>) => Promise<unknown> | unknown,
 ): WebRoute {
-  return {
-    kind: 'exact',
-    path,
-    handler: (req: IncomingMessage, res: ServerResponse): void | Promise<void> => {
-      if (req.method === 'GET') {
-        return Promise.resolve().then(get).then((value) => json(res, 200, value), (error) => {
-          json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
-        })
-      }
-      if (req.method === 'POST') {
-        return readJsonBody(req).then((body) => {
-          const record = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {}
-          return Promise.resolve().then(() => post(record)).then(
-            (value) => json(res, 200, value),
-            (error) => json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }),
-          )
-        }, (error) => {
-          json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
-        })
-      }
-      json(res, 405, { ok: false, error: 'method-not-allowed' })
-    },
-  }
+  return jsonRoute(path, { get, post })
 }
 
 /** SSE 心跳间隔（ms）：保持空闲连接活性，防止被中间层/浏览器回收。 */
@@ -158,7 +142,7 @@ const SSE_HEARTBEAT_MS = 30_000
 function sseStateRoute(
   path: string,
   service: PetService,
-  onStream?: (close: () => void) => void,
+  onStream?: (close: () => void) => (() => void) | void,
 ): WebRoute {
   return {
     kind: 'exact',
@@ -191,7 +175,12 @@ function sseStateRoute(
       }
       req.on('close', close)
       res.on('close', close)
-      onStream?.(close)
+      // 返回的注销函数挂到关闭事件上：流结束后从调用方的集合里摘掉，避免闭包只增不减
+      const release = onStream?.(close)
+      if (release !== undefined) {
+        req.on('close', release)
+        res.on('close', release)
+      }
     },
   }
 }
@@ -211,19 +200,42 @@ function mimeForFile(file: string): string {
   return 'application/octet-stream'
 }
 
-/** 通用静态文件响应（含 HEAD；文件不存在 404）。 */
+/**
+ * 通用静态文件响应（含 HEAD；文件不存在 404）。
+ * 素材包十几 MB：带 ETag/Last-Modified 并处理条件请求，浏览器第二次加载直接 304，
+ * 不再每次整包重传（行为不变，只是不再白跑流量）。
+ */
 function serveFile(req: IncomingMessage, res: ServerResponse, file: string): Promise<void> {
-  return readFile(file).then((body) => {
-    res.writeHead(200, {
+  return stat(file).then((info) => {
+    const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`
+    const mtimeMs = Math.floor(info.mtimeMs / 1000) * 1000
+    const headers = {
       'content-type': mimeForFile(file),
-      'content-length': String(body.byteLength),
       'cache-control': 'no-cache',
-    })
-    if (req.method === 'HEAD') {
+      etag,
+      'last-modified': new Date(mtimeMs).toUTCString(),
+    }
+    const inm = req.headers['if-none-match']
+    const ims = req.headers['if-modified-since']
+    const matched = typeof inm === 'string'
+      ? inm.split(',').some((value) => value.trim() === etag)
+      : typeof ims === 'string' && Date.parse(ims) >= mtimeMs
+    if (matched) {
+      res.writeHead(304, headers)
       res.end()
       return
     }
-    res.end(body)
+    return readFile(file).then((body) => {
+      res.writeHead(200, { ...headers, 'content-length': String(body.byteLength) })
+      if (req.method === 'HEAD') {
+        res.end()
+        return
+      }
+      res.end(body)
+    }, () => {
+      res.writeHead(404)
+      res.end()
+    })
   }, () => {
     res.writeHead(404)
     res.end()
@@ -332,7 +344,7 @@ export function makePetRoutes(deps: {
   /** 流式演绎 + 语音合成（可选：未接线时不注册 /speak 与 /tts）。 */
   speak?: SpeakRoutesApi
   /** SSE 活跃流注册钩子：插件卸载时由调用方逐一 close（ADR-006）。 */
-  onStream?: (close: () => void) => void
+  onStream?: (close: () => void) => (() => void) | void
 }): WebRoute[] {
   const { service, packageRoot, settings, ai, aiSettings, memory, speak, onStream } = deps
   const apiRoutes: WebRoute[] = [
@@ -442,7 +454,11 @@ export function makePetRoutes(deps: {
           }
           req.on('close', close)
           res.on('close', close)
-          onStream?.(close)
+          const release = onStream?.(close)
+          if (release !== undefined) {
+            req.on('close', release)
+            res.on('close', release)
+          }
           const emit = (event: string, data: unknown): void => {
             if (controller.signal.aborted) return
             try {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * 重建「简」内置 Live2D 模型的自建动作（当前只有 Idle，幂等），并校验 JSON / 参数 / Meta 计数 / 引用。
+ * 重建「简」内置 Live2D 模型的自建动作（当前 9 组：Idle + 8 个 AI 动作，幂等），
+ * 并校验 JSON / 参数 / Meta 计数 / 引用。
  *
  * 用法（本机无全局 node，用 App 自带运行时）：
  *   export DSH_DESKTOP_NODE_EXECUTABLE="/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness"
@@ -8,7 +9,7 @@
  *   "$NODE" scripts/gen-jian-motions.mjs
  *
  * 产物目录：assets/models/jian/motions/*.motion3.json
- *   Idle / Thinking / Error / Done / Waiting / TapHead / TapFace / TapBody
+ *   Idle / Nod / ShakeHead / Tilt / Sway / Glance / Perk / Shift / Sigh（见 MOTION_DEFS）
  *
  * 曲线约定（motion3.json, Version 3）：
  *   Segments = [t0, v0, 1, t1, v1, c1x, c1y, c2x, c2y, ...]

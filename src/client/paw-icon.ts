@@ -45,7 +45,13 @@ const NAV_LABEL = 'Waifu 设置'
  * 返回停止函数（插件卸载 / section 退订时调用）。
  */
 export function installPetSettingsNavIcon(): () => void {
+  /** 已经换上去的那个 svg：还连着就不再扫（大多数 DOM 变更与导航无关）。 */
+  let swapped: SVGElement | null = null
+  let scheduled = 0
   const swap = (): void => {
+    scheduled = 0
+    if (swapped !== null && swapped.isConnected) return
+    swapped = null
     for (const btn of document.querySelectorAll('button')) {
       const label = Array.from(btn.querySelectorAll('span')).find((s) => s.textContent?.trim() === NAV_LABEL)
       if (!label) continue
@@ -63,11 +69,21 @@ export function installPetSettingsNavIcon(): () => void {
       if (cls) next.setAttribute('class', cls)
       next.innerHTML = `<path fill-rule="evenodd" d="${PAW_PATH}"/>`
       svg.replaceWith(next)
+      swapped = next
     }
   }
 
+  // 合并到一帧里扫一次：设置页/控制台重渲染会连发大量 childList 变更
+  const schedule = (): void => {
+    if (scheduled !== 0) return
+    scheduled = window.requestAnimationFrame(swap)
+  }
+
   swap()
-  const mo = new MutationObserver(() => { swap() })
+  const mo = new MutationObserver(schedule)
   mo.observe(document.documentElement, { childList: true, subtree: true })
-  return () => mo.disconnect()
+  return () => {
+    mo.disconnect()
+    if (scheduled !== 0) window.cancelAnimationFrame(scheduled)
+  }
 }

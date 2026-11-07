@@ -83,7 +83,6 @@ const BASE_SETTINGS: PetSettings = {
   motionEnabled: {},
   expressionEnabled: {},
   ttsEnabled: true,
-  ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
   ttsVoice: 'longanlingxin',
   lipsyncEnabled: true,
@@ -130,10 +129,19 @@ function makeRoutes(
     write: vi.fn(async () => {}),
   }
   const openStreams: Array<() => void> = []
-  const routes = makePetRoutes({ service, packageRoot: dir, settings, ai, aiSettings, onStream: (close) => { openStreams.push(close) } })
+  const releases: Array<() => void> = []
+  const routes = makePetRoutes({
+    service,
+    packageRoot: dir,
+    settings,
+    ai,
+    aiSettings,
+    // 返回注销函数：路由在流结束时调用它，把闭包从集合里摘掉（不再只增不减）
+    onStream: (close) => { openStreams.push(close); return () => { releases.push(close) } },
+  })
   const route = (path: string) => routes.find((r) => r.path === path)
   const cleanup = () => { delete process.env.DSH_HOME; rmSync(dir, { recursive: true, force: true }) }
-  return { route, routes, settings, service, emit, openStreams, dir, cleanup }
+  return { route, routes, settings, service, emit, openStreams, releases, dir, cleanup }
 }
 
 /** GET 路由的 handler 不返回 Promise，等一个事件循环轮次让异步完成。 */
@@ -365,14 +373,16 @@ describe('makePetRoutes SSE 状态推送', () => {
     cleanup()
   })
 
-  it('onStream 钩子注册活跃流的关闭函数', () => {
-    const { route, openStreams, cleanup } = makeRoutes()
+  it('onStream 钩子注册活跃流的关闭函数，流结束时调用注销函数', () => {
+    const { route, openStreams, releases, cleanup } = makeRoutes()
     const res = fakeRes()
     const req = fakeReq('GET')
     route(`${PET_API_PREFIX}/events`)!.handler(req, res as never)
     expect(openStreams.length).toBe(1)
     expect(typeof openStreams[0]).toBe('function')
     req.emit('close')
+    // 关闭事件顺带触发注销，避免调用方的集合只增不减
+    expect(releases.length).toBe(1)
     // 关闭后再次调用是幂等 no-op（closed 守卫）
     openStreams[0]()
     cleanup()
@@ -423,6 +433,25 @@ describe('makePetRoutes 素材路由（prefix：vendor + 内置模型）', () =>
     const res = fakeRes()
     await assetRoute(routes).handler(fakeReq('GET', undefined, '/waifu-assets/../package.json'), res as never)
     expect(res.state.status).toBe(404)
+    cleanup()
+  })
+
+  it('静态素材带 ETag/Last-Modified，条件请求命中返回 304 且不带 body', async () => {
+    const { routes, cleanup } = makeRoutes()
+    const first = fakeRes()
+    const url = '/waifu-assets/vendor/pixi.min.js'
+    await assetRoute(routes).handler(fakeReq('GET', undefined, url), first as never)
+    expect(first.state.status).toBe(200)
+    const etag = first.state.headers.etag
+    expect(typeof etag).toBe('string')
+    expect(first.state.headers['last-modified']).toBeTruthy()
+
+    const cached = fakeReq('GET', undefined, url)
+    cached.headers['if-none-match'] = etag
+    const second = fakeRes()
+    await assetRoute(routes).handler(cached, second as never)
+    expect(second.state.status).toBe(304)
+    expect(second.state.body.byteLength).toBe(0)
     cleanup()
   })
 

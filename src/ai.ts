@@ -484,6 +484,23 @@ export function stripInlineTags(text: string): string {
 /** 「[记] …」记忆行：句尾单独一行（或紧跟在句尾）。 */
 const MEMORY_LINE = /(?:^|\n)\s*[[［【(（〔〖]\s*(?:记|memory|remember|note)\s*[\])］】）}〕〗]\s*(.+)$/i
 
+/** 流式中「[记]」行可能的起始形态：`[`、`[记`、`[记]`（只到一半时也要认出来）。 */
+const MEMORY_TAIL_PARTIAL = /^[[［【(（〔〖]\s*(?:记|memory|remember|note)?\s*[\])］】）}〕〗]?$/i
+
+/**
+ * 流式期间定位记忆行起点：返回正文该截断到的下标（-1 = 还没有记忆行）。
+ * 记忆行整行都不该进气泡/朗读，所以一看到它的开头就要收住，不能等收尾再剥。
+ */
+export function memoryTailStart(text: string): number {
+  // 起点取记忆行前一行的换行符位置：正文尾部的换行也不该发出去
+  const full = MEMORY_LINE.exec(text)
+  if (full) return full.index
+  const nl = text.lastIndexOf('\n')
+  const tail = text.slice(nl + 1)
+  if (tail.length > 0 && tail.length <= 12 && MEMORY_TAIL_PARTIAL.test(tail.trim())) return nl < 0 ? 0 : nl
+  return -1
+}
+
 /** 从原始回复里剥出记忆行：返回记忆内容与剩余正文（记忆行整行删除）。 */
 export function extractMemoryNote(raw: string): { note: string; text: string } {
   const match = MEMORY_LINE.exec(raw)
@@ -765,6 +782,8 @@ export async function* streamReply(
     let finish: string | undefined
     // 开头的标签要吃掉：标签没闭合前先攒着，闭合后先把 tags 事件发出去再吐文本
     let pending = ''
+    /** 正文原文（只增不减）：记忆行要按它在全文里的位置判断，不能用已截断的 visible 续接。 */
+    let streamed = ''
     let visible = ''
     let sent = 0
     let prefixDone = false
@@ -772,7 +791,7 @@ export async function* streamReply(
       if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
         raw += chunk.text
         if (prefixDone) {
-          visible += chunk.text
+          streamed += chunk.text
         } else {
           pending += chunk.text
           const tag = consumeLeadingTags(pending)
@@ -797,8 +816,12 @@ export async function* streamReply(
           }
           pending = ''
           prefixDone = true
-          visible = stripInlineTags(tag.rest)
+          streamed = stripInlineTags(tag.rest)
         }
+        // 记忆行（`[记] …`）不进气泡、不进 TTS：一看到它的开头就停发，
+        // 否则它会先作为正文被切成句读送去合成（ADR-037）。
+        const cut = memoryTailStart(streamed)
+        visible = cut >= 0 ? streamed.slice(0, cut) : streamed
         if (visible.length > sent) {
           yield { type: 'delta', text: visible.slice(sent) }
           sent = visible.length

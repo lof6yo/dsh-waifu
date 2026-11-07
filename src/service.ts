@@ -216,7 +216,12 @@ export class PetService {
       if (typeof id === 'string') this.subagentIds.add(id)
       this.noteActivity('subagent-start')
     })
-    onLoose('subagent/end', () => this.noteActivity('subagent-end'))
+    onLoose('subagent/end', (info) => {
+      // 子代理结束时把 id 摘掉，否则长会话里这个集合只增不减
+      const id = (info as { id?: unknown } | undefined)?.id
+      if (typeof id === 'string') this.subagentIds.delete(id)
+      this.noteActivity('subagent-end')
+    })
     // 会话开关：只对顶层会话（子代理会话 header 里带 parentSession）打招呼/道别
     const onLooseSession = ctx as unknown as {
       on(event: string, fn: (session: { header?: { parentSession?: string } } | undefined) => void): void

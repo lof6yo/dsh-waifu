@@ -216,7 +216,6 @@ export function normalizeEventTriggers(raw: unknown): Record<string, boolean> {
 /** 语音合成（TTS，ADR-033）：默认引擎 = OpenRouter 的 `/api/v1/audio/speech`。 */
 export const DEFAULT_TTS_ENABLED = true
 /** 引擎 id（目前只有 openrouter；留给将来直连 ElevenLabs / MiniMax 的实现）。 */
-export const DEFAULT_TTS_ENGINE = 'openrouter'
 /** 候选音色：`id` 直接透传给 `/audio/speech` 的 `voice` 字段。 */
 export interface TtsVoiceOption {
   id: string
@@ -390,7 +389,6 @@ export const DEFAULT_SETTINGS = {
   barPosition: DEFAULT_BAR_POSITION,
   barOffset: DEFAULT_BAR_OFFSET,
   ttsEnabled: DEFAULT_TTS_ENABLED,
-  ttsEngine: DEFAULT_TTS_ENGINE,
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: DEFAULT_TTS_VOICE,
   lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,

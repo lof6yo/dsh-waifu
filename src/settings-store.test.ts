@@ -44,7 +44,6 @@ const BASE: PetSettings = {
   motionEnabled: {},
   expressionEnabled: {},
   ttsEnabled: true,
-  ttsEngine: 'openrouter',
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
   ttsVoice: 'longanlingxin',
   lipsyncEnabled: true,
@@ -246,7 +245,7 @@ describe('SettingsStore', () => {
     }
   })
 
-  it('气泡最长显示：默认 30、可写、越界夹到 0–600（ADR-027）', () => {
+  it('气泡最长显示：可写、越界夹到 0–600（ADR-027）', () => {
     const store = new SettingsStore(BASE)
     expect(store.get().bubbleMaxSeconds).toBe(30)
     store.applyOps([{ op: 'set', path: ['bubbleMaxSeconds'], value: 0 }])
@@ -270,6 +269,18 @@ describe('SettingsStore', () => {
     store.applyOps([{ op: 'set', path: ['nope'], value: 1 }])
     store.applyOps([{ op: 'set', path: ['maxFps'], value: 45 }])
     expect(store.get().maxFps).toBe(30)
+  })
+
+  it('unset 二层路径只删表里那一项，不删整张表', () => {
+    const store = new SettingsStore(BASE)
+    store.applyOps([
+      { op: 'set', path: ['eventTexts', 'tool-read'], value: '读到了' },
+      { op: 'set', path: ['eventTexts', 'done'], value: '搞定啦' },
+    ])
+    const view = store.applyOps([{ op: 'unset', path: ['eventTexts', 'tool-read'] }])
+    const texts = (view.value as PetSettings).eventTexts
+    expect(texts['tool-read']).toBeUndefined()
+    expect(texts.done).toBe('搞定啦')
   })
 
   it('旧版设置文件（无 version）的 home 语义迁移到新默认（中心点距右/距下）', () => {

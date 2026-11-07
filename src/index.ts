@@ -156,7 +156,7 @@ export const Config: Schema<Config> = Schema.object({
   bubbleOffsetY: Schema.number().min(-1000).max(1000).default(DEFAULT_BUBBLE_OFFSET_Y),
   bubbleBgColor: Schema.string().default(DEFAULT_BUBBLE_BG_COLOR),
   bubbleBgOpacity: Schema.number().min(0).max(100).default(DEFAULT_BUBBLE_BG_OPACITY),
-  /** 气泡最长连续可见秒数（0 = 不限）；默认 30。 */
+  /** 气泡最长连续可见秒数（0 = 不限）；默认 10。 */
   bubbleMaxSeconds: Schema.number().min(0).max(600).default(DEFAULT_BUBBLE_MAX_SECONDS),
   bubbleTextColor: Schema.string().default(DEFAULT_BUBBLE_TEXT_COLOR),
   /** AI 驱动总开关（ADR-037）：关闭后角色完全静默（无固定台词可回落）。 */
@@ -194,7 +194,6 @@ export const Config: Schema<Config> = Schema.object({
   barOffset: Schema.number().min(BAR_OFFSET_LIMITS.min).max(BAR_OFFSET_LIMITS.max).default(DEFAULT_BAR_OFFSET),
   // 语音合成与口型（ADR-033）：模型/音色留成设置项，换供应商只加引擎实现
   ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
-  ttsEngine: Schema.string().default(DEFAULT_SETTINGS.ttsEngine),
   ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
   ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
   lipsyncEnabled: Schema.boolean().default(DEFAULT_SETTINGS.lipsyncEnabled),
@@ -251,7 +250,6 @@ export function apply(ctx: Context, config: Config): void {
     barPosition: config.barPosition,
     barOffset: config.barOffset,
     ttsEnabled: config.ttsEnabled,
-    ttsEngine: config.ttsEngine,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
     lipsyncEnabled: config.lipsyncEnabled,
@@ -288,7 +286,6 @@ export function apply(ctx: Context, config: Config): void {
   let lastAiPayload: AiPayload | null = null
   let lastTtsPayload: TtsPayload | null = null
   let lastSpeakPayload: TtsPayload | null = null
-  let payloadSink: 'tts' | 'speak' = 'tts'
   /**
    * AI 触发的公共前置（/interact 与 /speak 共用）：开关 → 时区归一化。
    * 触发频率策略（interrupt/queue / 各种窗口）全在客户端调度器里执行（ADR-047）：
@@ -454,16 +451,12 @@ export function apply(ctx: Context, config: Config): void {
       return undefined
     }
   }
+  // 每条请求自己带 sink 钩子：不再用跨请求共享的全局，避免 /tts 与 /speak 并发时串台
   const ttsEngine = new OpenRouterTtsEngine(
     resolveOpenRouterKey,
     waifuHome,
     fetch,
     OPENROUTER_SPEECH_URL,
-    (payload) => {
-      // /speak 流与 /tts 试听分开记，方便对照同一次调用的两条请求
-      if (payloadSink === 'speak') lastSpeakPayload = payload
-      else lastTtsPayload = payload
-    },
   )
   const voiceOptions = (): TtsVoiceOptions => {
     const settings = settingsStore.get()
@@ -476,8 +469,9 @@ export function apply(ctx: Context, config: Config): void {
   const speakApi: SpeakRoutesApi = {
     // 排查用单段合成：设置页「试听」与 curl 都走这里
     synthesize: async (text) => {
-      payloadSink = 'tts'
-      const audio = await ttsEngine.synthesize(text, voiceOptions())
+      const audio = await ttsEngine.synthesize(text, voiceOptions(), undefined, (payload) => {
+        lastTtsPayload = payload
+      })
       return { mime: audio.mime, audio: audio.audio }
     },
     stream: async (input, emit, signal) => {
@@ -497,7 +491,6 @@ export function apply(ctx: Context, config: Config): void {
         emit('debug', traceStep('llm.reply', reply))
       }))
       const speakOptions = voiceOptions()
-      payloadSink = 'speak'
       const synthesize = async (text: string): Promise<TtsAudio | null> => {
         if (!speakOn || signal.aborted) return null
         const startedAt = Date.now()
@@ -544,7 +537,11 @@ export function apply(ctx: Context, config: Config): void {
       aiSettings: aiSettingsApi,
       memory: memoryApi,
       speak: speakApi,
-      onStream: (close) => { openStreams.add(close) },
+      // 返回注销函数：流结束时把自己从集合里摘掉，否则每轮 /speak、每次 SSE 重连都留一个闭包
+      onStream: (close) => {
+        openStreams.add(close)
+        return () => { openStreams.delete(close) }
+      },
     })
     const disposers = routes.map((route) => ctx.webServer.register(route))
     return () => {

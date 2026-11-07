@@ -82,7 +82,7 @@ export interface PetSettings {
   bubbleBgOpacity: number
   /** 气泡文字颜色（#rrggbb）。 */
   bubbleTextColor: string
-  /** 气泡最长连续可见秒数（0 = 不限，默认 30；ADR-027 兜底断流导致的气泡常驻）。 */
+  /** 气泡最长连续可见秒数（0 = 不限，默认 10；ADR-027 兜底断流导致的气泡常驻）。 */
   bubbleMaxSeconds: number
   /** AI 驱动总开关（ADR-037）：关闭后角色完全静默（无固定台词可回落）。 */
   aiEnabled: boolean
@@ -127,8 +127,6 @@ export interface PetSettings {
 
   /** 语音合成开关（ADR-033）。 */
   ttsEnabled: boolean
-  /** 语音引擎 id（目前只有 openrouter）。 */
-  ttsEngine: string
   /** 语音模型 slug（OpenRouter 的 speech 模型）。 */
   ttsModel: string
   /** 音色标识（空 = 模型默认）。 */
@@ -156,7 +154,7 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
 //        aiEnabled / aiProvider / aiModel / aiHistoryCount / aiMemoryCount / triggerMode /
 //        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / tapGapMs / mergeMax / eventTriggers /
-//        ttsEnabled / ttsEngine / ttsModel / ttsVoice / lipsyncEnabled / lipsyncGain`
+//        ttsEnabled / ttsModel / ttsVoice / lipsyncEnabled / lipsyncGain`
 
 /**
  * 设置文件结构版本：
@@ -307,7 +305,6 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     barPosition: normalizeBarPosition(record.barPosition, base.barPosition),
     barOffset: clampInt(record.barOffset, base.barOffset, BAR_OFFSET_LIMITS.min, BAR_OFFSET_LIMITS.max),
     ttsEnabled: bool('ttsEnabled'),
-    ttsEngine: pickString(record.ttsEngine) ?? base.ttsEngine,
     ttsModel: voiceFix.model,
     // 音色允许空串（空 = 模型默认音色），所以不走 pickString
     ttsVoice: voiceFix.voice,
@@ -390,7 +387,17 @@ export class SettingsStore {
       const key = op.path[0]
       if (typeof key !== 'string' || !(key in current)) continue
       if (op.op === 'unset') {
-        delete next[key]
+        if (op.path.length === 1) {
+          delete next[key]
+          continue
+        }
+        // 二层路径：只删表里的那一项（`['eventTexts','tool-read']`），别把整张表删掉
+        const table = next[key]
+        if (op.path.length === 2 && typeof op.path[1] === 'string' && table !== null && typeof table === 'object' && !Array.isArray(table)) {
+          const copy = { ...(table as Record<string, unknown>) }
+          delete copy[op.path[1]]
+          next[key] = copy
+        }
         continue
       }
       if (key === 'eventTriggers') {

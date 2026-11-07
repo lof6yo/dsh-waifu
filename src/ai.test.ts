@@ -20,6 +20,7 @@ import {
   loadPersona,
   parseLeadingTags,
   extractMemoryNote,
+  memoryTailStart,
   personaPath,
   sanitizeLine,
   savePersona,
@@ -565,5 +566,42 @@ describe('streamReply（ADR-037 标签流式）', () => {
     }
     const error = blanks.find((e) => e.type === 'error') as { data: { error: string } }
     expect(error.data.error).toContain('X')
+  })
+})
+
+describe('流式记忆行（ADR-037：不进气泡、不进 TTS）', () => {
+  const run = async (chunks: string[]) => {
+    const events: { type: string; data: unknown }[] = []
+    for await (const chunk of streamReply(fakeLlm(chunks), {
+      provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' },
+    })) {
+      events.push({ type: chunk.type, data: chunk })
+    }
+    return events
+  }
+
+  it('记忆行整行都不进 delta，但记忆仍然上报', async () => {
+    const events = await run(['[blush] 好呀', '\n[记] 主人', '喜欢猫'])
+    const deltas = events.filter((e) => e.type === 'delta').map((e) => (e.data as { text: string }).text).join('')
+    expect(deltas).toBe('好呀')
+    expect(deltas).not.toContain('记')
+    const memory = events.find((e) => e.type === 'memory') as { data: { note: string } }
+    expect(memory.data.note).toBe('主人喜欢猫')
+    const done = events.find((e) => e.type === 'done') as { data: { text: string } }
+    expect(done.data.text).toBe('好呀')
+  })
+
+  it('只到 `[记` 也要立刻收住，不能先念出去', async () => {
+    const events = await run(['唔…别', '\n[记', '] 主人怕痒'])
+    const deltas = events.filter((e) => e.type === 'delta').map((e) => (e.data as { text: string }).text).join('')
+    expect(deltas).toBe('唔…别')
+  })
+
+  it('memoryTailStart 定位记忆行起点，普通正文不动', () => {
+    expect(memoryTailStart('好呀\n[记] 猫')).toBe(2)
+    expect(memoryTailStart('好呀\n[记')).toBe(2)
+    expect(memoryTailStart('好呀\n[')).toBe(2)
+    expect(memoryTailStart('好呀[记] 不是独立行')).toBe(-1)
+    expect(memoryTailStart('好呀')).toBe(-1)
   })
 })
