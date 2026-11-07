@@ -36,8 +36,8 @@ const CATALOG = { motionTexts: { Nod: '轻轻点头' }, expressionEnabled: { blo
 describe('剧本引擎（纯函数，ADR-047 P1）', () => {
   it('system 提示词的内容稳定（golden 哈希）', () => {
     const system = systemPrompt(DEFAULT_PERSONA, '- 主人喜欢猫\n- 主人怕痒', CATALOG)
-    expect(system.length).toBe(1774)
-    expect(fnv(system)).toBe('b4947a7f')
+    expect(system.length).toBe(1191)
+    expect(fnv(system)).toBe('ca46c5e5')
   })
 
   it('同一输入两次组装结果完全一致（不读状态、不累积）', () => {
@@ -81,7 +81,7 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
     expect(payload).not.toBeNull()
     expect(payload!.temperature).toBe(1)
     expect(payload!.maxTokens).toBe(160)
-    expect(fnv(stable(JSON.stringify(payload)))).toBe('481f176e')
+    expect(fnv(stable(JSON.stringify(payload)))).toBe('0d3d5dae')
   })
 
   it('目录里的每个 id 都有一行释义；关掉的表情不出现', () => {
