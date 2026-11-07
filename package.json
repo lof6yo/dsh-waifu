@@ -1,6 +1,6 @@
 {
   "name": "dsh-waifu",
-  "version": "0.5.0",
+  "version": "0.8.0",
   "description": "Live2D desktop waifu for DeepSeek Harness: bundled 'Jian' model, user-defined touchboxes, event-based animations and lines",
   "type": "module",
   "main": "lib/index.js",
