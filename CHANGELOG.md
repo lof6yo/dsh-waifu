@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- **剧本引擎（`src/director.ts`）：把「演员读到什么」从「怎么演」里拆出来（ADR-047 第一步）**
+  - `systemPrompt` / `buildSceneMessage` / `historySceneText` / `historyMessages` / `assembleRequest` 从 `ai.ts` 搬进纯函数模块，`ai.ts` 只保留「调用 + 解析」，对外导出保持不变；时间与时区换算另抽 `src/time.ts`。
+  - 新增 `src/director.test.ts`：剧本内容用 golden 哈希钉住（system 1681 字、messages、payload），搬代码不许改行为；另有目录/场景句/历史条数的行为断言。测试 214 → 227。
 - **触发调度归一化：事件与互动永远先到调度器（ADR-047）**
   - 新增 `src/client/schedule.ts`：`dispatchTrigger(state, incoming, config, now)` 是唯一的调度判断（纯函数，12 条单测），客户端只执行它给出的 `run` / `defer` / `merge` / `drop`；`fireTrigger` 的十几条 if 全部删掉。
   - 新增两个设置项（设置页「AI 驱动」）：**触摸连点窗口** `tapGapMs`（默认 1200 ms，0–5000）与**合并上限** `mergeMax`（默认 6 条，1–20）。
@@ -15,6 +18,7 @@
 
 ### Fixed
 
+- **一轮回复会发两个 `tags` 帧，把刚起的动作打断**：模型分块吐标签时（`[blush` + `][Sway]`）原来每解析出一批就各发一帧，客户端收到第二帧会用 FORCE 抢占、`stopAllMotions()` 把第一个动作拦腰砍断。现在开头收集的标签合并去重，正文出现时只发一帧。
 - **流式的 `[记]` 记忆行会被念出来、也会闪在气泡里**：`streamReply` 原来只在收尾才剥记忆行，而正文是逐块转发的，于是这一行先被切成句读送去 TTS、也被气泡显示。现在一看到记忆行开头（`[记`、`[记]`、甚至只有一个 `[`）就立刻停止转发正文，记忆仍照常上报并落盘。
 - **停止说话停不下已经排队的音频**：`stopSpeaking` 只 abort 请求、清状态，没掐掉正在播的 `AudioBufferSourceNode`，也不递增序号，于是隐藏标签页 / 气泡超时 / 卸载后音频还会继续播（interrupt 时新旧两段会重叠）。现在停止时真的 `source.stop()`、把等待中的段按 null 结束，并统一递增 `speakSeq` 让排队回调失效。
 - **静态素材每次都整包重传**：`/waifu-assets/*` 只给 `no-cache` 没有校验器，浏览器每次刷新都重下十几 MB（`简.moc3` 8.7MB + 纹理 4.9MB + vendor）。现在带 `ETag` / `Last-Modified` 并处理条件请求，命中直接 304。

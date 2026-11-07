@@ -569,6 +569,34 @@ describe('streamReply（ADR-037 标签流式）', () => {
   })
 })
 
+describe('标签帧（ADR-047 P1：一轮只发一个）', () => {
+  const tagsFrames = async (chunks: string[]) => {
+    const frames: { expressions: string[]; motions: string[] }[] = []
+    for await (const chunk of streamReply(fakeLlm(chunks), {
+      provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' },
+    })) {
+      if (chunk.type === 'tags') frames.push({ expressions: chunk.expressions, motions: chunk.motions })
+    }
+    return frames
+  }
+
+  it('分块到达的标签合并成一个帧（同块和跨块都一样）', async () => {
+    expect(await tagsFrames(['[blush][Sway] 唔…'])).toEqual([{ expressions: ['blush'], motions: ['Sway'] }])
+    expect(await tagsFrames(['[blush', '][Sway]', ' 唔…'])).toEqual([{ expressions: ['blush'], motions: ['Sway'] }])
+    expect(await tagsFrames(['[bl', 'ush][Sha', 'keHead] 别'])).toEqual([{ expressions: ['blush'], motions: ['ShakeHead'] }])
+  })
+
+  it('重复标签去重，一轮永远只有一个 tags 帧', async () => {
+    const frames = await tagsFrames(['[blush][Nod][blush][Nod] 唔'])
+    expect(frames).toHaveLength(1)
+    expect(frames[0]).toEqual({ expressions: ['blush'], motions: ['Nod'] })
+  })
+
+  it('全部标签都在目录外时一个帧都不发', async () => {
+    expect(await tagsFrames(['[shy][dance] 唔…'])).toEqual([])
+  })
+})
+
 describe('流式记忆行（ADR-037：不进气泡、不进 TTS）', () => {
   const run = async (chunks: string[]) => {
     const events: { type: string; data: unknown }[] = []
