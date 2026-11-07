@@ -328,9 +328,22 @@ describe('savePersona', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('空白内容回落默认人设、超长内容截断', () => {
+  it('清空人设 = 删掉卡带，回到内置默认（不把默认文案抄进文件）', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
-    expect(savePersona(dir, '   ').text).toBe(DEFAULT_PERSONA)
+    try {
+      savePersona(dir, '我自己的设定')
+      expect(existsSync(join(dir, PERSONA_FILENAME))).toBe(true)
+      expect(savePersona(dir, '   ').text).toBe(DEFAULT_PERSONA)
+      // 抄一份默认进去就又冻住了：以后默认值更新到不了这台机器
+      expect(existsSync(join(dir, PERSONA_FILENAME))).toBe(false)
+      expect(loadPersona(dir)).toBe(DEFAULT_PERSONA)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('超长内容截断', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-waifu-persona-'))
     const long = '人'.repeat(MAX_PERSONA_CHARS + 50)
     expect(savePersona(dir, long).text.length).toBe(MAX_PERSONA_CHARS)
     expect(loadPersona(dir).length).toBe(MAX_PERSONA_CHARS)

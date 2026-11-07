@@ -11,7 +11,7 @@
  * @module dsh-waifu/ai
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { AI_HISTORY_LIMITS, AI_MEMORY_LIMITS, normalizeMemoryCount } from './defaults.ts'
 import { AI_MOTIONS, EXPRESSIONS, isExpressionId, isMotionId, stripTimestamps } from './models.ts'
@@ -141,10 +141,19 @@ export function personaPath(homeDir: string): string {
 export function savePersona(homeDir: string, text: string): { text: string; path: string } {
   const file = personaPath(homeDir)
   const next = text.trim().slice(0, MAX_PERSONA_CHARS)
-  const value = next || DEFAULT_PERSONA
+  // 清空 = 不要自己的卡带了：删掉文件回到内置默认。
+  // 不把默认文案抄一份进去——抄进去就又冻住了，以后默认值更新到不了这台机器。
+  if (!next) {
+    try {
+      if (existsSync(file)) unlinkSync(file)
+    } catch {
+      // 删不掉也无所谓：读的时候空文件同样回落默认
+    }
+    return { text: DEFAULT_PERSONA, path: file }
+  }
   mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, value, 'utf8')
-  return { text: value, path: file }
+  writeFileSync(file, next, 'utf8')
+  return { text: next, path: file }
 }
 
 /** 读取人设文件；没有文件就用内置默认值（不自动落盘，见函数内注释）。 */
