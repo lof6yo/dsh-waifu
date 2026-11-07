@@ -3272,6 +3272,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           if (typeof item.index !== 'number' || typeof item.text !== 'string') return
           sawClause = true
           speakClauses.push({ index: item.index, text: item.text })
+          // 文字先上屏：气泡不必等音频生成完（TTS 首声通常比台词晚 1 秒左右）
+          revealClausesUntil(item.index)
           const cues = readCues((item as { cues?: unknown }).cues, isExpressionId, isMotionId)
           speakCues.set(item.index, cues)
           // 新 Host 把开场演出挂在第 0 段的 cues 上；只有旧 Host（没有 cues）才按 tags 帧播，
@@ -3530,9 +3532,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 进入第 `index` 段：先把文字露出来，再执行这一段（含被跳过的段）的 cue。 */
+  /** 进入第 `index` 段：执行这一段（含被跳过的段）的 cue。文字由 `clause` 帧到达时就上屏了。 */
   function enterClause(index: number): void {
-    revealClausesUntil(index)
     for (let cursor = speakCueIndex + 1; cursor <= index; cursor += 1) {
       const cues = speakCues.get(cursor)
       if (cues !== undefined && cues.length > 0) applyCues(cues)

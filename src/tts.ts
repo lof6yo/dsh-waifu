@@ -31,6 +31,13 @@ export const TTS_CACHE_MAX_FILES = 200
 /** 句读切分用的标点（保留在段尾，念出来才有停顿感）。 */
 const CLAUSE_BREAKS = new Set(['。', '！', '？', '…', '；', '，', '、', '!', '?', ';', ',', '\n', '—', '~', '～'])
 
+/** 文本最后一个非空字符是不是句读标点（是 = 这一段已经说完了，不必再等下一块）。 */
+export function endsAtClauseBreak(text: string): boolean {
+  const trimmed = text.trimEnd()
+  if (!trimmed) return false
+  return CLAUSE_BREAKS.has(trimmed[trimmed.length - 1]!)
+}
+
 /**
  * 把台词切成句读分段（纯函数）：
  * - 在标点后断开，标点跟随前一段；

@@ -230,25 +230,38 @@ describe('演出时间线：切分与旧实现逐字节等价（ADR-047 P2）', 
 })
 
 describe('ClauseTimeline', () => {
-  it('按句读切段，最后一段留给下一次', () => {
+  it('按句读切段；说到标点上就立刻成段，没说完的最后一段留给下一次', () => {
     const timeline = new ClauseTimeline()
+    // 没到标点：最后一段先攒着
     expect(timeline.push('唔…别、别戳了啦')).toEqual([{ index: 0, text: '唔…别、', cues: [] }])
-    expect(timeline.push('，人家会害羞的。')).toEqual([{ index: 1, text: '别戳了啦，', cues: [] }])
+    // 到「。」了：两段一起交出去，不用等下一个字（首声就靠这个提前）
+    expect(timeline.push('，人家会害羞的。')).toEqual([
+      { index: 1, text: '别戳了啦，', cues: [] },
+      { index: 2, text: '人家会害羞的。', cues: [] },
+    ])
     expect(timeline.push('然后呢')).toEqual([])
-    // 收尾时最后一段整块交出（段内不再二次切分，保持旧实现的行为）
-    expect(timeline.end()).toEqual([{ index: 2, text: '人家会害羞的。然后呢', cues: [] }])
-    expect(timeline.length).toBe(3)
+    // 收尾时最后一段整块交出（段内不再二次切分）
+    expect(timeline.end()).toEqual([{ index: 3, text: '然后呢', cues: [] }])
+    expect(timeline.length).toBe(4)
+  })
+
+  it('一大块文本里有多句时，一次 push 全部成段（不留待下一次）', () => {
+    const timeline = new ClauseTimeline()
+    expect(timeline.push('别过来。走开啦！')).toEqual([
+      { index: 0, text: '别过来。', cues: [] },
+      { index: 1, text: '走开啦！', cues: [] },
+    ])
+    expect(timeline.end()).toEqual([])
   })
 
   it('句中的目录标签变成本段 cue，认不出的方括号原样保留（ADR-048 P4）', () => {
     const fresh = new ClauseTimeline()
-    fresh.push('好呀[Nod]我当然乐意。')
-    expect(fresh.end()).toEqual([
+    expect(fresh.push('好呀[Nod]我当然乐意。')).toEqual([
       { index: 0, text: '好呀我当然乐意。', cues: [{ kind: 'motion', id: 'Nod' }] },
     ])
+    expect(fresh.end()).toEqual([])
     const keep = new ClauseTimeline()
-    keep.push('参见 [附件] 一节。')
-    expect(keep.end()).toEqual([{ index: 0, text: '参见 [附件] 一节。', cues: [] }])
+    expect(keep.push('参见 [附件] 一节。')).toEqual([{ index: 0, text: '参见 [附件] 一节。', cues: [] }])
   })
 
   it('尾巴上的标签顺延给下一句（「别、[Nod]」→ 摇头跟着后半句）', () => {
@@ -260,16 +273,15 @@ describe('ClauseTimeline', () => {
   it('没闭合的标签先扣住，不住正文里漏出半个标签', () => {
     const timeline = new ClauseTimeline()
     expect(timeline.push('好呀[No')).toEqual([])
-    expect(timeline.push('d]我当然乐意。')).toEqual([])
-    expect(timeline.end()).toEqual([
+    expect(timeline.push('d]我当然乐意。')).toEqual([
       { index: 0, text: '好呀我当然乐意。', cues: [{ kind: 'motion', id: 'Nod' }] },
     ])
+    expect(timeline.end()).toEqual([])
   })
 
   it('中文名标签归一到目录 id（[脸红] → blush）', () => {
     const timeline = new ClauseTimeline()
-    timeline.push('唔…[脸红]别看我。')
-    expect(timeline.end()).toEqual([
+    expect(timeline.push('唔…[脸红]别看我。')).toEqual([
       { index: 0, text: '唔…别看我。', cues: [{ kind: 'expression', id: 'blush' }] },
     ])
   })
@@ -277,9 +289,9 @@ describe('ClauseTimeline', () => {
   it('cue 只归属第一段，空段被丢掉且不占序号', () => {
     const timeline = new ClauseTimeline()
     timeline.tag(['blush'], ['Nod'])
-    timeline.push('。')
-    const clauses = timeline.end()
-    expect(clauses).toEqual([{ index: 0, text: '。', cues: [{ kind: 'expression', id: 'blush' }, { kind: 'motion', id: 'Nod' }] }])
+    expect(timeline.push('。')).toEqual([
+      { index: 0, text: '。', cues: [{ kind: 'expression', id: 'blush' }, { kind: 'motion', id: 'Nod' }] },
+    ])
   })
 
   it('没有正文时 end 不产生段（避免凭空造一句空台词）', () => {

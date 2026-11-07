@@ -11,7 +11,7 @@
  */
 
 import { openTagStart, resolveTag } from './ai.ts'
-import { splitClauses } from './tts.ts'
+import { endsAtClauseBreak, splitClauses } from './tts.ts'
 
 /** 正文里的方括号标签（只认目录内的，别的方括号原样保留）。 */
 const TAG_ANY = /[[［【(（〔〖]\s*([^\]］】）}〕〗\n]{1,32})\s*[\])］】）}〕〗]/g
@@ -54,6 +54,12 @@ export class ClauseTimeline {
     const safe = open >= 0 ? this.buffer.slice(0, open) : this.buffer
     const pieces = splitClauses(safe)
     if (pieces.length === 0) return []
+    // 已经说到标点上了：这一段可以直接播，不必等下一块凑够两段
+    // （首声延迟里那截「等下一个字」就是这么省掉的）
+    if (endsAtClauseBreak(safe)) {
+      this.buffer = this.buffer.slice(safe.length)
+      return this.take(pieces)
+    }
     const tail = safe.slice(safe.length - (pieces[pieces.length - 1] ?? '').length)
     this.buffer = `${tail}${this.buffer.slice(safe.length)}`
     return this.take(pieces.slice(0, -1))
