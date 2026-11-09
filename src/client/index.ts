@@ -712,6 +712,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let bubbleBgColor = DEFAULT_BUBBLE_BG_COLOR
   let bubbleBgOpacity = DEFAULT_BUBBLE_BG_OPACITY
   let bubbleTextColor = DEFAULT_BUBBLE_TEXT_COLOR
+  /** 交互条自动收起后，气泡最多下移到距模型包围盒顶部这么近（px），别压到角色头顶。 */
+  const BUBBLE_MIN_MODEL_GAP = 8
   /** 首次启动是否已套用配置默认中心位置（displaySaved=false 时只套用并回写一次，spec §2）。 */
   let homeApplied = false
   // 帧率档（settings maxFps → ticker.maxFPS；0 = 不限制）
@@ -836,6 +838,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
    * (bounds.x + width/2 + bubbleOffsetX, bounds.y - bubbleOffsetY)（画布逻辑 CSS px；
    * bubbleOffsetY 正值向上、负值向下），transform: translate(-50%, -100%) 由样式居中/贴底。
    * 调试面板可见时锚点上移到面板顶部再往上 6px；目标视口 y clamp 到 ≥8，避免跑出视口。
+   * 交互条贴在模型上方且已自动收起（ADR-053）时，气泡下移填补交互条原来占的空档，
+   * 避免交互条淡出后气泡孤零零悬在半空。
    */
   function updateBubblePosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
     if (!bubble) return
@@ -850,6 +854,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const anchorX = bounds.x + bounds.width / 2 + bubbleOffsetX
     // 气泡默认锚在模型包围盒上方（spec §3）
     let anchorY = bounds.y - bubbleOffsetY
+    // 交互条在上方且已自动收起：气泡最多下移到距模型 BUBBLE_MIN_MODEL_GAP 处，
+    // 下移量取「交互条高出模型顶部的那段」，这样气泡与交互条的相对关系保持不变。
+    if (barPosition === 'top' && barAutoHidden && barH > 0) {
+      const barRise = Math.max(0, barH + 8 + barOffset)
+      const maxDrop = Math.max(0, bubbleOffsetY - BUBBLE_MIN_MODEL_GAP)
+      anchorY += Math.min(barRise, maxDrop)
+    }
     // 调试面板自动跟随且整体位于模型上方时，气泡叠到面板之上避让（spec §2）；
     // 手动摆放（拖过标题栏/四角）后不再影响气泡：面板停在哪，气泡都贴着模型，拖动标题栏不会带着气泡跑。
     if (!debugPanelManual && Number.isFinite(debugPanelTopLogical) && debugPanelBottomLogical <= bounds.y + 1) {
@@ -1128,11 +1139,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       barEl.style.opacity = '0'
       barEl.style.pointerEvents = 'none'
       barEl.setAttribute('inert', '')
-      return
+    } else {
+      barEl.style.opacity = '1'
+      barEl.style.pointerEvents = 'auto'
+      barEl.removeAttribute('inert')
     }
-    barEl.style.opacity = '1'
-    barEl.style.pointerEvents = 'auto'
-    barEl.removeAttribute('inert')
+    // 气泡锚点随「交互条是否占着上方空档」变化，立刻重排（不等下一帧 rAF）
+    updateBubblePosition()
   }
 
   /** 清掉计时器（不动截止时间与可见状态）。 */
