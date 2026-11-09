@@ -646,6 +646,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let visualMeasured = false
   /** 已排过一次可见轮廓测量（ticker 首帧 + 900ms 兜底只跑一次）。 */
   let visualMeasurePending = false
+  /** 可见轮廓包围盒尺寸（画布比例）；仅调试排查展示（ADR-059）。 */
+  let visualBoxWFrac = 0
+  let visualBoxHFrac = 0
   // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
   let canvasPadXPct = DEFAULT_CANVAS_PAD_X
   let canvasPadYPct = DEFAULT_CANVAS_PAD_Y
@@ -1792,18 +1795,34 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     syncDebugStatusText()
   }
 
-  /** 调试面板状态文本：状态/部位/位置/画布尺寸 + 可见轮廓偏移（ADR-059，用于排查移动范围）。 */
+  /** 调试面板状态文本：状态/部位/位置/画布尺寸 + 可见轮廓偏移与视口（ADR-059，用于排查移动范围）。 */
   function syncDebugStatusText(): void {
     if (!debugTextEl) return
     const state = view?.state ?? 'idle'
     const offset = visualOffsetPx()
-    const vis = visualMeasured ? `${Math.round(offset.x)},${Math.round(offset.y)} px` : 'n/a'
+    const logical = logicalCanvasSize()
+    const vv = window.visualViewport
+    const vvInfo = vv
+      ? `${Math.round(vv.width)}x${Math.round(vv.height)}@${Math.round(vv.offsetLeft)},${Math.round(vv.offsetTop)}`
+      : '-'
+    const r = box?.getBoundingClientRect()
+    const boxInfo = r
+      ? `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`
+      : '-'
+    const vis = visualMeasured
+      ? `vis: ${Math.round(offset.x)},${Math.round(offset.y)} px  bbox: ${Math.round(visualBoxWFrac * logical.width)}x${Math.round(visualBoxHFrac * logical.height)}`
+      : 'vis: n/a'
+    // 预期可见轮廓中心的屏幕坐标：= innerSize - pos - 画布/2 + 偏移（ADR-059）
+    const centerX = Math.round(window.innerWidth - pos.right - logical.width / 2 + offset.x)
+    const centerY = Math.round(window.innerHeight - pos.bottom - logical.height / 2 + offset.y)
     debugTextEl.textContent =
       `agent: ${view?.agent ?? '-'}  pet: ${state}  v${view?.version ?? '-'}\n` +
       `parts: ${touchParts.length}  expr: ${desiredExpressions().join('+') || 'none'}\n` +
       `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
       `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}\n` +
-      `vis: ${vis}`
+      `vp: ${window.innerWidth}x${window.innerHeight}  vv: ${vvInfo}\n` +
+      `box: ${boxInfo}\n` +
+      `${vis}  c: ${centerX},${centerY}`
   }
 
   /** 静态头像降级（WebGL 不可用 / 模型加载失败，spec §7）。 */
@@ -1934,6 +1953,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 用像素格中心（+1 再除以 2），避免 ±0.5px 的系统偏差
       visualOffsetXFrac = ((minX + maxX + 1) / 2 - w / 2) / w
       visualOffsetYFrac = ((minY + maxY + 1) / 2 - h / 2) / h
+      visualBoxWFrac = (maxX - minX + 1) / w
+      visualBoxHFrac = (maxY - minY + 1) / h
       visualMeasured = true
       return true
     } catch {
@@ -2070,6 +2091,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 可见轮廓偏移按模型测量：换层/换模型后重新测（ADR-059）
     visualOffsetXFrac = 0
     visualOffsetYFrac = 0
+    visualBoxWFrac = 0
+    visualBoxHFrac = 0
     visualMeasured = false
     visualMeasurePending = false
     if (touchboxOverlay && touchboxOverlay.parentNode) touchboxOverlay.parentNode.removeChild(touchboxOverlay)
@@ -3625,6 +3648,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     down = null
     dragging = false
+    syncDebugStatusText()
   }
 
   // ---- 鼠标跟随（spec §4）：全局 pointermove，头/眼/身体看向鼠标 ----
