@@ -223,8 +223,18 @@ declare const PIXI: {
       stop(): unknown
       maxFPS?: number
     }
-    renderer: { resize(width: number, height: number): unknown }
+    renderer: {
+      resize(width: number, height: number): unknown
+      render(displayObject: unknown, options?: Record<string, unknown>): unknown
+      /** WebGL 上下文（PIXI v6 Renderer.gl）；不可用时 undefined（如 Canvas renderer）。 */
+      gl?: WebGLRenderingContext
+      /** RenderTexture 绑定系统：测量可见轮廓时要显式绑定目标纹理再读像素。 */
+      renderTexture?: { bind(target: unknown | null): void }
+    }
     destroy(remove: boolean): void
+  }
+  RenderTexture: {
+    create(options: Record<string, unknown>): { destroy(destroyBase?: boolean): void }
   }
   Point: new (x: number, y: number) => unknown
   live2d?: {
@@ -514,7 +524,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       width: window.innerWidth || document.documentElement.clientWidth || 0,
       height: window.innerHeight || document.documentElement.clientHeight || 0,
     }
-    const home = homePercentFromPos(pos, { width, height }, viewport)
+    const home = homePercentFromPos(pos, { width, height }, viewport, visualOffsetPx())
     if (home !== null) captured(home)
   }))
 
@@ -585,7 +595,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       stop(): unknown
       maxFPS?: number
     }
-    renderer: { resize(width: number, height: number): unknown }
+    renderer: {
+      resize(width: number, height: number): unknown
+      render(displayObject: unknown, options?: Record<string, unknown>): unknown
+      gl?: WebGLRenderingContext
+      renderTexture?: { bind(target: unknown | null): void }
+    }
   } | null = null
   let model: ModelLike | null = null
   let currentModelUrl: string | null = null
@@ -624,6 +639,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let lastState: PetState | null = null
   let view: PetStateView | null = null
   let pos: DisplayLike = { right: 24, bottom: 20, size: 240 }
+  /** 角色可见轮廓中心相对模型画布中心的偏移比例（ADR-059；0 = 与画布中心重合）。 */
+  let visualOffsetXFrac = 0
+  let visualOffsetYFrac = 0
+  /** 可见轮廓是否已测量出有效值（调试状态文本展示用）。 */
+  let visualMeasured = false
+  /** 已排过一次可见轮廓测量（ticker 首帧 + 900ms 兜底只跑一次）。 */
+  let visualMeasurePending = false
   // 画布每侧留白百分比（SSE config.canvasPadX/Y；0–300，默认 125/50；spec §7）
   let canvasPadXPct = DEFAULT_CANVAS_PAD_X
   let canvasPadYPct = DEFAULT_CANVAS_PAD_Y
@@ -1767,13 +1789,21 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         fireTrigger({ kind: 'event', event: state })
       }
     }
-    if (debugTextEl) {
-      debugTextEl.textContent =
-        `agent: ${next?.agent ?? '-'}  pet: ${state}  v${next?.version ?? '-'}\n` +
-        `parts: ${touchParts.length}  expr: ${desiredExpressions().join('+') || 'none'}\n` +
-        `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
-        `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}`
-    }
+    syncDebugStatusText()
+  }
+
+  /** 调试面板状态文本：状态/部位/位置/画布尺寸 + 可见轮廓偏移（ADR-059，用于排查移动范围）。 */
+  function syncDebugStatusText(): void {
+    if (!debugTextEl) return
+    const state = view?.state ?? 'idle'
+    const offset = visualOffsetPx()
+    const vis = visualMeasured ? `${Math.round(offset.x)},${Math.round(offset.y)} px` : 'n/a'
+    debugTextEl.textContent =
+      `agent: ${view?.agent ?? '-'}  pet: ${state}  v${view?.version ?? '-'}\n` +
+      `parts: ${touchParts.length}  expr: ${desiredExpressions().join('+') || 'none'}\n` +
+      `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
+      `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}\n` +
+      `vis: ${vis}`
   }
 
   /** 静态头像降级（WebGL 不可用 / 模型加载失败，spec §7）。 */
@@ -1858,17 +1888,92 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
+  /** 可见轮廓中心相对模型画布中心的偏移（逻辑画布 CSS px；未测得时为 0，ADR-059）。 */
+  function visualOffsetPx(): { x: number; y: number } {
+    const { width, height } = logicalCanvasSize()
+    return { x: visualOffsetXFrac * width, y: visualOffsetYFrac * height }
+  }
+
   /**
-   * 画布中心点必须留在视口内（允许一半移出窗口，但拖不丢、能拖回来）：逻辑画布 W×H 时
-   * right ∈ [-W/2, innerWidth-W/2]，bottom ∈ [-H/2, innerHeight-H/2]（spec §4）。
+   * 测量角色可见轮廓（ADR-059）：把当前帧渲染到与逻辑画布同尺寸的 RenderTexture，
+   * 读回 alpha 找包围盒，得到「可见轮廓中心」相对画布中心的偏移。
+   * 画布四周有动作/物理留白（spec §7），可见角色中心 ≠ 画布矩形中心——只按画布中心夹取时，
+   * 左/上方向会先碰到画布边，看起来「拖不到一半出画」。
+   */
+  function measureVisualBounds(): boolean {
+    if (!app || !model) return false
+    const logical = logicalCanvasSize()
+    const w = Math.round(logical.width)
+    const h = Math.round(logical.height)
+    if (!(w > 0 && h > 0)) return false
+    const gl = app.renderer.gl
+    if (!gl) return false
+    const rt = PIXI.RenderTexture.create({ width: w, height: h, resolution: 1 })
+    try {
+      app.renderer.render(app.stage, { renderTexture: rt, clear: true })
+      app.renderer.renderTexture?.bind(rt)
+      const pixels = new Uint8Array(w * h * 4)
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+      // readPixels 行序从下往上：row 0 = 画布底部，换算成从上往下的屏幕 y
+      let minX = w
+      let minY = h
+      let maxX = -1
+      let maxY = -1
+      for (let row = 0; row < h; row += 1) {
+        const y = h - 1 - row
+        const base = row * w * 4
+        for (let x = 0; x < w; x += 1) {
+          if (pixels[base + x * 4 + 3] <= 8) continue
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+      }
+      if (maxX < minX || maxY < minY) return false
+      // 用像素格中心（+1 再除以 2），避免 ±0.5px 的系统偏差
+      visualOffsetXFrac = ((minX + maxX + 1) / 2 - w / 2) / w
+      visualOffsetYFrac = ((minY + maxY + 1) / 2 - h / 2) / h
+      visualMeasured = true
+      return true
+    } catch {
+      return false
+    } finally {
+      try { app.renderer.renderTexture?.bind(null) } catch { /* 已解绑 */ }
+      rt.destroy(true)
+    }
+  }
+
+  /** 等首帧渲染完再测量可见轮廓（ticker 首帧为准，900ms 兜底）；测得后按可见轮廓重排位置。 */
+  function scheduleVisualMeasure(): void {
+    if (visualMeasurePending) return
+    visualMeasurePending = true
+    const run = (): void => {
+      if (!visualMeasurePending || disposed) return
+      visualMeasurePending = false
+      if (!measureVisualBounds()) return
+      clampPosToViewport()
+      applyPosToBox()
+      updateBubblePosition()
+      syncDebugStatusText()
+    }
+    try { app?.ticker.addOnce(run) } catch { /* 旧 ticker */ }
+    window.setTimeout(run, 900)
+  }
+
+  /**
+   * 可见轮廓中心必须留在视口内（允许一半移出窗口，但拖不丢、能拖回来；ADR-059）：
+   * 可见中心 = right + W/2 - offsetX，因此 right ∈ [offsetX-W/2, innerWidth+offsetX-W/2]；
+   * 未测出偏移时 offset = 0，等价于按画布中心夹取。spec §4。
    */
   function clampPosToViewport(): void {
     const { width: w, height: h } = logicalCanvasSize()
     if (!(w > 0 && h > 0)) return
+    const offset = visualOffsetPx()
     const halfW = w / 2
     const halfH = h / 2
-    pos.right = Math.min(window.innerWidth - halfW, Math.max(-halfW, pos.right))
-    pos.bottom = Math.min(window.innerHeight - halfH, Math.max(-halfH, pos.bottom))
+    pos.right = Math.min(window.innerWidth + offset.x - halfW, Math.max(offset.x - halfW, pos.right))
+    pos.bottom = Math.min(window.innerHeight + offset.y - halfH, Math.max(offset.y - halfH, pos.bottom))
   }
 
   /** 把当前 pos 应用到宠物容器样式（不写盘；拖动/尺寸/窗口变化时调用）。 */
@@ -1886,9 +1991,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /**
    * 按配置的默认位置计算 pos（spec §2）：「显示区中心点距右/距下」是**视口宽/高的百分比**——
-   * 目标中心点 = (视口宽 × homeRight%、视口高 × homeBottom%)（相对右下角量），
-   * 画布中心距右 = right + W/2、距下 = bottom + H/2，因此
-   * right = 目标中心距右 - W/2、bottom = 目标中心距下 - H/2，最后按视口规则 clamp。
+   * 目标中心点 = (视口宽 × homeRight%、视口高 × homeBottom%)（相对右下角量）。
+   * 中心点按可见轮廓算（ADR-059）：可见中心距右 = right + W/2 - offsetX、距下 = bottom + H/2 - offsetY，
+   * 因此 right = 目标中心距右 - W/2 + offsetX、bottom = 目标中心距下 - H/2 + offsetY，最后 clamp。
    */
   function homePositionFromConfig(): void {
     const { width: w, height: h } = logicalCanvasSize()
@@ -1899,8 +2004,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const viewportW = window.innerWidth || document.documentElement.clientWidth || 0
     const viewportH = window.innerHeight || document.documentElement.clientHeight || 0
     if (!(viewportW > 0 && viewportH > 0)) return
-    pos.right = viewportW * homeRightPct / 100 - w / 2
-    pos.bottom = viewportH * homeBottomPct / 100 - h / 2
+    const offset = visualOffsetPx()
+    pos.right = viewportW * homeRightPct / 100 - w / 2 + offset.x
+    pos.bottom = viewportH * homeBottomPct / 100 - h / 2 + offset.y
     clampPosToViewport()
   }
 
@@ -1961,6 +2067,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     model = null
     baseModelW = 0
     baseModelH = 0
+    // 可见轮廓偏移按模型测量：换层/换模型后重新测（ADR-059）
+    visualOffsetXFrac = 0
+    visualOffsetYFrac = 0
+    visualMeasured = false
+    visualMeasurePending = false
     if (touchboxOverlay && touchboxOverlay.parentNode) touchboxOverlay.parentNode.removeChild(touchboxOverlay)
     touchboxOverlay = null
     if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas)
@@ -2083,6 +2194,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (!(baseModelW > 0 && baseModelH > 0)) {
         try { app.ticker.addOnce(() => fitModel(pos.size)) } catch { /* 首帧适配 */ }
       }
+      // ADR-059：测出角色可见轮廓相对画布中心的偏移，再按可见轮廓中心重排位置/夹取
+      scheduleVisualMeasure()
       // 模型（重）加载后回到 idle 循环（ADR-037：状态动作已由 AI tags 驱动）
       if (model) void startMotionWithPriority(['Idle'], MotionPriority.IDLE, { suppressFocus: false, isInteraction: false })
       // 触摸部位叠加层：编辑态/开发者选项开启时启动重绘循环（spec §4）

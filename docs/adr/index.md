@@ -62,3 +62,4 @@
 | 056 | [对白气泡锚点跟随模型 / 交互条顶端](./056-bubble-anchor.md) | 已废弃 |
 | 057 | [对白气泡纵向位置并入交互条几何](./057-bubble-vertical-follows-bar.md) | 已采纳 |
 | 058 | [交互条随模型移动，取消水平视口夹取](./058-bar-follows-model.md) | 已采纳 |
+| 059 | [拖动与归位按角色可见轮廓中心](./059-visual-bounds-clamp.md) | 已采纳 |

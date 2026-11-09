@@ -26,6 +26,21 @@ describe('homePercentFromPos（捕捉当前位置 → 默认位置百分比）',
       .toEqual({ right: 0, bottom: 100 })
   })
 
+  it('可见轮廓偏移参与换算（ADR-059）', () => {
+    // 视口 1600×900、画布 240×320、可见轮廓中心相对画布中心偏 (+12, -8)
+    const canvas = { width: 240, height: 320 }
+    const viewport = { width: 1600, height: 900 }
+    const offset = { x: 12, y: -8 }
+    const home = homePercentFromPos({ right: 300, bottom: 100 }, canvas, viewport, offset)
+    expect(home).not.toBeNull()
+    const h = home as { right: number; bottom: number }
+    // 与 homePositionFromConfig 的公式互逆：pos = 百分比 - W/2 + offset
+    const backRight = viewport.width * h.right / 100 - canvas.width / 2 + offset.x
+    const backBottom = viewport.height * h.bottom / 100 - canvas.height / 2 + offset.y
+    expect(Math.abs(backRight - 300)).toBeLessThanOrEqual(viewport.width / 100)
+    expect(Math.abs(backBottom - 100)).toBeLessThanOrEqual(viewport.height / 100)
+  })
+
   it('尺寸非正时返回 null（不写坏配置）', () => {
     expect(homePercentFromPos({ right: 10, bottom: 10 }, { width: 0, height: 200 }, { width: 800, height: 600 })).toBeNull()
     expect(homePercentFromPos({ right: 10, bottom: 10 }, { width: 200, height: 200 }, { width: 800, height: 0 })).toBeNull()

@@ -17,18 +17,21 @@ export interface HomePercent {
 
 /**
  * 把「当前 pos（右下角偏移，px）+ 画布尺寸 + 视口尺寸」换算成「显示中心距右/距下」的百分比。
- * 与 `homePositionFromConfig` 互逆：画布中心距右 = right + W/2。任何尺寸非正时返回 null。
+ * 与 `homePositionFromConfig` 互逆：可见轮廓中心距右 = right + W/2 - offsetX（ADR-059；
+ * offset = 可见轮廓中心相对画布中心的位移，未测得时传 0 或省略即按画布中心）。
+ * 任何尺寸非正时返回 null。
  */
 export function homePercentFromPos(
   pos: { right: number; bottom: number },
   canvas: { width: number; height: number },
   viewport: { width: number; height: number },
+  visualOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): HomePercent | null {
   if (!(canvas.width > 0 && canvas.height > 0 && viewport.width > 0 && viewport.height > 0)) return null
   const clampPct = (value: number): number => Math.round(Math.min(100, Math.max(0, value)))
   return {
-    right: clampPct((pos.right + canvas.width / 2) / viewport.width * 100),
-    bottom: clampPct((pos.bottom + canvas.height / 2) / viewport.height * 100),
+    right: clampPct((pos.right + canvas.width / 2 - visualOffset.x) / viewport.width * 100),
+    bottom: clampPct((pos.bottom + canvas.height / 2 - visualOffset.y) / viewport.height * 100),
   }
 }
 
