@@ -73,6 +73,9 @@ export const PET_EVENTS: readonly PetEventKey[] = [...ANIMATION_SLOTS, ...ACTIVI
  * 这些开关不是动作，而是常驻参数——需要每帧把「当前表情」对应的开关写成 1、其余写成 0，
  * 切换时做几百毫秒的淡入淡出（见 client 的 ExpressionMixer）。`ParamSwitch10/11` 是
  * 左右手姿势开关，不属于表情，未收录。
+ *
+ * 例外：眨眼这类**瞬时脸动作**没有开关参数，用 `oneShotMotion` 指向一个动作组，
+ * 触发时播一遍即结束、不做常驻保持（ADR-054）。
  */
 export interface ExpressionDef {
   id: string
@@ -86,12 +89,18 @@ export interface ExpressionDef {
   exclusive?: string
   /** 给模型看的一句话释义（system 提示词的「表情目录」用）。 */
   meaning: string
+  /**
+   * 一次性表情：用动作组实现（如眨眼），触发后播一遍即结束。
+   * 有该字段的表情不写 `params` 常驻开关，也不进入临时表情保持窗口。
+   */
+  oneShotMotion?: string
 }
 
 /** 全部内置表情（`none` 表示恢复无表情；目录同时是 AI 可选表情与设置页勾选清单）。 */
 export const EXPRESSIONS: readonly ExpressionDef[] = [
   { id: 'none', name: '无', params: {}, meaning: '' },
   { id: 'blush', name: '脸红', params: { ParamSwitch2: 1 }, exclusive: 'skin', meaning: '害羞、被夸到、被碰到软处（正面）' },
+  { id: 'wink', name: '眨眼', params: {}, meaning: '俏皮地眨一只眼（wink）、抛媚眼', oneShotMotion: 'Wink' },
   { id: 'angry', name: '生气', params: { ParamSwitch4: 1 }, meaning: '被惹到当场发火' },
   { id: 'star', name: '星星眼', params: { ParamSwitch5: 1 }, exclusive: 'eye', meaning: '开心、崇拜、被夸得两眼放光' },
   { id: 'whites', name: '白眼', params: { ParamSwitch6: 1 }, exclusive: 'eye', meaning: '无语、嫌弃、被蠢到（不出声的不满）' },
@@ -138,6 +147,11 @@ export function expressionExclusiveGroup(id: string): string {
 /** 表情的显示名（未知 id 回退原值）。 */
 export function expressionLabel(id: string): string {
   return EXPRESSIONS.find((expression) => expression.id === id)?.name ?? id
+}
+
+/** 一次性表情（动作驱动，如眨眼）对应的动作组名；普通常驻表情返回 undefined。 */
+export function expressionOneShotMotion(id: string): string | undefined {
+  return EXPRESSIONS.find((expression) => expression.id === id)?.oneShotMotion
 }
 
 /** 表情会触及的全部开关参数（未选中的一律淡出到 0，避免多个表情叠着）。 */

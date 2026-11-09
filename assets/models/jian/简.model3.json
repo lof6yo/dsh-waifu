@@ -70,6 +70,13 @@
           "FadeInTime": 0.45,
           "FadeOutTime": 0.45
         }
+      ],
+      "Wink": [
+        {
+          "File": "motions/wink.motion3.json",
+          "FadeInTime": 0.1,
+          "FadeOutTime": 0.3
+        }
       ]
     }
   },

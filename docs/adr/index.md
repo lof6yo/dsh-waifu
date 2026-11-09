@@ -57,3 +57,4 @@
 | 051 | [语音合成走直连 + 自持连接池（省掉每轮 TLS 握手）](./051-tts-direct-transport.md) | 已采纳 |
 | 052 | [气泡在一轮演绎期间不自动消失](./052-bubble-visible-through-turn.md) | 已采纳 |
 | 053 | [交互条无操作后自动隐藏](./053-bar-auto-hide.md) | 已采纳 |
+| 054 | [眨眼：一次性表情用动作实现](./054-wink-one-shot-expression.md) | 已采纳 |

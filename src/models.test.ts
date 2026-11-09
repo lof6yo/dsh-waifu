@@ -18,6 +18,7 @@ import {
   motionLabel,
   expressionLabel,
   expressionParams,
+  expressionOneShotMotion,
   normalizeInteractions,
   normalizeTouchParts,
   MAX_INTERACTIONS_PER_PART,
@@ -197,6 +198,17 @@ describe('表情（expressions）', () => {
     })
     expect(expressionParams([])).toEqual({})
     expect(expressionParams(['none'])).toEqual({})
+  })
+
+  it('一次性表情（眨眼）用动作实现、不写开关参数（ADR-054）', () => {
+    expect(expressionParams(['wink'])).toEqual({})
+    expect(expressionOneShotMotion('wink')).toBe('Wink')
+    expect(expressionOneShotMotion('blush')).toBeUndefined()
+    expect(expressionLabel('wink')).toBe('眨眼')
+    expect(isExpressionId('wink')).toBe(true)
+    for (const expression of EXPRESSIONS) {
+      if (expressionOneShotMotion(expression.id)) expect(expression.params).toEqual({})
+    }
   })
 
   it('dedupeExpressions 互斥组去重：同组后出现的替换先出现的', () => {

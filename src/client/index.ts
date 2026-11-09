@@ -41,6 +41,7 @@ import {
 } from './schedule.ts'
 import {
   EXPRESSIONS,
+  expressionOneShotMotion,
   expressionParams,
   EXPRESSION_SWITCH_PARAMS,
   isExpressionId,
@@ -1562,6 +1563,24 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /**
+   * 一次性表情（ADR-054）：从表情 id 里挑出用动作实现的瞬时表情（如眨眼），
+   * 返回对应动作组名；普通常驻表情返回空数组。动作走串行队列，播一遍即结束。
+   */
+  function oneShotExpressionMotions(ids: readonly string[]): string[] {
+    const motions: string[] = []
+    for (const id of ids) {
+      const motion = expressionOneShotMotion(id)
+      if (motion) motions.push(motion)
+    }
+    return motions
+  }
+
+  /** 当前 id 列表里还需要常驻保持的表情（剔除一次性表情）。 */
+  function persistentExpressions(ids: readonly string[]): string[] {
+    return ids.filter((id) => expressionOneShotMotion(id) === undefined)
+  }
+
+  /**
    * 演出一段临时表情：写目标值 + 这段时间内暂停鼠标跟随。
    * 演出（动作/表情）期间让头眼固定在正前方，避免跟随不断叠加到关键帧上；
    * 表情窗口结束、动作 motionFinish 时再恢复跟随（`releaseFocusSuppression`）。
@@ -2978,9 +2997,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       }
       /** 下拉框跟随当前生效的表情（外部改动/面板重建后同步）。 */
       const syncExprSelect = (): void => { exprSelect.value = debugExpression ?? 'none' }
-      /** 应用下拉框当前项：'none' 即清掉预览表情，回到默认脸。 */
+      /** 应用下拉框当前项：'none' 即清掉预览表情，回到默认脸；一次性表情（眨眼）每次选中/点播放都重播一遍。 */
       const applyDebugExpression = (): void => {
         const next = exprSelect.value === 'none' ? null : exprSelect.value
+        const oneShot = next === null ? undefined : expressionOneShotMotion(next)
+        if (oneShot) {
+          void startMotionWithPriority([oneShot], MotionPriority.FORCE, { suppressFocus: true, isInteraction: true })
+        }
         if (next === debugExpression) { syncExprSelect(); return }
         debugExpression = next
         refreshExpressionTargets()
@@ -3560,7 +3583,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (list.length > 0) {
       clientLog('info', 'ai expressions', list.join('+'))
       conPushJson('play.expression', { applied: list })
-      holdTemporaryExpression(list)
+      // 一次性表情（眨眼）走动作队列；常驻表情照旧临时保持
+      for (const motion of oneShotExpressionMotions(list)) {
+        clientLog('info', 'one-shot expression', motion)
+        enqueueCueMotion(motion)
+      }
+      const persistent = persistentExpressions(list)
+      if (persistent.length > 0) holdTemporaryExpression(persistent)
     }
     const motionList = Array.isArray(motions)
       ? motions.filter((item): item is string => typeof item === 'string' && isMotionId(item))
@@ -3573,14 +3602,20 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /**
-   * 设置页预览（ADR-040 修订）：动作走互动动作通道播一次；表情走临时表情通道
-   * （与 AI 标签同一套落地逻辑，`TAG_EXPRESSION_HOLD_MS` 后回到常态）。
+   * 设置页预览（ADR-040 修订 / ADR-054）：动作走互动动作通道播一次；常驻表情走临时表情通道
+   * （与 AI 标签同一套落地逻辑，`TAG_EXPRESSION_HOLD_MS` 后回到常态）；一次性表情（眨眼）
+   * 直接播对应动作一遍。
    */
   function previewCatalog(target: CatalogPreview): void {
     if (target.kind === 'expression') {
       if (!isExpressionId(target.id)) return
       debugExpression = null
-      holdTemporaryExpression([target.id])
+      const oneShot = expressionOneShotMotion(target.id)
+      if (oneShot) {
+        void startMotionWithPriority([oneShot], MotionPriority.FORCE, { suppressFocus: true, isInteraction: true })
+      } else {
+        holdTemporaryExpression([target.id])
+      }
       clientLog('info', 'preview expression', target.id)
       return
     }
@@ -3720,7 +3755,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (expressions.length > 0) {
       clientLog('info', 'ai expressions', expressions.join('+'))
       conPushJson('play.expression', { applied: expressions })
-      holdTemporaryExpression(expressions, true)
+      // 一次性表情（眨眼）排在动作队列里演一遍；常驻表情立刻 sticky 保持
+      for (const motion of oneShotExpressionMotions(expressions)) {
+        clientLog('info', 'one-shot expression', motion)
+        enqueueCueMotion(motion)
+      }
+      const persistent = persistentExpressions(expressions)
+      if (persistent.length > 0) holdTemporaryExpression(persistent, true)
     }
     for (const name of motions) {
       clientLog('info', 'ai motions', name)

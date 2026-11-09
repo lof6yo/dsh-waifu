@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 重建「简」内置 Live2D 模型的自建动作（当前 9 组：Idle + 8 个 AI 动作，幂等），
+ * 重建「简」内置 Live2D 模型的自建动作（当前 10 组：Idle + 8 个 AI 动作 + Wink 眨眼，幂等），
  * 并校验 JSON / 参数 / Meta 计数 / 引用。
  *
  * 用法（本机无全局 node，用 App 自带运行时）：
@@ -9,7 +9,7 @@
  *   "$NODE" scripts/gen-jian-motions.mjs
  *
  * 产物目录：assets/models/jian/motions/*.motion3.json
- *   Idle / Nod / ShakeHead / Tilt / Sway / Glance / Perk / Shift / Sigh（见 MOTION_DEFS）
+ *   Idle / Nod / ShakeHead / Tilt / Sway / Glance / Perk / Shift / Sigh / Wink（见 MOTION_DEFS）
  *
  * 曲线约定（motion3.json, Version 3）：
  *   Segments = [t0, v0, 1, t1, v1, c1x, c1y, c2x, c2y, ...]
@@ -38,7 +38,7 @@ const MODEL3_FILE = resolve(MODEL_DIR, '简.model3.json')
 const CDI3_FILE = resolve(MODEL_DIR, '简.cdi3.json')
 
 const FPS = 30
-const EXPECTED_GROUPS = ['Idle', 'Nod', 'ShakeHead', 'Tilt', 'Sway', 'Glance', 'Perk', 'Shift', 'Sigh']
+const EXPECTED_GROUPS = ['Idle', 'Nod', 'ShakeHead', 'Tilt', 'Sway', 'Glance', 'Perk', 'Shift', 'Sigh', 'Wink']
 
 /**
  * 允许在动作里驱动的参数白名单 + 量纲守护范围。
@@ -562,6 +562,38 @@ const MOTION_DEFS = [
         buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
         buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
         buildCurve('ParamMouthOpenY', sample(d, mouth), { loop: false, duration: d }),
+      ]
+    },
+  },
+  {
+    group: 'Wink',
+    file: 'wink.motion3.json',
+    duration: 1.2,
+    loop: false,
+    build: () => {
+      const d = 1.2
+      // 一次性表情（ADR-054）：左眼一闭一开、右眼保持睁开，配一点歪头、挑眉和嘴角。
+      // 动作驱动 ParamEyeLOpen/ParamEyeROpen 时 live2d-display 会跳过 EyeBlink，
+      // 单眼闭合才不会被每帧眨眼覆写；眼笑（ParamEye[LR]Smile）交给物理链跟着嘴形走。
+      const hold = (t) => smoothstep(t, 0.08, 0.2) - smoothstep(t, 0.62, 0.8)
+      const leftOpen = (t) => 1 - 0.97 * hold(t)
+      const rightOpen = (t) => 1 - 0.06 * hold(t)
+      const headZ = (t) => 6.0 * hold(t) - 0.9 * pulse(t, 0.98, 0.12)
+      const headX = (t) => 3.6 * hold(t)
+      const headY = (t) => -1.8 * hold(t)
+      const brow = (t) => 0.14 * hold(t)
+      const mouth = (t) => 0.55 * hold(t)
+      const cheek = (t) => 0.18 * hold(t)
+      return [
+        buildCurve('ParamEyeLOpen', sample(d, leftOpen), { loop: false, duration: d }),
+        buildCurve('ParamEyeROpen', sample(d, rightOpen), { loop: false, duration: d }),
+        buildCurve('ParamAngleZ', sample(d, headZ), { loop: false, duration: d }),
+        buildCurve('ParamAngleX', sample(d, headX), { loop: false, duration: d }),
+        buildCurve('ParamAngleY', sample(d, headY), { loop: false, duration: d }),
+        buildCurve('ParamBrowLY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamBrowRY', sample(d, brow), { loop: false, duration: d }),
+        buildCurve('ParamMouthForm', sample(d, mouth), { loop: false, duration: d }),
+        buildCurve('ParamCheekPuff', sample(d, cheek), { loop: false, duration: d }),
       ]
     },
   },
