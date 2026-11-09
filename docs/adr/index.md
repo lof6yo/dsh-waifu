@@ -58,3 +58,4 @@
 | 052 | [气泡在一轮演绎期间不自动消失](./052-bubble-visible-through-turn.md) | 已采纳 |
 | 053 | [交互条无操作后自动隐藏](./053-bar-auto-hide.md) | 已采纳 |
 | 054 | [眨眼：一次性表情用动作实现](./054-wink-one-shot-expression.md) | 已采纳 |
+| 055 | [调试面板折叠、按视口给足尺寸、控制台自适应高度](./055-debug-panel-collapse.md) | 已采纳 |

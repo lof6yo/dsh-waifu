@@ -127,9 +127,11 @@ const BUBBLE_MAX_DEFAULT = DEFAULT_BUBBLE_MAX_SECONDS
  * 跟着设置同步到别的设备；键带版本号，几何结构再变时换键即可让旧记录自然失效。
  */
 const DEBUG_PANEL_STORE_KEY = 'dsh-waifu.debug-panel:v1'
-/** 面板尺寸下限（px）：再小按钮就点不准了。 */
-const DEBUG_PANEL_MIN_W = 180
-const DEBUG_PANEL_MIN_H = 140
+/** 面板尺寸下限（px）：再小按钮就点不准了。默认尺寸按视口另算（ADR-055），下限只约束手动缩放。 */
+const DEBUG_PANEL_MIN_W = 320
+const DEBUG_PANEL_MIN_H = 400
+/** 折叠态面板高度（px，只留标题栏；实际由内容撑开，这里只用于气泡避让估算）。 */
+const DEBUG_PANEL_COLLAPSED_H = 34
 /** 面板与视口边缘的最小间距（px）。 */
 const DEBUG_PANEL_MARGIN = 8
 /** AI 台词最短可见时长：状态切换再快，也要让这句露一脸（ADR-025 补丁）。 */
@@ -537,6 +539,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let debugPanelManual: DebugPanelGeometry | null = null
   /** 是否已从 localStorage 读过手动几何（首次建面板时读一次，之后以内存为准）。 */
   let debugPanelGeometryLoaded = false
+  /** 调试面板是否折叠（只留标题栏）：纯客户端瞬时状态，不写 localStorage，重开面板恢复展开。 */
+  let debugPanelCollapsed = false
+  /** 标题栏折叠按钮与内容区：折叠/展开时切换（面板重建时重新赋值）。 */
+  let debugFoldEl: HTMLButtonElement | null = null
+  let debugBodyEl: HTMLDivElement | null = null
+  /** 四角缩放把手：折叠时隐藏（折叠态只留标题栏，尺寸交给内容撑开）。 */
+  let debugGrips: HTMLElement[] = []
   let canvas: HTMLCanvasElement | null = null
   /** 画布外包一层，便于绝对定位触摸部位叠加层。 */
   let petLayer: HTMLDivElement | null = null
@@ -841,9 +850,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const anchorX = bounds.x + bounds.width / 2 + bubbleOffsetX
     // 气泡默认锚在模型包围盒上方（spec §3）
     let anchorY = bounds.y - bubbleOffsetY
-    // 调试面板整体位于模型上方时（自动跟随的常态）气泡叠到面板之上避让（spec §2）；
-    // 面板被用户拖到别处（侧边/下方）就不再上移，否则气泡会莫名其妙飞到面板顶上。
-    if (Number.isFinite(debugPanelTopLogical) && debugPanelBottomLogical <= bounds.y + 1) {
+    // 调试面板自动跟随且整体位于模型上方时，气泡叠到面板之上避让（spec §2）；
+    // 手动摆放（拖过标题栏/四角）后不再影响气泡：面板停在哪，气泡都贴着模型，拖动标题栏不会带着气泡跑。
+    if (!debugPanelManual && Number.isFinite(debugPanelTopLogical) && debugPanelBottomLogical <= bounds.y + 1) {
       anchorY = debugPanelTopLogical - 6
     }
     // 气泡目标视口 y clamp 到 ≥8（用缓存的 petLayer 视口 rect 换算，面板/模型贴顶时不跑出视口）
@@ -2619,19 +2628,44 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const originTop = rect ? rect.top : 0
     debugEl.style.left = `${Math.round(geometry.left - originLeft)}px`
     debugEl.style.top = `${Math.round(geometry.top - originTop)}px`
-    debugEl.style.width = `${geometry.width}px`
-    debugEl.style.height = `${geometry.height}px`
-    debugEl.style.maxHeight = 'none'
-    panelSizeCache = { width: geometry.width, height: geometry.height }
+    // 折叠时尺寸由内容撑开（只留标题栏），不写死宽高，否则会把面板重新拉大
+    if (!debugPanelCollapsed) {
+      debugEl.style.width = `${geometry.width}px`
+      debugEl.style.height = `${geometry.height}px`
+      debugEl.style.maxHeight = 'none'
+      panelSizeCache = { width: geometry.width, height: geometry.height }
+    } else {
+      panelSizeCache = null
+    }
+    const appliedHeight = debugPanelCollapsed ? DEBUG_PANEL_COLLAPSED_H : geometry.height
     debugPanelTopLogical = geometry.top - originTop
-    debugPanelBottomLogical = geometry.top - originTop + geometry.height
+    debugPanelBottomLogical = geometry.top - originTop + appliedHeight
   }
 
-  /** 恢复自动跟随（标题栏 ↺ / 双击标题栏）：清掉手动几何与本地记录，重新按模型定位。 */
+  /** 恢复自动跟随（双击标题栏）：清掉手动几何与本地记录，重新按模型定位。 */
   function resetDebugPanelGeometry(): void {
     if (!debugPanelManual) return
     debugPanelManual = null
     writeDebugPanelGeometry()
+    invalidateLayout()
+    syncDebugPanelWidth()
+    updateDebugPanelPosition()
+  }
+
+  /**
+   * 折叠 / 展开调试面板（标题栏右上角按钮，ADR-055）：折叠只留标题栏，
+   * 展开后恢复原来的手动几何或按视口算出的默认尺寸。
+   */
+  function setDebugPanelCollapsed(collapsed: boolean): void {
+    debugPanelCollapsed = collapsed
+    if (debugFoldEl) {
+      debugFoldEl.textContent = collapsed ? '▸' : '▾'
+      debugFoldEl.title = collapsed ? '展开调试面板' : '折叠调试面板'
+      debugFoldEl.setAttribute('aria-label', debugFoldEl.title)
+      debugFoldEl.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+    }
+    if (debugBodyEl) debugBodyEl.style.display = collapsed ? 'none' : 'flex'
+    for (const grip of debugGrips) grip.style.display = collapsed ? 'none' : ''
     invalidateLayout()
     syncDebugPanelWidth()
     updateDebugPanelPosition()
@@ -2695,23 +2729,40 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     })
   }
 
-  /** 调试面板宽度/最大高度（浮层不占布局，spec §2）：宽度 min(280, 画布逻辑宽度-16)，
-   *  最大高度 min(420, 视口高*0.5)，内容区自己滚动，避免面板过高无处放。
-   *  用户拖过角（手动几何）后不再按画布回写，宽高完全由用户决定（ADR-044）。 */
+  /**
+   * 调试面板尺寸（浮层不占布局，spec §2 / ADR-055）：
+   * - 折叠态：宽高都交给内容撑开（只留标题栏）；
+   * - 手动几何（拖过四角）：完全由用户决定（ADR-044）；
+   * - 自动跟随：按视口给足默认尺寸（宽 320–460、高 400–640 且不超过视口 70%），
+   *   内容区自适应，控制台吃满剩余高度，面板本身不出现滚动条。
+   */
   function syncDebugPanelWidth(): void {
     if (!debugEl) return
+    if (debugPanelCollapsed) {
+      // 折叠态：min-width/min-height 必须清掉，否则回不到只留标题栏的小条
+      debugEl.style.minWidth = '0'
+      debugEl.style.minHeight = '0'
+      debugEl.style.width = 'auto'
+      debugEl.style.height = 'auto'
+      debugEl.style.maxHeight = 'none'
+      panelSizeCache = null
+      return
+    }
+    debugEl.style.minWidth = `${DEBUG_PANEL_MIN_W}px`
+    debugEl.style.minHeight = `${DEBUG_PANEL_MIN_H}px`
     if (debugPanelManual) {
       applyDebugPanelGeometry(clampDebugPanelGeometry(debugPanelManual))
       return
     }
-    // append 阶段 PIXI app 尚未创建，此时 canvas 属性本身就是逻辑尺寸
-    const canvasWidth = app ? logicalCanvasSize().width : (canvas?.width ?? pos.size)
-    const width = Math.max(120, Math.min(280, Math.round(canvasWidth - 16)))
+    const maxW = Math.max(DEBUG_PANEL_MIN_W, window.innerWidth - DEBUG_PANEL_MARGIN * 2)
+    const maxH = Math.max(DEBUG_PANEL_MIN_H, window.innerHeight - DEBUG_PANEL_MARGIN * 2)
+    const width = Math.min(Math.max(320, Math.round(window.innerWidth - 32)), Math.min(460, maxW))
+    const height = Math.min(Math.max(DEBUG_PANEL_MIN_H, Math.round(window.innerHeight * 0.7)), Math.min(640, maxH))
     debugEl.style.width = `${width}px`
+    debugEl.style.height = `${height}px`
     debugEl.style.boxSizing = 'border-box'
-    // 高度回到内容自适应：手动模式写过的 px 高必须清掉，否则恢复自动跟随后面板缩不回去
-    debugEl.style.removeProperty('height')
-    debugEl.style.maxHeight = `${Math.max(80, Math.min(420, Math.round(window.innerHeight * 0.5)))}px`
+    debugEl.style.maxHeight = 'none'
+    panelSizeCache = null
   }
 
   /**
@@ -2770,8 +2821,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   const CON_MAX_LINES = 300
   /** 单行原文字符上限（完整请求报文含 system 提示词，可能上万字符）。 */
   const CON_LINE_MAX = 20_000
-  /** 控制台可视高度：固定 20 行，超出滚动。 */
-  const CON_VIEW_LINES = 20
   /** 控制台行高（px）：font 11px 与 scrollTop 计算共用同一值。 */
   const CON_LINE_HEIGHT = 16
   /** 「复制」按钮的临时文案计时器（只在点过按钮后短暂存在，面板关闭/再次点击即清）。 */
@@ -2888,34 +2937,40 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugEl = document.createElement('div')
       debugEl.style.cssText = `position:absolute;z-index:5;pointer-events:auto;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;background:rgba(24,26,36,.94);color:#e8eaf0;border:1px solid rgba(128,128,128,.22);border-radius:10px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.35);min-width:${DEBUG_PANEL_MIN_W}px;min-height:${DEBUG_PANEL_MIN_H}px`
 
-      // 标题栏=拖动把手：按住拖动改位置、双击恢复自动跟随；右侧 ↺ 同效
+      // 标题栏=拖动把手：按住拖动改位置、双击恢复自动跟随；右侧按钮折叠/展开面板
       const debugHeader = document.createElement('div')
       debugHeader.style.cssText = 'display:flex;align-items:center;gap:6px;flex:0 0 auto;padding:6px 6px 6px 10px;background:rgba(255,255,255,.045);border-bottom:1px solid rgba(128,128,128,.16);cursor:move;user-select:none;-webkit-user-select:none;touch-action:none'
       debugHeader.title = '拖动标题栏移动面板，拖四角改大小，双击标题栏回到自动跟随'
       const debugTitle = document.createElement('div')
       debugTitle.style.cssText = 'flex:1 1 auto;min-width:0;font-size:12px;font-weight:600;color:#aeb8cc;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
       debugTitle.textContent = '调试面板'
-      const debugReset = document.createElement('button')
-      debugReset.type = 'button'
-      debugReset.textContent = '↺'
-      debugReset.title = '恢复自动跟随（回到模型上方）'
-      debugReset.style.cssText = 'flex:0 0 auto;width:18px;height:18px;padding:0;display:grid;place-items:center;border:none;border-radius:5px;background:rgba(128,128,128,.16);color:#c8d1e2;font-size:12px;line-height:1;cursor:pointer;outline:none'
-      debugReset.onmouseenter = () => { debugReset.style.background = 'rgba(120,170,255,.28)' }
-      debugReset.onmouseleave = () => { debugReset.style.background = 'rgba(128,128,128,.16)' }
-      debugReset.onclick = () => { resetDebugPanelGeometry() }
+      const debugFold = document.createElement('button')
+      debugFold.type = 'button'
+      debugFold.textContent = debugPanelCollapsed ? '▸' : '▾'
+      debugFold.title = debugPanelCollapsed ? '展开调试面板' : '折叠调试面板'
+      debugFold.setAttribute('aria-label', debugFold.title)
+      debugFold.setAttribute('aria-expanded', debugPanelCollapsed ? 'false' : 'true')
+      debugFold.style.cssText = 'flex:0 0 auto;width:20px;height:20px;padding:0;display:grid;place-items:center;border:none;border-radius:5px;background:rgba(128,128,128,.16);color:#c8d1e2;font-size:13px;line-height:1;cursor:pointer;outline:none'
+      debugFold.onmouseenter = () => { debugFold.style.background = 'rgba(120,170,255,.28)' }
+      debugFold.onmouseleave = () => { debugFold.style.background = 'rgba(128,128,128,.16)' }
+      debugFold.onclick = () => { setDebugPanelCollapsed(!debugPanelCollapsed) }
       // 双击标题栏 = 恢复自动跟随（拖一次就手动接管了，给一个不藏起来的手势）
       debugHeader.ondblclick = () => { resetDebugPanelGeometry() }
       debugHeader.appendChild(debugTitle)
-      debugHeader.appendChild(debugReset)
+      debugHeader.appendChild(debugFold)
+      debugFoldEl = debugFold
       debugEl.appendChild(debugHeader)
       bindDebugPanelPointer(debugHeader, 'move')
 
-      // 内容区：手动模式下高度被固定，内容自己滚动，标题栏不会跟着滚走
+      // 内容区：纵向 flex，除控制台外的区块固定高，控制台吃满剩余高度并在自身内部滚动（ADR-055：面板级不出现滚动条）
       const debugBody = document.createElement('div')
-      debugBody.style.cssText = 'flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:8px 10px;box-sizing:border-box'
+      debugBodyEl = debugBody
+      debugBody.style.cssText = 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:8px 10px;box-sizing:border-box'
+      if (debugPanelCollapsed) debugBody.style.display = 'none'
       debugEl.appendChild(debugBody)
 
       // 四角缩放把手（右下角有可见斜纹，其余三角透明但可拖）
+      debugGrips = []
       for (const corner of ['nw', 'ne', 'sw', 'se'] as const) {
         const grip = document.createElement('div')
         const horizontal = corner === 'nw' || corner === 'sw' ? 'left' : 'right'
@@ -2925,6 +2980,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         if (corner === 'se') {
           grip.style.background = 'linear-gradient(135deg,transparent 0 55%,rgba(150,180,230,.5) 55% 62%,transparent 62% 72%,rgba(150,180,230,.5) 72% 79%,transparent 79%)'
         }
+        debugGrips.push(grip)
+        if (debugPanelCollapsed) grip.style.display = 'none'
         bindDebugPanelPointer(grip, corner)
         debugEl.appendChild(grip)
       }
@@ -3024,8 +3081,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       syncExprSelect()
       debugBody.appendChild(exprRow)
 
-      // 控制台（ADR-043）：开启后记录所有事件与 LLM/TTS 原始报文
-      debugBody.appendChild(sectionLabel('控制台'))
+      // 控制台（ADR-043）：占满面板剩余高度，滚动只发生在控制台内部（ADR-055：取消面板级滚动条）
+      const conSection = document.createElement('div')
+      conSection.style.cssText = 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column'
+      conSection.appendChild(sectionLabel('控制台'))
       const conRow = document.createElement('div')
       conRow.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap'
       const conToggle = document.createElement('button')
@@ -3064,15 +3123,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       conRow.appendChild(conClear)
       conRow.appendChild(conCopy)
       conRow.appendChild(conState)
-      debugBody.appendChild(conRow)
+      conSection.appendChild(conRow)
       conBody = document.createElement('div')
-      // 固定 20 行高（content-box，不含 padding/border），内容超出滚动；行高与字体统一写死，便于按行数算高度
-      conBody.style.cssText = `margin-top:6px;height:${CON_VIEW_LINES * CON_LINE_HEIGHT}px;line-height:${CON_LINE_HEIGHT}px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:rgba(0,0,0,.32);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:6px;font:11px/${CON_LINE_HEIGHT}px ui-monospace,monospace;color:#cfd6e6`
-      debugBody.appendChild(conBody)
+      // 高度由 flex 撑满面板剩余空间；行高与字体统一写死，内容超出在控制台内部滚动
+      conBody.style.cssText = `margin-top:6px;flex:1 1 auto;min-height:60px;line-height:${CON_LINE_HEIGHT}px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:rgba(0,0,0,.32);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:6px;font:11px/${CON_LINE_HEIGHT}px ui-monospace,monospace;color:#cfd6e6`
+      conSection.appendChild(conBody)
+      debugBody.appendChild(conSection)
 
       // 状态信息：与上方区域分隔
       debugTextEl = document.createElement('div')
-      debugTextEl.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
+      debugTextEl.style.cssText = 'flex:0 0 auto;margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
       debugBody.appendChild(debugTextEl)
       syncDebugPanelWidth()
       refreshDebugMotionGroups()
@@ -3089,6 +3149,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       debugMotionSelect = null
       debugTextEl = null
       conBody = null
+      debugFoldEl = null
+      debugBodyEl = null
+      debugGrips = []
       conRecording = false
       if (conCopyTimer) { window.clearTimeout(conCopyTimer); conCopyTimer = 0 }
       // 手动几何留在内存与 localStorage 里：下次开面板还回原位（ADR-044）
