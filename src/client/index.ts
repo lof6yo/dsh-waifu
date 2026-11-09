@@ -2804,9 +2804,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** 折叠态的位置夹取：按实际小条尺寸把面板留在视口内（不套用 320×400 的最小宽高）。 */
   function clampCollapsedPanelPosition(left: number, top: number): { left: number; top: number } {
+    const s = uiScale()
     const { width, height } = collapsedPanelSize()
-    const maxLeft = Math.max(DEBUG_PANEL_MARGIN, window.innerWidth - width - DEBUG_PANEL_MARGIN)
-    const maxTop = Math.max(DEBUG_PANEL_MARGIN, window.innerHeight - height - DEBUG_PANEL_MARGIN)
+    const visualW = width * s
+    const visualH = height * s
+    const maxLeft = Math.max(DEBUG_PANEL_MARGIN, window.innerWidth - visualW - DEBUG_PANEL_MARGIN)
+    const maxTop = Math.max(DEBUG_PANEL_MARGIN, window.innerHeight - visualH - DEBUG_PANEL_MARGIN)
     return {
       left: Math.round(Math.min(Math.max(left, DEBUG_PANEL_MARGIN), maxLeft)),
       top: Math.round(Math.min(Math.max(top, DEBUG_PANEL_MARGIN), maxTop)),
@@ -2817,22 +2820,28 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function applyDebugPanelGeometry(geometry: DebugPanelGeometry): void {
     if (!debugEl) return
     const rect = layerRect()
+    const s = uiScale()
     const originLeft = rect ? rect.left : 0
     const originTop = rect ? rect.top : 0
-    debugEl.style.left = `${Math.round(geometry.left - originLeft)}px`
-    debugEl.style.top = `${Math.round(geometry.top - originTop)}px`
+    // geometry 是视口（视觉）坐标；写进 petLayer 前要搬回层 CSS px（页面缩放时 ÷s，ADR-059/060）
+    const layerLeft = (geometry.left - originLeft) / s
+    const layerTop = (geometry.top - originTop) / s
+    debugEl.style.left = `${Math.round(layerLeft)}px`
+    debugEl.style.top = `${Math.round(layerTop)}px`
     // 折叠时尺寸由内容撑开（只留标题栏），不写死宽高，否则会把面板重新拉大
     if (!debugPanelCollapsed) {
-      debugEl.style.width = `${geometry.width}px`
-      debugEl.style.height = `${geometry.height}px`
+      const layerWidth = geometry.width / s
+      const layerHeight = geometry.height / s
+      debugEl.style.width = `${Math.round(layerWidth)}px`
+      debugEl.style.height = `${Math.round(layerHeight)}px`
       debugEl.style.maxHeight = 'none'
-      panelSizeCache = { width: geometry.width, height: geometry.height }
+      panelSizeCache = { width: Math.round(layerWidth), height: Math.round(layerHeight) }
     } else {
       panelSizeCache = null
     }
-    const appliedHeight = debugPanelCollapsed ? DEBUG_PANEL_COLLAPSED_H : geometry.height
-    debugPanelTopLogical = geometry.top - originTop
-    debugPanelBottomLogical = geometry.top - originTop + appliedHeight
+    const appliedHeight = (debugPanelCollapsed ? DEBUG_PANEL_COLLAPSED_H : geometry.height) / s
+    debugPanelTopLogical = layerTop
+    debugPanelBottomLogical = layerTop + appliedHeight
   }
 
   /** 恢复自动跟随（双击标题栏）：清掉手动几何与本地记录，重新按模型定位。 */
@@ -2972,11 +2981,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /**
    * 调试面板定位（spec §2）：
    * - 自动模式（默认）：浮在模型包围盒**上方**（不覆盖角色），允许伸出画布留白/画布上边缘
-   *   （逻辑 top 可为负），但整体保持在视口内。用 petLayer 的视口 rect 换算：
-   *   期望视口 top = rect.top + bounds.y - 8 - panelHeight，clamp 到 [8, innerHeight-panelH-8]，
-   *   再换算回 petLayer 逻辑 top = clampedTop - rect.top；水平同理。
+   *   （逻辑 top 可为负），但整体保持在视口内。先把 bounds / 面板尺寸换算成视觉 px：
+   *   期望视口 top = rect.top + s·bounds.y − 8s − 面板视觉高，clamp 到视口内，
+   *   再换算回 petLayer 层 CSS px = (clampedTop − rect.top) / s（页面缩放，ADR-059/060）；水平同理。
    * - 手动模式（用户拖过标题栏/角）：位置与大小都由用户决定，只在视口变化时重新夹回屏幕内。
-   * 每帧由命中层 rAF 调用，并记录顶部/底部供气泡避让。
+   * 每帧由命中层 rAF 调用；拖动人物时 handlePointerMove 也同步调用，避免等 rAF 节流后面板回跳。
    */
   function updateDebugPanelPosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
     debugPanelTopLogical = Number.NaN
@@ -3001,24 +3010,26 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (!(width > 0 && height > 0)) return
       panelSizeCache = { width, height }
     }
-    const { width: panelWidth, height: panelHeight } = panelSizeCache
     const rect = layerRect()
     if (!rect) return
+    const s = uiScale()
+    // panelSizeCache 是层 CSS px，换算成视觉 px 后与视口 / rect 统一口径（ADR-059/060）
+    const panelVisualW = panelSizeCache.width * s
+    const panelVisualH = panelSizeCache.height * s
     // 垂直：贴模型顶部上方 8px；只在视口放不下时才被夹到视口顶部附近
-    const maxViewportTop = Math.max(DEBUG_PANEL_MARGIN, window.innerHeight - panelHeight - DEBUG_PANEL_MARGIN)
-    const viewportTop = Math.min(Math.max(rect.top + bounds.y - 8 - panelHeight, DEBUG_PANEL_MARGIN), maxViewportTop)
+    const modelTopVisual = rect.top + s * bounds.y
+    const maxViewportTop = Math.max(DEBUG_PANEL_MARGIN, window.innerHeight - panelVisualH - DEBUG_PANEL_MARGIN)
+    const viewportTop = Math.min(Math.max(modelTopVisual - 8 * s - panelVisualH, DEBUG_PANEL_MARGIN), maxViewportTop)
     // 水平：面板居中对齐模型，限制在视口内
-    const maxViewportLeft = Math.max(DEBUG_PANEL_MARGIN, window.innerWidth - panelWidth - DEBUG_PANEL_MARGIN)
-    const viewportLeft = Math.min(
-      Math.max(rect.left + bounds.x + bounds.width / 2 - panelWidth / 2, DEBUG_PANEL_MARGIN),
-      maxViewportLeft,
-    )
-    const top = viewportTop - rect.top
-    const left = viewportLeft - rect.left
+    const modelCenterVisual = rect.left + s * (bounds.x + bounds.width / 2)
+    const maxViewportLeft = Math.max(DEBUG_PANEL_MARGIN, window.innerWidth - panelVisualW - DEBUG_PANEL_MARGIN)
+    const viewportLeft = Math.min(Math.max(modelCenterVisual - panelVisualW / 2, DEBUG_PANEL_MARGIN), maxViewportLeft)
+    const top = (viewportTop - rect.top) / s
+    const left = (viewportLeft - rect.left) / s
     debugEl.style.left = `${left}px`
     debugEl.style.top = `${top}px`
     debugPanelTopLogical = top
-    debugPanelBottomLogical = top + panelHeight
+    debugPanelBottomLogical = top + panelVisualH / s
   }
 
   // ---- 调试控制台（ADR-043）：开启记录后显示所有客户端事件与 LLM/TTS 原始报文 ----
@@ -3654,6 +3665,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       // 允许拖出窗口，但画布中心点不能离开视口（否则无法拖回）
       clampPosToViewport()
       applyPosToBox()
+      // 拖动时立即重排浮层：overlayTick 受 maxFps 节流，等下一帧会让被夹到视口边的面板回跳（抖动修复）
+      const dragBounds = modelBounds()
+      if (dragBounds) {
+        updateDebugPanelPosition(dragBounds)
+        updateBubblePosition(dragBounds)
+      }
     }
   }
   function handlePointerUp(e: PointerEvent): void {
