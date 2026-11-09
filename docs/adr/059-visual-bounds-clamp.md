@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+已废弃（由 [ADR-060](./060-canvas-center-clamp.md) 取代；测量代码保留为调试信息）
 
 ## Date
 

@@ -524,7 +524,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       width: window.innerWidth || document.documentElement.clientWidth || 0,
       height: window.innerHeight || document.documentElement.clientHeight || 0,
     }
-    const home = homePercentFromPos(pos, { width, height }, viewport, visualOffsetPx(), uiScale())
+    const home = homePercentFromPos(pos, { width, height }, viewport, uiScale())
     if (home !== null) captured(home)
   }))
 
@@ -1809,12 +1809,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const boxInfo = r
       ? `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`
       : '-'
+    // 可见轮廓包围盒（诊断用；夹取已改回画布几何中心，见 ADR-060）
     const vis = visualMeasured
       ? `vis: ${Math.round(offset.x)},${Math.round(offset.y)} px  bbox: ${Math.round(visualBoxWFrac * logical.width)}x${Math.round(visualBoxHFrac * logical.height)}`
       : 'vis: n/a'
-    // 预期可见轮廓中心的屏幕坐标：= innerSize - pos - 画布/2 + 偏移（ADR-059）
-    const centerX = Math.round(window.innerWidth - pos.right - logical.width / 2 + offset.x)
-    const centerY = Math.round(window.innerHeight - pos.bottom - logical.height / 2 + offset.y)
+    // 画布几何中心的屏幕坐标（视觉坐标）：= innerWidth − s·(pos + 画布/2)（ADR-060）
+    const s = uiScale()
+    const centerX = Math.round(window.innerWidth - s * (pos.right + logical.width / 2))
+    const centerY = Math.round(window.innerHeight - s * (pos.bottom + logical.height / 2))
     debugTextEl.textContent =
       `agent: ${view?.agent ?? '-'}  pet: ${state}  v${view?.version ?? '-'}\n` +
       `parts: ${touchParts.length}  expr: ${desiredExpressions().join('+') || 'none'}\n` +
@@ -2002,20 +2004,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /**
-   * 可见轮廓中心必须留在视口内（允许一半移出窗口，但拖不丢、能拖回来；ADR-059）：
-   * 可见中心 = innerWidth + s·(offsetX − W/2 − right)，s 为页面 UI 缩放（uiScale()），
-   * 因此 right ∈ [offsetX−W/2, innerWidth/s + offsetX−W/2]；未测出偏移时 offset = 0，
-   * 未缩放（s=1）时等价于按画布中心夹取。spec §4。
+   * 宠物画布（显示区）的几何中心必须留在视口内：允许一半移出窗口，但拖不丢、能拖回来。
+   * right ∈ [−W/2, innerWidth/s − W/2]，bottom 同理；s 为页面 UI 缩放（uiScale()），
+   * 未缩放（s=1）时即 spec §4 的原始语义。ADR-060。
    */
   function clampPosToViewport(): void {
     const { width: w, height: h } = logicalCanvasSize()
     if (!(w > 0 && h > 0)) return
-    const offset = visualOffsetPx()
     const halfW = w / 2
     const halfH = h / 2
     const s = uiScale()
-    pos.right = Math.min(window.innerWidth / s + offset.x - halfW, Math.max(offset.x - halfW, pos.right))
-    pos.bottom = Math.min(window.innerHeight / s + offset.y - halfH, Math.max(offset.y - halfH, pos.bottom))
+    pos.right = Math.min(window.innerWidth / s - halfW, Math.max(-halfW, pos.right))
+    pos.bottom = Math.min(window.innerHeight / s - halfH, Math.max(-halfH, pos.bottom))
   }
 
   /** 把当前 pos 应用到宠物容器样式（不写盘；拖动/尺寸/窗口变化时调用）。 */
@@ -2046,11 +2046,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const viewportW = window.innerWidth || document.documentElement.clientWidth || 0
     const viewportH = window.innerHeight || document.documentElement.clientHeight || 0
     if (!(viewportW > 0 && viewportH > 0)) return
-    const offset = visualOffsetPx()
-    // 目标百分比按「视觉视口」量：UI 缩放 s 下，CSS px 的 right/bottom 要按 s 换算（ADR-059）
+    // 目标百分比按「视觉视口」量：UI 缩放 s 下，CSS px 的 right/bottom 要按 s 换算（ADR-060）
     const s = uiScale()
-    pos.right = viewportW * homeRightPct / 100 / s - w / 2 + offset.x
-    pos.bottom = viewportH * homeBottomPct / 100 / s - h / 2 + offset.y
+    pos.right = viewportW * homeRightPct / 100 / s - w / 2
+    pos.bottom = viewportH * homeBottomPct / 100 / s - h / 2
     clampPosToViewport()
   }
 
