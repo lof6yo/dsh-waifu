@@ -73,10 +73,8 @@ export interface PetSettings {
   homeRight: number
   /** 默认位置：显示区**中心点**距视口底部（视口高度百分比 0–100）。 */
   homeBottom: number
-  /** 气泡相对模型顶部中心的水平偏移（px，正值向右）。 */
+  /** 气泡相对模型顶部中心的水平偏移（px，正值向右）；纵向位置跟随交互条几何（ADR-057），不单独配置。 */
   bubbleOffsetX: number
-  /** 气泡相对模型顶部中心的垂直偏移（px，正值向上、负值向下；默认 10 = 模型上方 10px）。 */
-  bubbleOffsetY: number
   /** 气泡背景色（#rrggbb）。 */
   bubbleBgColor: string
   /** 气泡背景不透明度（0–100）。 */
@@ -154,7 +152,7 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 // 路径：$DSH_HOME/waifu/settings.jsonc
 // 建议通过设置页「Waifu 设置」修改；直接编辑保存后刷新页面生效。
 // 字段：enabled / size / maxFps / model / developerMode / debug / showTapZones / canvasPadX / canvasPadY /
-//        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
+//        homeRight / homeBottom / bubbleOffsetX / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
 //        aiEnabled / aiProvider / aiModel / aiHistoryCount / aiMemoryCount / triggerMode /
 //        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / tapGapMs / mergeMax / eventTriggers /
 //        barPosition / barOffset / barAutoHideSec /
@@ -163,13 +161,14 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 /**
  * 设置文件结构版本：
  * - 2 起 homeRight/homeBottom 语义 = 显示区中心点距右/距下（px）
- * - 3 起 homeRight/homeBottom 改为**视口宽/高的百分比**（0–100）；bubbleOffsetY 改为负值向下
+ * - 3 起 homeRight/homeBottom 改为**视口宽/高的百分比**（0–100）
  * - 4 起去掉基础表情与连续表情强度（`expression` / `expr*`），表情改为挂在事件/触摸部位上（ADR-023）
  * - 5 起默认语音模型换成音色可固定的 MAI-Voice 2.1 Flash（Drama 3 每句都换人声，ADR-033 修订）
  * - 6 起默认回到 Fish Audio Drama 3（MAI-Voice 只存活一个版本）
  * - 7 起语音目录只剩通义千问 TTS，目录外的旧模型（Drama 3 / MAI / Kokoro）统一回落到新默认
  * - 8 起 ADR-037 全 AI 驱动：删 aiTouchOnly、aiTakeover、interactionMode、thinkingAi 与 waitingAi 系列，
- *        加 aiMemoryCount/triggerMode/aiMinIntervalSec/idleTimeoutSec/activityWindowSec/eventTriggers
+ *        加 aiMemoryCount/triggerMode/aiMinIntervalSec/idleTimeoutSec/activityWindowSec/eventTriggers；
+ *        ADR-057 删 bubbleOffsetY（气泡纵向跟随交互条几何），旧文件里的该字段忽略
  */
 const SETTINGS_SCHEMA_VERSION = 8
 
@@ -254,11 +253,8 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
   // - v1（无 version）：home 语义是「画布右下角距右/距下」；
   // - v2：home 是 px 的「中心点距右/距下」；
   // 两种旧值都无法直接换算成 v3 的视口百分比（旧值依赖当时的窗口尺寸），一律回退 base 默认值。
-  // - bubbleOffsetY 在 v3 前是「负值向上」，与新版正好相反，值取反即可保持观感不变。
   const version = typeof record.version === 'number' ? record.version : 0
   const legacyHome = version < HOME_PERCENT_VERSION
-  const offsetYRaw = record.bubbleOffsetY
-  const offsetY = version < HOME_PERCENT_VERSION && typeof offsetYRaw === 'number' ? -offsetYRaw : offsetYRaw
   // v5 起默认语音模型换成「音色可固定」的 MAI-Voice：旧文件里若还是「随机音色模型 + 没选音色」
   // 就自动迁移过去，否则每句话的人声都不一样（ADR-033 修订）。
   const voiceFix = migrateTtsVoice(version, record.ttsModel, record.ttsVoice, base)
@@ -283,7 +279,6 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     homeRight: legacyHome ? base.homeRight : clampHome(record.homeRight, base.homeRight),
     homeBottom: legacyHome ? base.homeBottom : clampHome(record.homeBottom, base.homeBottom),
     bubbleOffsetX: clampOffset(record.bubbleOffsetX, base.bubbleOffsetX),
-    bubbleOffsetY: clampOffset(offsetY, base.bubbleOffsetY),
     bubbleBgColor: color(record.bubbleBgColor, base.bubbleBgColor),
     bubbleBgOpacity: opacity(record.bubbleBgOpacity, base.bubbleBgOpacity),
     bubbleTextColor: color(record.bubbleTextColor, base.bubbleTextColor),

@@ -58,7 +58,6 @@ import {
   DEFAULT_BUBBLE_MAX_SECONDS,
   DEFAULT_SETTINGS,
   DEFAULT_BUBBLE_OFFSET_X,
-  DEFAULT_BUBBLE_OFFSET_Y,
   DEFAULT_BUBBLE_TEXT_COLOR,
   DEFAULT_CANVAS_PAD_X,
   DEFAULT_CANVAS_PAD_Y,
@@ -706,9 +705,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (hoverState !== null) window.clearTimeout(hoverState.timer)
     hoverState = null
   }
-  // 气泡偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）
+  // 气泡水平偏移（相对模型包围盒顶部中心，px）与背景/文字样式（SSE config.bubble*；spec §3）。
+  // 纵向位置不再单独配置：跟随交互条几何（可见 = 条顶上方 10px；收起/不显示 = 条的底边槽位，ADR-057）。
   let bubbleOffsetX = DEFAULT_BUBBLE_OFFSET_X
-  let bubbleOffsetY = DEFAULT_BUBBLE_OFFSET_Y
+  /** 气泡底部与交互条顶端的间距（px，ADR-057）。 */
+  const BUBBLE_BAR_GAP = 10
   let bubbleBgColor = DEFAULT_BUBBLE_BG_COLOR
   let bubbleBgOpacity = DEFAULT_BUBBLE_BG_OPACITY
   let bubbleTextColor = DEFAULT_BUBBLE_TEXT_COLOR
@@ -832,11 +833,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /**
-   * 气泡定位（spec §3）：锚点跟着「当前模型最上方那条东西」走——
-   * - 交互条贴在模型上方且可见时，锚点 = 交互条顶端；
-   * - 交互条收起 / 不显示 / 贴在下方时，锚点 = 模型包围盒顶端。
-   * 气泡底部中点贴住 (bounds.x + width/2 + bubbleOffsetX, anchorTop - bubbleOffsetY)
-   *（画布逻辑 CSS px；bubbleOffsetY 正值向上、负值向下），transform: translate(-50%, -100%)
+   * 气泡定位（spec §3）：纵向不再单独配置，跟交互条几何绑定（ADR-057）——
+   * - 交互条贴在模型上方且可见：气泡底部距交互条顶端 BUBBLE_BAR_GAP(10) px；
+   * - 交互条自动收起 / `barPosition === 'hidden'`：气泡底部落到交互条原本的底边槽位，
+   *   而不是模型包围盒顶端（包围盒比视觉头顶高，气泡会悬空）；
+   * - 交互条贴在下方：气泡底部贴模型包围盒顶端。
+   * 水平：气泡底部中点贴住 (bounds.x + width/2 + bubbleOffsetX, 锚点 y)，transform: translate(-50%, -100%)
    * 由样式居中/贴底。调试面板可见时锚点上移到面板顶部再往上 6px；目标视口 y clamp 到 ≥8。
    */
   function updateBubblePosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
@@ -850,11 +852,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const bounds = boundsArg === undefined ? modelBounds() : boundsArg
     if (!bounds) return
     const anchorX = bounds.x + bounds.width / 2 + bubbleOffsetX
-    // 交互条贴在模型上方且当前可见时，气泡对齐交互条顶端；否则对齐模型顶端。
-    // 自动收起（ADR-053）时 barAutoHidden 为 true，锚点会自然落回模型顶端，气泡随之下移。
-    const barAbove = barPosition === 'top' && !barAutoHidden && barH > 0
-    const anchorTop = barAbove ? bounds.y - barH - 8 - barOffset : bounds.y
-    let anchorY = anchorTop - bubbleOffsetY
+    // 纵向：交互条可见时贴着条顶，收起/不显示时补到条原本的底边（ADR-057）。
+    let anchorY: number
+    if (barPosition === 'bottom') {
+      anchorY = bounds.y
+    } else if (barPosition === 'top' && !barAutoHidden && barH > 0) {
+      anchorY = bounds.y - barH - 8 - barOffset - BUBBLE_BAR_GAP
+    } else {
+      // bar 底边 = bounds.y - 8 - barOffset（与 barH 无关），气泡底部停在这里
+      anchorY = bounds.y - 8 - barOffset
+    }
     // 调试面板自动跟随且整体位于模型上方时，气泡叠到面板之上避让（spec §2）；
     // 手动摆放（拖过标题栏/四角）后不再影响气泡：面板停在哪，气泡都贴着模型，拖动标题栏不会带着气泡跑。
     if (!debugPanelManual && Number.isFinite(debugPanelTopLogical) && debugPanelBottomLogical <= bounds.y + 1) {
@@ -3403,7 +3410,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     applyPosToBox()
     // 气泡：偏移/背景/文字色随配置即时生效（不重建气泡，spec §3）
     bubbleOffsetX = Number.isFinite(cfg.bubbleOffsetX) ? cfg.bubbleOffsetX : DEFAULT_BUBBLE_OFFSET_X
-    bubbleOffsetY = Number.isFinite(cfg.bubbleOffsetY) ? cfg.bubbleOffsetY : DEFAULT_BUBBLE_OFFSET_Y
     bubbleBgColor = typeof cfg.bubbleBgColor === 'string' && cfg.bubbleBgColor.trim()
       ? cfg.bubbleBgColor
       : DEFAULT_BUBBLE_BG_COLOR
@@ -3903,7 +3909,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         canvasPadYPct = Number.isFinite(view.config.canvasPadY) ? view.config.canvasPadY : DEFAULT_CANVAS_PAD_Y
         // 气泡偏移/样式同样先取配置，创建气泡时即按配置渲染
         bubbleOffsetX = Number.isFinite(view.config.bubbleOffsetX) ? view.config.bubbleOffsetX : DEFAULT_BUBBLE_OFFSET_X
-        bubbleOffsetY = Number.isFinite(view.config.bubbleOffsetY) ? view.config.bubbleOffsetY : DEFAULT_BUBBLE_OFFSET_Y
         bubbleBgColor = typeof view.config.bubbleBgColor === 'string' && view.config.bubbleBgColor.trim()
           ? view.config.bubbleBgColor
           : DEFAULT_BUBBLE_BG_COLOR

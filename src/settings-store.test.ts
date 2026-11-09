@@ -18,7 +18,6 @@ const BASE: PetSettings = {
   homeRight: 16,
   homeBottom: 24,
   bubbleOffsetX: 0,
-  bubbleOffsetY: 10,
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',
@@ -80,18 +79,17 @@ describe('normalizeSettings', () => {
     expect(v.debug).toBe(true)
   })
 
-  it('气泡颜色/透明度/偏移的非法值回退 base，合法值收敛', () => {
+  it('气泡颜色/透明度/水平偏移的非法值回退 base，合法值收敛', () => {
     const v = normalizeSettings({
       bubbleBgColor: '#FFAA00',
       bubbleTextColor: 'red',
       bubbleBgOpacity: 150,
-      bubbleOffsetY: -99999,
+      bubbleOffsetX: -99999,
     }, BASE)
     expect(v.bubbleBgColor).toBe('#ffaa00')
     expect(v.bubbleTextColor).toBe('#222222')
     expect(v.bubbleBgOpacity).toBe(100)
-    // 无 version 字段按旧语义处理：垂直偏移取反后再 clamp 到 -1000–1000
-    expect(v.bubbleOffsetY).toBe(1000)
+    expect(v.bubbleOffsetX).toBe(-1000)
   })
 
   it('size 低于下限夹到 40，maxFps 0 允许（不限制）', () => {
@@ -119,11 +117,10 @@ describe('表情字段迁移（v4）', () => {
     expect(value).toEqual({ ...BASE })
   })
 
-  it('v3 文件的 home 百分比与气泡偏移不再被当成旧版语义', () => {
-    const value = normalizeSettings({ version: 3, homeRight: 42, homeBottom: 30, bubbleOffsetY: 10 }, BASE)
+  it('v3 文件的 home 百分比不再被当成旧版语义', () => {
+    const value = normalizeSettings({ version: 3, homeRight: 42, homeBottom: 30 }, BASE)
     expect(value.homeRight).toBe(42)
     expect(value.homeBottom).toBe(30)
-    expect(value.bubbleOffsetY).toBe(10)
   })
 })
 
@@ -334,7 +331,7 @@ describe('SettingsStore', () => {
     expect(store.view().value.homeRight).toBe(100)
   })
 
-  it('v2 设置迁移到 v3：home 回退默认百分比，气泡垂直偏移取反以保持观感', () => {
+  it('v2 设置迁移到 v3：home 回退默认百分比，已删除的气泡垂直偏移字段被忽略', () => {
     const store = new SettingsStore(BASE)
     const raw = {
       version: 2,
@@ -343,14 +340,12 @@ describe('SettingsStore', () => {
       maxFps: 30,
       homeRight: 300,
       homeBottom: 260,
-      bubbleOffsetY: -10,
       bubbleBgColor: '#ffffff',
     }
     writeFileSync(store.path, JSON.stringify(raw), 'utf8')
     const view = store.view()
     expect(view.value.homeRight).toBe(BASE.homeRight)
     expect(view.value.homeBottom).toBe(BASE.homeBottom)
-    expect(view.value.bubbleOffsetY).toBe(10)
     expect(view.value.size).toBe(200)
   })
 

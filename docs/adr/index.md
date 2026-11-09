@@ -59,4 +59,5 @@
 | 053 | [交互条无操作后自动隐藏](./053-bar-auto-hide.md) | 已采纳 |
 | 054 | [眨眼：一次性表情用动作实现](./054-wink-one-shot-expression.md) | 已采纳 |
 | 055 | [调试面板折叠、按视口给足尺寸、控制台自适应高度](./055-debug-panel-collapse.md) | 已采纳 |
-| 056 | [对白气泡锚点跟随模型 / 交互条顶端](./056-bubble-anchor.md) | 已采纳 |
+| 056 | [对白气泡锚点跟随模型 / 交互条顶端](./056-bubble-anchor.md) | 已废弃 |
+| 057 | [对白气泡纵向位置并入交互条几何](./057-bubble-vertical-follows-bar.md) | 已采纳 |

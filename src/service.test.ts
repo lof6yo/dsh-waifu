@@ -21,7 +21,6 @@ const BASE_SETTINGS: PetSettings = {
   homeRight: 24,
   homeBottom: 20,
   bubbleOffsetX: 0,
-  bubbleOffsetY: -10,
   bubbleBgColor: '#ffffff',
   bubbleBgOpacity: 92,
   bubbleTextColor: '#222222',

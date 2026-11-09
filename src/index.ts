@@ -45,7 +45,6 @@ import {
   DEFAULT_BUBBLE_BG_OPACITY,
   DEFAULT_BUBBLE_MAX_SECONDS,
   DEFAULT_BUBBLE_OFFSET_X,
-  DEFAULT_BUBBLE_OFFSET_Y,
   DEFAULT_BUBBLE_TEXT_COLOR,
   DEFAULT_CANVAS_PAD_X,
   DEFAULT_CANVAS_PAD_Y,
@@ -156,7 +155,6 @@ export const Config: Schema<Config> = Schema.object({
   homeRight: Schema.number().min(0).max(100).default(DEFAULT_HOME_RIGHT),
   homeBottom: Schema.number().min(0).max(100).default(DEFAULT_HOME_BOTTOM),
   bubbleOffsetX: Schema.number().min(-1000).max(1000).default(DEFAULT_BUBBLE_OFFSET_X),
-  bubbleOffsetY: Schema.number().min(-1000).max(1000).default(DEFAULT_BUBBLE_OFFSET_Y),
   bubbleBgColor: Schema.string().default(DEFAULT_BUBBLE_BG_COLOR),
   bubbleBgOpacity: Schema.number().min(0).max(100).default(DEFAULT_BUBBLE_BG_OPACITY),
   /** 气泡最长连续可见秒数（0 = 不限）；默认 10。 */
@@ -229,7 +227,6 @@ export function apply(ctx: Context, config: Config): void {
     homeRight: config.homeRight,
     homeBottom: config.homeBottom,
     bubbleOffsetX: config.bubbleOffsetX,
-    bubbleOffsetY: config.bubbleOffsetY,
     bubbleBgColor: config.bubbleBgColor,
     bubbleBgOpacity: config.bubbleBgOpacity,
     bubbleMaxSeconds: config.bubbleMaxSeconds,

@@ -72,9 +72,8 @@ export interface PetStateView {
     canvasPadX: number
     /** 画布垂直留白（每侧，size 百分比）。 */
     canvasPadY: number
-    /** 气泡位置/样式（相对模型顶部中心偏移 + 背景/文字样式；spec §2/§4）。 */
+    /** 气泡样式与水平位置（纵向跟随交互条几何；spec §2/§4）。 */
     bubbleOffsetX: number
-    bubbleOffsetY: number
     bubbleBgColor: string
     bubbleBgOpacity: number
     /** 气泡最长连续可见秒数（0 = 不限）。 */
@@ -332,7 +331,6 @@ export class PetService {
         canvasPadX: settings.canvasPadX,
         canvasPadY: settings.canvasPadY,
         bubbleOffsetX: settings.bubbleOffsetX,
-        bubbleOffsetY: settings.bubbleOffsetY,
         bubbleBgColor: settings.bubbleBgColor,
         bubbleBgOpacity: settings.bubbleBgOpacity,
         bubbleMaxSeconds: settings.bubbleMaxSeconds,

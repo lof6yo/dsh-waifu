@@ -85,10 +85,8 @@ export interface PetSettingsValue {
   homeRight: number
   /** 默认位置：显示区中心点距下边（视口高度百分比 0–100）。 */
   homeBottom: number
-  /** 气泡相对角色顶部中心的水平偏移（px，-1000–1000）。 */
+  /** 气泡相对角色顶部中心的水平偏移（px，-1000–1000）；纵向位置跟随交互条几何（ADR-057）。 */
   bubbleOffsetX: number
-  /** 气泡相对角色顶部中心的垂直偏移（px，-1000–1000，负值向上）。 */
-  bubbleOffsetY: number
   /** 气泡背景色（#rrggbb）。 */
   bubbleBgColor: string
   /** 气泡背景不透明度（0–100）。 */
@@ -1832,7 +1830,6 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
   const homeRight = normalizeHomePosition(state.value?.homeRight, DEFAULT_VALUE.homeRight)
   const homeBottom = normalizeHomePosition(state.value?.homeBottom, DEFAULT_VALUE.homeBottom)
   const bubbleOffsetX = normalizeBubbleOffset(state.value?.bubbleOffsetX, DEFAULT_VALUE.bubbleOffsetX)
-  const bubbleOffsetY = normalizeBubbleOffset(state.value?.bubbleOffsetY, DEFAULT_VALUE.bubbleOffsetY)
   const bubbleBgColor = normalizeHexColor(state.value?.bubbleBgColor, '#ffffff')
   const bubbleBgOpacity = normalizeBubbleOpacity(state.value?.bubbleBgOpacity, 92)
   const bubbleTextColor = normalizeHexColor(state.value?.bubbleTextColor, '#222222')
@@ -2099,23 +2096,8 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      createElement('div', { style: formRowInlineStyle },
-        createElement('span', { style: formLabelInlineStyle }, '垂直偏移（px）'),
-        createElement('div', { style: formControlInlineStyle },
-          createElement('input', {
-            type: 'number',
-            min: -1000,
-            max: 1000,
-            step: OFFSET_STEP,
-            value: bubbleOffsetY,
-            disabled: !writable,
-            style: numberInputStyle,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => {
-              const next = normalizeBubbleOffset(e.target.value, 0)
-              enqueueWrite(() => [{ op: 'set', path: ['bubbleOffsetY'], value: next }])
-            },
-          }),
-        ),
+      createElement('div', { style: hintStyle },
+        '纵向位置跟随交互条：显示时气泡底边在交互条上方 10px，收起时补到交互条原来的位置；不再单独配置',
       ),
       createElement('div', { style: formRowInlineStyle },
         createElement('span', { style: formLabelInlineStyle }, '背景不透明度'),

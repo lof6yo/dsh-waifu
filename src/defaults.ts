@@ -22,7 +22,6 @@ export const DEFAULT_CANVAS_PAD_Y = 50
 export const DEFAULT_HOME_RIGHT = 10
 export const DEFAULT_HOME_BOTTOM = 0
 export const DEFAULT_BUBBLE_OFFSET_X = 0
-export const DEFAULT_BUBBLE_OFFSET_Y = 24
 export const DEFAULT_BUBBLE_BG_COLOR = '#ffffff'
 export const DEFAULT_BUBBLE_BG_OPACITY = 92
 export const DEFAULT_BUBBLE_TEXT_COLOR = '#222222'
@@ -357,7 +356,6 @@ export const DEFAULT_SETTINGS = {
   homeRight: DEFAULT_HOME_RIGHT,
   homeBottom: DEFAULT_HOME_BOTTOM,
   bubbleOffsetX: DEFAULT_BUBBLE_OFFSET_X,
-  bubbleOffsetY: DEFAULT_BUBBLE_OFFSET_Y,
   bubbleBgColor: DEFAULT_BUBBLE_BG_COLOR,
   bubbleBgOpacity: DEFAULT_BUBBLE_BG_OPACITY,
   bubbleMaxSeconds: DEFAULT_BUBBLE_MAX_SECONDS,
