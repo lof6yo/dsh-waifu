@@ -69,6 +69,8 @@ import {
   DEFAULT_BAR_OFFSET,
   DEFAULT_BAR_POSITION,
   BAR_OFFSET_LIMITS,
+  DEFAULT_BAR_AUTO_HIDE_SEC,
+  normalizeBarAutoHideSec,
   normalizeBarPosition,
   type BarPosition,
   DEFAULT_TRIGGER_MODE,
@@ -672,6 +674,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let barW = 0
   let barH = 0
   let barKey = ''
+  /** 交互条无操作自动隐藏（秒，0 = 不自动隐藏；SSE config.barAutoHideSec）。 */
+  let barAutoHideSec: number = DEFAULT_BAR_AUTO_HIDE_SEC
+  /** 交互条当前是否已被「自动隐藏」收起（区别于 barPosition='hidden' 的永久不显示）。 */
+  let barAutoHidden = false
+  /** 指针此刻是否停在模型或交互条上（离开的那一瞬才开始计无操作时间）。 */
+  let barPointerOver = false
+  /** 计划收起交互条的时间戳（ms，0 = 不计划）：每次「有操作」顺延，到点按剩余时间重排。 */
+  let barHideAt = 0
+  /** 自动隐藏计时器（全程单个 setTimeout；触发时若指针还在宠物上就等离开再排）。 */
+  let barHideTimer: number | undefined
   /** AI 回复请求序号：只采用最后一次请求的结果，避免连点时旧回复覆盖新回复。 */
   let aiRequestSeq = 0
   /** 部位定义了双击交互时，单击要等一个双击窗口再结算（ADR-038）。 */
@@ -927,14 +939,24 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     input.addEventListener('keydown', (event) => {
       // 输入框里的按键不和页面快捷键抢：整段冒泡都拦下来
       event.stopPropagation()
+      noteBarActivity()
       if (event.key !== 'Enter' || event.isComposing) return
       event.preventDefault()
       void sendChat()
     })
     // 拖拽/点击判定只认命中层，交互条上的指针事件不要穿到宠物逻辑
-    bar.addEventListener('pointerdown', (event) => event.stopPropagation())
+    bar.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+      noteBarActivity()
+    })
     // 输入为空时提交按钮置灰（但仍可点击：留给「点一下聚焦」的机会）
-    input.addEventListener('input', syncSendState)
+    input.addEventListener('input', () => {
+      syncSendState()
+      noteBarActivity()
+    })
+    // 光标在输入框里、或刚点进来：都算「有操作」，别把交互条收走
+    input.addEventListener('focus', () => noteBarActivity())
+    input.addEventListener('blur', () => restartBarHideClock())
     bar.append(mute, input, send)
     petLayer.appendChild(bar)
     barEl = bar
@@ -949,6 +971,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       bar.style.opacity = '1'
     })
     syncOverlayLoop()
+    // 首次出现先亮着，从这一刻开始计无操作时间（ADR-053）。
+    restartBarHideClock()
   }
 
   /** 按当前语音/AI 开关刷新交互条外观（静音图标、禁用态）。 */
@@ -1049,6 +1073,125 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       : bounds.y + bounds.height + 8 + barOffset
     barEl.style.left = `${Math.round(left)}px`
     barEl.style.top = `${Math.round(top)}px`
+  }
+
+  // ── 交互条自动隐藏（ADR-053）────────────────────────────────────────────
+  // 「有操作」= 指针停在模型包围盒或交互条上、或正在输入框里打字；无操作 barAutoHideSec 秒后
+  // 淡出并让出点击（opacity 0 + pointer-events none + inert）。计时只用单个 setTimeout：
+  // 指针移动只顺延绝对截止时间，到点再按剩余时间重排——不轮询、不堆多个计时器。
+
+  /** 指针是否落在交互条自身矩形内（读缓存的 left/top 与尺寸，不触发重新布局）。 */
+  function pointerInBar(clientX: number, clientY: number): boolean {
+    if (!barEl || barAutoHidden || barPosition === 'hidden' || barW <= 0 || barH <= 0) return false
+    const rect = layerRect()
+    if (!rect) return false
+    const left = Number.parseFloat(barEl.style.left)
+    const top = Number.parseFloat(barEl.style.top)
+    if (!Number.isFinite(left) || !Number.isFinite(top)) return false
+    const x = rect.left + left
+    const y = rect.top + top
+    return clientX >= x && clientX <= x + barW && clientY >= y && clientY <= y + barH
+  }
+
+  /** 指针是否落在模型包围盒内（视口坐标；canvas rect 与包围盒都走缓存）。 */
+  function pointerInModel(clientX: number, clientY: number): boolean {
+    if (!canvas || !model) return false
+    const bounds = modelBounds()
+    if (!bounds) return false
+    if (!canvasRectCache) {
+      try { canvasRectCache = canvas.getBoundingClientRect() } catch { return false }
+    }
+    return pointToBoundsRatio(clientX - canvasRectCache.left, clientY - canvasRectCache.top, bounds) !== null
+  }
+
+  /** 指针是否算「在宠物身上」（模型或交互条）。 */
+  function pointerOnPet(clientX: number, clientY: number): boolean {
+    return pointerInModel(clientX, clientY) || pointerInBar(clientX, clientY)
+  }
+
+  /** 收起/显示交互条本体（只切可见性，不重建 DOM；barPosition='hidden' 的永久隐藏另管）。 */
+  function setBarAutoHidden(hidden: boolean): void {
+    if (!barEl || barAutoHidden === hidden) return
+    barAutoHidden = hidden
+    barKey = '' // 下一帧重算位置/尺寸，避免沿用收起前的几何
+    if (hidden) {
+      barEl.style.opacity = '0'
+      barEl.style.pointerEvents = 'none'
+      barEl.setAttribute('inert', '')
+      return
+    }
+    barEl.style.opacity = '1'
+    barEl.style.pointerEvents = 'auto'
+    barEl.removeAttribute('inert')
+  }
+
+  /** 清掉计时器（不动截止时间与可见状态）。 */
+  function clearBarHideTimer(): void {
+    if (barHideTimer !== undefined) {
+      window.clearTimeout(barHideTimer)
+      barHideTimer = undefined
+    }
+  }
+
+  /** 到点时指针仍停在宠物上、或正在输入框里打字，就不算「没操作」——等离开/失焦再排。 */
+  function barHoverHeld(): boolean {
+    if (barInputEl !== null && document.activeElement === barInputEl) return true
+    const pointer = lastPointerClient
+    return pointer !== null && pointerOnPet(pointer.x, pointer.y)
+  }
+
+  /** 按 barHideAt 排唯一计时器；到点时若截止时间被顺延，就按剩余时间重排。 */
+  function armBarHideTimer(): void {
+    clearBarHideTimer()
+    if (barHideAt === 0) return
+    barHideTimer = window.setTimeout(() => {
+      barHideTimer = undefined
+      if (barHideAt === 0) return
+      const remain = barHideAt - Date.now()
+      if (remain > 0) { armBarHideTimer(); return }
+      if (barHoverHeld()) { barHideAt = 0; return }
+      barHideAt = 0
+      setBarAutoHidden(true)
+    }, Math.max(0, barHideAt - Date.now()))
+  }
+
+  /** 从「现在」重新计无操作时间（0 = 常显；交互条不可见/已在收起态时不计时）。 */
+  function restartBarHideClock(): void {
+    if (barAutoHideSec <= 0 || !barEl || barPosition === 'hidden' || barAutoHidden) {
+      barHideAt = 0
+      clearBarHideTimer()
+      return
+    }
+    barHideAt = Date.now() + barAutoHideSec * 1000
+    if (barHideTimer === undefined) armBarHideTimer()
+  }
+
+  /** 交互条「有操作」：被自动收起时先显示，再把自动隐藏的截止时间顺延。 */
+  function noteBarActivity(): void {
+    if (!barEl || barPosition === 'hidden') return
+    if (barAutoHidden) setBarAutoHidden(false)
+    if (barAutoHideSec <= 0) {
+      barHideAt = 0
+      clearBarHideTimer()
+      return
+    }
+    barHideAt = Date.now() + barAutoHideSec * 1000
+    if (barHideTimer === undefined) armBarHideTimer()
+  }
+
+  /** 全局指针移动：只在「进入模型/交互条」与「离开」两个边界改计时，移动过程不重排 timer。 */
+  function syncBarHover(clientX: number, clientY: number): void {
+    if (pointerOnPet(clientX, clientY)) {
+      if (!barPointerOver) {
+        barPointerOver = true
+        noteBarActivity()
+      }
+      return
+    }
+    if (barPointerOver) {
+      barPointerOver = false
+      restartBarHideClock()
+    }
   }
 
   /** 显示常驻气泡文案：取消瞬态隐藏计时，气泡保持可见直到被取代。 */
@@ -3154,10 +3297,23 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     idleMotionEnabled = cfg.idleMotionEnabled !== false
     scheduleIdleMicro()
     ttsEnabled = cfg.ttsEnabled !== false
+    const prevBarPosition = barPosition
+    const prevBarAutoHideSec = barAutoHideSec
     barPosition = normalizeBarPosition(cfg.barPosition, DEFAULT_BAR_POSITION)
     barOffset = Number.isFinite(cfg.barOffset)
       ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, cfg.barOffset)))
       : DEFAULT_BAR_OFFSET
+    barAutoHideSec = normalizeBarAutoHideSec(cfg.barAutoHideSec, DEFAULT_BAR_AUTO_HIDE_SEC)
+    if (barPosition === 'hidden') {
+      // 永久不显示档：自动隐藏的计时与收起态都清掉（显示/隐藏由 updateBarPosition 负责）
+      barAutoHidden = false
+      barHideAt = 0
+      clearBarHideTimer()
+    } else if (prevBarPosition !== barPosition || prevBarAutoHideSec !== barAutoHideSec) {
+      // 设置页刚改过位置/隐藏时长：先把交互条显示出来，再按新设置重新计时（ADR-053）
+      setBarAutoHidden(false)
+      restartBarHideClock()
+    }
     if (barEl) {
       barKey = ''
       syncBarVisual()
@@ -3179,6 +3335,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   function handlePointerDown(e: PointerEvent): void {
     clearHover()
+    // 点到模型也算「有操作」：交互条若被自动收起会先回来，截止时间顺延（ADR-053）
+    noteBarActivity()
     down = { x: e.clientX, y: e.clientY, startRight: pos.right, startBottom: pos.bottom }
     dragging = false
     tapDownAt = Date.now()
@@ -3223,6 +3381,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   // ---- 鼠标跟随（spec §4）：全局 pointermove，头/眼/身体看向鼠标 ----
   function handleGlobalPointerMove(e: PointerEvent): void {
     lastPointerClient = { x: e.clientX, y: e.clientY }
+    // 交互条自动隐藏（ADR-053）：进入/离开模型或交互条时切换计时，不影响鼠标跟随
+    syncBarHover(e.clientX, e.clientY)
     // 非 idle 动作播放期间抑制 focus，避免动作关键帧被鼠标跟随叠加（spec §4）
     if (!model || !canvas || dragging || !petShown() || hidden || !windowFocused || focusSuppressed) return
     applyFocus(e.clientX, e.clientY)
@@ -3231,6 +3391,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     // 仅当真正离开页面/窗口时复位；元素间移动会冒泡 mouseout，需排除 relatedTarget 非空
     if (e.relatedTarget) return
     lastPointerClient = null
+    // 指针离开窗口 = 开始计无操作时间（ADR-053）
+    barPointerOver = false
+    restartBarHideClock()
     focusInRange = true
     if (!model || dragging || !petShown() || hidden) return
     // 非 idle 动作期间 focus 已被归零并抑制，不需要额外复位
@@ -3615,6 +3778,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         barOffset = Number.isFinite(view.config.barOffset)
           ? Math.round(Math.min(BAR_OFFSET_LIMITS.max, Math.max(BAR_OFFSET_LIMITS.min, view.config.barOffset)))
           : DEFAULT_BAR_OFFSET
+        barAutoHideSec = normalizeBarAutoHideSec(view.config.barAutoHideSec, DEFAULT_BAR_AUTO_HIDE_SEC)
         lipsyncEnabled = view.config.lipsyncEnabled !== false
         bodyLanguageEnabled = view.config.lipsyncEnabled !== false
         lipsyncGain = Number.isFinite(view.config.lipsyncGain)
@@ -3636,10 +3800,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       document.body.appendChild(box)
       if (popoverSupported) { try { box.showPopover() } catch { /* 已显示 */ } }
       pushCleanup(() => {
+        clearBarHideTimer()
+        barHideAt = 0
+        barPointerOver = false
+        barAutoHidden = false
         barEl?.parentNode?.removeChild(barEl)
         barEl = null
         barMuteEl = null
         barInputEl = null
+        barSendEl = null
       })
       pushCleanup(() => { box?.parentNode?.removeChild(box) })
       clientLog('info', `container created (popover=${String(popoverSupported)})`)

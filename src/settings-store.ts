@@ -19,6 +19,7 @@ import {
   AI_HISTORY_LIMITS,
   AI_MEMORY_LIMITS,
   AI_MIN_INTERVAL_LIMITS,
+  BAR_AUTO_HIDE_LIMITS,
   BAR_OFFSET_LIMITS,
   IDLE_TIMEOUT_LIMITS,
   MERGE_MAX_LIMITS,
@@ -124,6 +125,8 @@ export interface PetSettings {
   barPosition: BarPosition
   /** 交互条额外偏移（px，正数远离模型）。 */
   barOffset: number
+  /** 交互条无操作自动隐藏（秒；0 = 不自动隐藏）。 */
+  barAutoHideSec: number
 
   /** 语音合成开关（ADR-033）。 */
   ttsEnabled: boolean
@@ -154,6 +157,7 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 //        homeRight / homeBottom / bubbleOffsetX / bubbleOffsetY / bubbleBgColor / bubbleBgOpacity / bubbleTextColor /
 //        aiEnabled / aiProvider / aiModel / aiHistoryCount / aiMemoryCount / triggerMode /
 //        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / tapGapMs / mergeMax / eventTriggers /
+//        barPosition / barOffset / barAutoHideSec /
 //        ttsEnabled / ttsModel / ttsVoice / lipsyncEnabled / lipsyncGain`
 
 /**
@@ -304,6 +308,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     expressionEnabled,
     barPosition: normalizeBarPosition(record.barPosition, base.barPosition),
     barOffset: clampInt(record.barOffset, base.barOffset, BAR_OFFSET_LIMITS.min, BAR_OFFSET_LIMITS.max),
+    barAutoHideSec: clampInt(record.barAutoHideSec, base.barAutoHideSec, BAR_AUTO_HIDE_LIMITS.min, BAR_AUTO_HIDE_LIMITS.max),
     ttsEnabled: bool('ttsEnabled'),
     ttsModel: voiceFix.model,
     // 音色允许空串（空 = 模型默认音色），所以不走 pickString

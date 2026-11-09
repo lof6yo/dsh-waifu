@@ -5,11 +5,14 @@
 import { describe, expect, it } from 'vitest'
 import { Config } from './index.ts'
 import {
+  BAR_AUTO_HIDE_LIMITS,
+  DEFAULT_BAR_AUTO_HIDE_SEC,
   DEFAULT_SETTINGS,
   DEFAULT_TTS_MODEL,
   DEFAULT_TTS_VOICE,
   TRIGGER_EVENTS,
   TTS_MODELS,
+  normalizeBarAutoHideSec,
   ttsDefaultVoice,
   ttsModelRandomVoice,
 } from './defaults.ts'
@@ -54,6 +57,18 @@ describe('默认值一致性', () => {
     expect(DEFAULT_SETTINGS.homeRight).toBeLessThanOrEqual(100)
     expect(DEFAULT_SETTINGS.homeBottom).toBeGreaterThanOrEqual(0)
     expect(DEFAULT_SETTINGS.homeBottom).toBeLessThanOrEqual(100)
+  })
+})
+
+describe('交互条自动隐藏（ADR-053）', () => {
+  it('默认 10 秒；非法值回退默认，越界夹取', () => {
+    expect(DEFAULT_SETTINGS.barAutoHideSec).toBe(DEFAULT_BAR_AUTO_HIDE_SEC)
+    expect(DEFAULT_BAR_AUTO_HIDE_SEC).toBe(10)
+    expect(normalizeBarAutoHideSec(30, DEFAULT_BAR_AUTO_HIDE_SEC)).toBe(30)
+    expect(normalizeBarAutoHideSec(0, DEFAULT_BAR_AUTO_HIDE_SEC)).toBe(0)
+    expect(normalizeBarAutoHideSec('nope', DEFAULT_BAR_AUTO_HIDE_SEC)).toBe(DEFAULT_BAR_AUTO_HIDE_SEC)
+    expect(normalizeBarAutoHideSec(-5, DEFAULT_BAR_AUTO_HIDE_SEC)).toBe(BAR_AUTO_HIDE_LIMITS.min)
+    expect(normalizeBarAutoHideSec(99999, DEFAULT_BAR_AUTO_HIDE_SEC)).toBe(BAR_AUTO_HIDE_LIMITS.max)
   })
 })
 

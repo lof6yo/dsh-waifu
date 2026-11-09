@@ -30,6 +30,7 @@ const BASE_SETTINGS: PetSettings = {
   idleMotionEnabled: true,
   barPosition: 'bottom',
   barOffset: 0,
+  barAutoHideSec: 10,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,

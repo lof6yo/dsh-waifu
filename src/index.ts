@@ -37,6 +37,8 @@ import {
   TAP_GAP_LIMITS,
   DEFAULT_TRIGGER_MODE,
   BAR_OFFSET_LIMITS,
+  BAR_AUTO_HIDE_LIMITS,
+  DEFAULT_BAR_AUTO_HIDE_SEC,
   DEFAULT_BAR_OFFSET,
   DEFAULT_BAR_POSITION,
   DEFAULT_BUBBLE_BG_COLOR,
@@ -193,6 +195,8 @@ export const Config: Schema<Config> = Schema.object({
   ]).default(DEFAULT_BAR_POSITION),
   /** 交互条沿吸附边的额外偏移（px，正数远离模型）。 */
   barOffset: Schema.number().min(BAR_OFFSET_LIMITS.min).max(BAR_OFFSET_LIMITS.max).default(DEFAULT_BAR_OFFSET),
+  /** 交互条无操作自动隐藏（秒，0 = 不自动隐藏）：到点收起，鼠标移到模型上重新出现。 */
+  barAutoHideSec: Schema.number().min(BAR_AUTO_HIDE_LIMITS.min).max(BAR_AUTO_HIDE_LIMITS.max).default(DEFAULT_BAR_AUTO_HIDE_SEC),
   // 语音合成与口型（ADR-033）：模型/音色留成设置项，换供应商只加引擎实现
   ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
   ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
@@ -250,6 +254,7 @@ export function apply(ctx: Context, config: Config): void {
     expressionEnabled: { ...DEFAULT_SETTINGS.expressionEnabled },
     barPosition: config.barPosition,
     barOffset: config.barOffset,
+    barAutoHideSec: config.barAutoHideSec,
     ttsEnabled: config.ttsEnabled,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,

@@ -332,6 +332,15 @@ export function normalizeBarPosition(value: unknown, fallback: BarPosition): Bar
   return BAR_POSITIONS.includes(value as BarPosition) ? (value as BarPosition) : fallback
 }
 
+/** 交互条「无操作自动隐藏」的边界（秒；0 = 不自动隐藏）。 */
+export const DEFAULT_BAR_AUTO_HIDE_SEC = 10
+export const BAR_AUTO_HIDE_LIMITS = { min: 0, max: 3600 } as const
+
+/** 归一化交互条自动隐藏秒数：0–3600 的整数，非法值回退默认（0 = 常显）。 */
+export function normalizeBarAutoHideSec(value: unknown, fallback: number): number {
+  return clampInt(value, fallback, BAR_AUTO_HIDE_LIMITS.min, BAR_AUTO_HIDE_LIMITS.max)
+}
+
 /**
  * 标量设置默认值（除 `model`：模型 id 由内置 preset 目录动态决定）。
  * 与 `Config` schema 的 `.default()`、设置页 `DEFAULT_VALUE` 保持逐项一致。
@@ -388,6 +397,8 @@ export const DEFAULT_SETTINGS = {
   /** 交互条：模型上下的静音按钮 + 对话输入框。 */
   barPosition: DEFAULT_BAR_POSITION,
   barOffset: DEFAULT_BAR_OFFSET,
+  /** 交互条无操作自动隐藏（秒；0 = 不自动隐藏，鼠标移到模型上重新出现）。 */
+  barAutoHideSec: DEFAULT_BAR_AUTO_HIDE_SEC,
   ttsEnabled: DEFAULT_TTS_ENABLED,
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: DEFAULT_TTS_VOICE,

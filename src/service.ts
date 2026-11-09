@@ -87,6 +87,8 @@ export interface PetStateView {
     barPosition: string
     /** 交互条额外偏移（px，正数远离模型）。 */
     barOffset: number
+    /** 交互条无操作自动隐藏（秒；0 = 不自动隐藏）。 */
+    barAutoHideSec: number
     /** AI 用的 provider 路由与模型 id（快照透传给宠物半边）。 */
     aiProvider: string
     aiModel: string
@@ -339,6 +341,7 @@ export class PetService {
         idleMotionEnabled: settings.idleMotionEnabled,
         barPosition: settings.barPosition,
         barOffset: settings.barOffset,
+        barAutoHideSec: settings.barAutoHideSec,
         aiProvider: settings.aiProvider,
         aiModel: settings.aiModel,
         aiHistoryCount: settings.aiHistoryCount,

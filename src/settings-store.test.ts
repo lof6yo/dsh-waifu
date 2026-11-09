@@ -27,6 +27,7 @@ const BASE: PetSettings = {
   idleMotionEnabled: true,
   barPosition: 'bottom',
   barOffset: 0,
+  barAutoHideSec: 10,
   aiProvider: 'deepseek-official',
   aiModel: 'deepseek-flash',
   aiHistoryCount: 10,
@@ -191,6 +192,21 @@ describe('SettingsStore', () => {
     expect(store.get().barOffset).toBe(-200)
     store.applyOps([{ op: 'set', path: ['barOffset'], value: 'nope' }])
     expect(store.get().barOffset).toBe(0)
+  })
+
+  it('barAutoHideSec 默认 10、可写、越界夹取（交互条自动隐藏，ADR-053）', () => {
+    const store = new SettingsStore(BASE)
+    expect(store.get().barAutoHideSec).toBe(10)
+    store.applyOps([{ op: 'set', path: ['barAutoHideSec'], value: 3 }])
+    expect(store.get().barAutoHideSec).toBe(3)
+    store.applyOps([{ op: 'set', path: ['barAutoHideSec'], value: 0 }])
+    expect(store.get().barAutoHideSec).toBe(0)
+    store.applyOps([{ op: 'set', path: ['barAutoHideSec'], value: 99999 }])
+    expect(store.get().barAutoHideSec).toBe(3600)
+    store.applyOps([{ op: 'set', path: ['barAutoHideSec'], value: -5 }])
+    expect(store.get().barAutoHideSec).toBe(0)
+    store.applyOps([{ op: 'set', path: ['barAutoHideSec'], value: 'nope' }])
+    expect(store.get().barAutoHideSec).toBe(10)
   })
 
   it('eventTexts 二层路径可写单个事件文案，空串删除覆写（ADR-039）', () => {

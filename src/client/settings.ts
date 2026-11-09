@@ -33,6 +33,7 @@ import {
   AI_HISTORY_LIMITS,
   AI_MEMORY_LIMITS,
   AI_MIN_INTERVAL_LIMITS,
+  BAR_AUTO_HIDE_LIMITS,
   BAR_OFFSET_LIMITS,
   CATALOG_TEXT_MAX,
   DEFAULT_AI_HISTORY,
@@ -115,6 +116,8 @@ export interface PetSettingsValue {
   barPosition: BarPosition
   /** 交互条额外偏移（px，正数远离模型）。 */
   barOffset: number
+  /** 交互条无操作自动隐藏（秒；0 = 不自动隐藏）。 */
+  barAutoHideSec: number
   /** 注入到 prompt 的最近对话轮数（0 = 不注入，ADR-030）。 */
   aiHistoryCount: number
   /** 注入到 prompt 的最近记忆条数（0 = 不注入，ADR-037）。 */
@@ -2703,6 +2706,19 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
+      createElement(NumberRow, {
+        title: '交互条自动隐藏（秒）',
+        hint: '无操作多久后收起交互条，鼠标移到模型上重新出现（0 = 一直显示）',
+        limits: BAR_AUTO_HIDE_LIMITS,
+        value: value.barAutoHideSec,
+        draft: numDrafts.barAutoHideSec,
+        writable,
+        onDraft: (raw: string) => setNumDraft('barAutoHideSec', raw),
+        onCommit: (next: number) => {
+          if (next !== value.barAutoHideSec) commitNumDraft('barAutoHideSec', () => [{ op: 'set', path: ['barAutoHideSec'], value: next }])
+          else commitNumDraft('barAutoHideSec', () => [])
+        },
+      }),
       // 触发场景：默认只列开关，展开才显示「怎么描述给模型」的输入框与 prompt 预览
       createElement('div', { style: formRowStartStyle },
         createElement(FormLabel, {
