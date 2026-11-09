@@ -2612,12 +2612,35 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /** 面板当前几何（视口 px）：手动模式取记录值，自动模式量一次 rect（拖动起始时无缝接管）。 */
   function currentDebugPanelGeometry(): DebugPanelGeometry | null {
-    if (debugPanelManual) return { ...debugPanelManual }
+    // 折叠态的实际尺寸（只留标题栏）与手动几何里记的展开尺寸不同，必须量实时 rect，否则拖动范围仍按整块面板算
+    if (debugPanelManual && !debugPanelCollapsed) return { ...debugPanelManual }
     if (!debugEl) return null
     let rect: DOMRect
     try { rect = debugEl.getBoundingClientRect() } catch { return null }
     if (!(rect.width > 0 && rect.height > 0)) return null
     return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+  }
+
+  /** 折叠态实际渲染尺寸（只留标题栏）：水平/垂直夹取都用它，不能用手动几何里的展开宽高。 */
+  function collapsedPanelSize(): { width: number; height: number } {
+    if (!debugEl) return { width: DEBUG_PANEL_MIN_W, height: DEBUG_PANEL_COLLAPSED_H }
+    const width = debugEl.offsetWidth
+    const height = debugEl.offsetHeight
+    return {
+      width: width > 0 ? width : DEBUG_PANEL_MIN_W,
+      height: height > 0 ? height : DEBUG_PANEL_COLLAPSED_H,
+    }
+  }
+
+  /** 折叠态的位置夹取：按实际小条尺寸把面板留在视口内（不套用 320×400 的最小宽高）。 */
+  function clampCollapsedPanelPosition(left: number, top: number): { left: number; top: number } {
+    const { width, height } = collapsedPanelSize()
+    const maxLeft = Math.max(DEBUG_PANEL_MARGIN, window.innerWidth - width - DEBUG_PANEL_MARGIN)
+    const maxTop = Math.max(DEBUG_PANEL_MARGIN, window.innerHeight - height - DEBUG_PANEL_MARGIN)
+    return {
+      left: Math.round(Math.min(Math.max(left, DEBUG_PANEL_MARGIN), maxLeft)),
+      top: Math.round(Math.min(Math.max(top, DEBUG_PANEL_MARGIN), maxTop)),
+    }
   }
 
   /** 把手动几何落到面板样式：视口坐标换算成 layer 内坐标再写，并记录顶部/底部供气泡避让。 */
@@ -2712,7 +2735,18 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
             height,
           }
         }
-        debugPanelManual = clampDebugPanelGeometry(next)
+        if (mode === 'move' && debugPanelCollapsed) {
+          // 折叠态按小条实际尺寸夹取位置（ADR-055）：不能沿用展开几何的宽高，否则拖不到视口底部
+          const pos = clampCollapsedPanelPosition(next.left, next.top)
+          debugPanelManual = {
+            left: pos.left,
+            top: pos.top,
+            width: debugPanelManual?.width ?? DEBUG_PANEL_MIN_W,
+            height: debugPanelManual?.height ?? DEBUG_PANEL_MIN_H,
+          }
+        } else {
+          debugPanelManual = clampDebugPanelGeometry(next)
+        }
         applyDebugPanelGeometry(debugPanelManual)
       }
       const finish = (): void => {
@@ -2778,9 +2812,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     debugPanelTopLogical = Number.NaN
     debugPanelBottomLogical = Number.NaN
     if (!debugEl || !petLayer || debugEl.parentNode !== petLayer || !model) return
-    // 手动模式不跟随模型：只保证整块面板还在视口里（窗口缩放/角色挪动后也不丢）
+    // 手动模式不跟随模型：只保证整块面板还在视口里（窗口缩放/角色挪动后也不丢）；折叠态按小条尺寸夹
     if (debugPanelManual) {
-      applyDebugPanelGeometry(clampDebugPanelGeometry(debugPanelManual))
+      if (debugPanelCollapsed) {
+        const pos = clampCollapsedPanelPosition(debugPanelManual.left, debugPanelManual.top)
+        applyDebugPanelGeometry({ ...debugPanelManual, left: pos.left, top: pos.top })
+      } else {
+        applyDebugPanelGeometry(clampDebugPanelGeometry(debugPanelManual))
+      }
       return
     }
     const bounds = boundsArg === undefined ? modelBounds() : boundsArg
