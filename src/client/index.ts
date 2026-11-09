@@ -1066,7 +1066,11 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     await fireTrigger({ kind: 'chat', text })
   }
 
-  /** 交互条定位：贴模型包围盒上方或下方居中（视口内横向夹取）。 */
+  /**
+   * 交互条定位：贴模型包围盒上方或下方居中。
+   * 水平方向只按包围盒居中、随模型一起移动，不再夹取到视口（ADR-058）：
+   * 手机上模型画布往往比视口宽，夹取会把条钉在屏幕边缘、与角色的可移动区域不一致。
+   */
   function updateBarPosition(boundsArg?: { x: number; y: number; width: number; height: number } | null): void {
     if (!barEl || !petLayer) return
     // 「不显示」档：整条收起来，别占位置也别留残影
@@ -1082,13 +1086,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       barW = barEl.offsetWidth
       barH = barEl.offsetHeight
     }
-    const rect = layerRect()
-    const viewportW = window.innerWidth || document.documentElement.clientWidth
-    let left = bounds.x + bounds.width / 2 - barW / 2
-    const layerLeft = rect ? rect.left : 0
-    // 别跑出视口左边/右边
-    left = Math.max(left, 8 - layerLeft)
-    left = Math.min(left, viewportW - 8 - barW - layerLeft)
+    const left = bounds.x + bounds.width / 2 - barW / 2
     // 偏移：正数往「远离模型」的方向推，负数可以压住模型边缘
     const top = barPosition === 'top'
       ? bounds.y - barH - 8 - barOffset
