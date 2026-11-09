@@ -41,6 +41,20 @@ describe('homePercentFromPos（捕捉当前位置 → 默认位置百分比）',
     expect(Math.abs(backBottom - 100)).toBeLessThanOrEqual(viewport.height / 100)
   })
 
+  it('页面 UI 缩放参与换算（视觉视口百分比，ADR-059）', () => {
+    // 手机竖屏 440×702、逻辑画布 832×728、UI 缩放 0.8：拖到夹取上限时
+    // 可见中心正好落在视口左上角 → 捕捉结果应为 100%（距右/距下都是整个视口）
+    const canvas = { width: 832, height: 728 }
+    const viewport = { width: 440, height: 702 }
+    const offset = { x: -17, y: -34 }
+    const scale = 0.8
+    const pos = {
+      right: viewport.width / scale + offset.x - canvas.width / 2,
+      bottom: viewport.height / scale + offset.y - canvas.height / 2,
+    }
+    expect(homePercentFromPos(pos, canvas, viewport, offset, scale)).toEqual({ right: 100, bottom: 100 })
+  })
+
   it('尺寸非正时返回 null（不写坏配置）', () => {
     expect(homePercentFromPos({ right: 10, bottom: 10 }, { width: 0, height: 200 }, { width: 800, height: 600 })).toBeNull()
     expect(homePercentFromPos({ right: 10, bottom: 10 }, { width: 200, height: 200 }, { width: 800, height: 0 })).toBeNull()

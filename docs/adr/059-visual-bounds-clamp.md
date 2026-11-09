@@ -21,10 +21,11 @@ Accepted
 1. 把当前帧离屏渲染到与逻辑画布同尺寸的 `PIXI.RenderTexture`（`renderer.render(stage, { renderTexture, clear: true })`）。
 2. `gl.readPixels` 读回 RGBA（注意 WebGL 行序自下而上），alpha > 8 的像素求包围盒。
 3. 记录「可见轮廓中心 − 画布中心」的比例偏移 `visualOffsetXFrac/visualOffsetYFrac`（相对画布逻辑宽高），运行时换算成 px。
-4. `clampPosToViewport` 改为约束可见轮廓中心：`right ∈ [offsetX − W/2, vw + offsetX − W/2]`，垂直同理。
-5. `homePositionFromConfig`（默认位置/归位）与设置页「捕捉」也按「可见轮廓中心距右/距下」的百分比语义（`pos = viewport × pct − W/2 + offset`）。
+4. `clampPosToViewport` 改为约束可见轮廓中心：`right ∈ [offsetX − W/2, vw/s + offsetX − W/2]`，垂直同理。
+5. `homePositionFromConfig`（默认位置/归位）与设置页「捕捉」也按「可见轮廓中心距右/距下」的百分比语义（`pos = viewport × pct / s − W/2 + offset`，捕捉为其逆运算）。
 6. 调试面板状态文本末尾新增 `vis: x,y px`（未测得时 `n/a`），便于排查移动范围。
 7. 测量在首帧渲染后执行（`ticker.addOnce` + 900ms 兜底），失败或拿不到 WebGL 上下文时偏移为 0，等价旧行为；换模型/换层时清零并重测。
+8. 计入「页面 UI 缩放」`s`：真机（dsh-web-mobile，Android Chrome）上整页被祖先施加了 CSS `zoom`（实测 0.8），`getBoundingClientRect()` 返回视觉坐标，而画布逻辑尺寸与 `right/bottom` 仍是缩放后的 CSS px。`uiScale()` 用 `canvas.getBoundingClientRect().width / 逻辑画布宽` 测得 s（取不到时为 1），夹取/归位/捕捉都按 s 归一化，拖动位移按 `dx / s` 换算，保证视觉上 1:1 跟手；调试状态行同时显示 `s:` 便于确认。
 
 ## Alternatives Considered
 
@@ -49,5 +50,6 @@ Accepted
 ## Consequences
 
 - 正面：桌面与手机一致，四边都能按「可见角色」拖到一半出画；调试面板能直接看到测得的偏移。
+- 正面：页面被外壳整体缩放（CSS `zoom`）时也按视觉比例正确工作，不再出现「拖到极限还整只停在屏幕内」。
 - 代价：每次加载模型多一次离屏渲染 + `readPixels`（一次性，几 ms）；测得偏移反映加载后首帧（Idle 待机）的轮廓，之后姿态变化不重测。
 - 「显示区中心」的百分比语义变为可见轮廓中心：老配置的 `homeRight/homeBottom` 会按新语义略微位移（通常更符合视觉预期）。

@@ -524,7 +524,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       width: window.innerWidth || document.documentElement.clientWidth || 0,
       height: window.innerHeight || document.documentElement.clientHeight || 0,
     }
-    const home = homePercentFromPos(pos, { width, height }, viewport, visualOffsetPx())
+    const home = homePercentFromPos(pos, { width, height }, viewport, visualOffsetPx(), uiScale())
     if (home !== null) captured(home)
   }))
 
@@ -1820,7 +1820,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       `parts: ${touchParts.length}  expr: ${desiredExpressions().join('+') || 'none'}\n` +
       `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
       `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}\n` +
-      `vp: ${window.innerWidth}x${window.innerHeight}  vv: ${vvInfo}\n` +
+      `vp: ${window.innerWidth}x${window.innerHeight}  vv: ${vvInfo}  s: ${uiScale().toFixed(3)}\n` +
       `box: ${boxInfo}\n` +
       `${vis}  c: ${centerX},${centerY}`
   }
@@ -1914,6 +1914,25 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   /**
+   * 页面 UI 缩放倍数（视觉 CSS px ÷ 逻辑画布 px）。
+   * 某些外壳（如移动端 DSH 页面）会给整页施加 CSS `zoom`/等价缩放：此时
+   * `getBoundingClientRect()` 返回视觉坐标，而画布逻辑尺寸、`right/bottom` 仍是缩放后的
+   * CSS px，两者差一个倍数。拖动夹取、归位、捕捉都按「视觉坐标」计算，必须先归一化，
+   * 否则角色会被提前拦住（ADR-059）。无缩放/测量不到时为 1，行为与之前一致。
+   */
+  function uiScale(): number {
+    try {
+      const rectW = canvas?.getBoundingClientRect().width ?? 0
+      const logical = logicalCanvasSize().width
+      if (rectW > 0 && logical > 0) {
+        const s = rectW / logical
+        if (Number.isFinite(s) && s > 0.05) return s
+      }
+    } catch { /* 布局不可用则按 1 处理 */ }
+    return 1
+  }
+
+  /**
    * 测量角色可见轮廓（ADR-059）：把当前帧渲染到与逻辑画布同尺寸的 RenderTexture，
    * 读回 alpha 找包围盒，得到「可见轮廓中心」相对画布中心的偏移。
    * 画布四周有动作/物理留白（spec §7），可见角色中心 ≠ 画布矩形中心——只按画布中心夹取时，
@@ -1984,8 +2003,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
 
   /**
    * 可见轮廓中心必须留在视口内（允许一半移出窗口，但拖不丢、能拖回来；ADR-059）：
-   * 可见中心 = right + W/2 - offsetX，因此 right ∈ [offsetX-W/2, innerWidth+offsetX-W/2]；
-   * 未测出偏移时 offset = 0，等价于按画布中心夹取。spec §4。
+   * 可见中心 = innerWidth + s·(offsetX − W/2 − right)，s 为页面 UI 缩放（uiScale()），
+   * 因此 right ∈ [offsetX−W/2, innerWidth/s + offsetX−W/2]；未测出偏移时 offset = 0，
+   * 未缩放（s=1）时等价于按画布中心夹取。spec §4。
    */
   function clampPosToViewport(): void {
     const { width: w, height: h } = logicalCanvasSize()
@@ -1993,8 +2013,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const offset = visualOffsetPx()
     const halfW = w / 2
     const halfH = h / 2
-    pos.right = Math.min(window.innerWidth + offset.x - halfW, Math.max(offset.x - halfW, pos.right))
-    pos.bottom = Math.min(window.innerHeight + offset.y - halfH, Math.max(offset.y - halfH, pos.bottom))
+    const s = uiScale()
+    pos.right = Math.min(window.innerWidth / s + offset.x - halfW, Math.max(offset.x - halfW, pos.right))
+    pos.bottom = Math.min(window.innerHeight / s + offset.y - halfH, Math.max(offset.y - halfH, pos.bottom))
   }
 
   /** 把当前 pos 应用到宠物容器样式（不写盘；拖动/尺寸/窗口变化时调用）。 */
@@ -2026,8 +2047,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     const viewportH = window.innerHeight || document.documentElement.clientHeight || 0
     if (!(viewportW > 0 && viewportH > 0)) return
     const offset = visualOffsetPx()
-    pos.right = viewportW * homeRightPct / 100 - w / 2 + offset.x
-    pos.bottom = viewportH * homeBottomPct / 100 - h / 2 + offset.y
+    // 目标百分比按「视觉视口」量：UI 缩放 s 下，CSS px 的 right/bottom 要按 s 换算（ADR-059）
+    const s = uiScale()
+    pos.right = viewportW * homeRightPct / 100 / s - w / 2 + offset.x
+    pos.bottom = viewportH * homeBottomPct / 100 / s - h / 2 + offset.y
     clampPosToViewport()
   }
 
@@ -3602,14 +3625,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   }
 
   // ---- 指针：点击/拖动判定（6px 阈值，spec §4） ----
-  let down: { x: number; y: number; startRight: number; startBottom: number } | null = null
+  // scale = 按下瞬间的页面 UI 缩放；指针位移是视觉 px，换算成 CSS px 要除以它（ADR-059）
+  let down: { x: number; y: number; startRight: number; startBottom: number; scale: number } | null = null
   let dragging = false
 
   function handlePointerDown(e: PointerEvent): void {
     clearHover()
     // 点到模型也算「有操作」：交互条若被自动收起会先回来，截止时间顺延（ADR-053）
     noteBarActivity()
-    down = { x: e.clientX, y: e.clientY, startRight: pos.right, startBottom: pos.bottom }
+    down = { x: e.clientX, y: e.clientY, startRight: pos.right, startBottom: pos.bottom, scale: uiScale() }
     dragging = false
     tapDownAt = Date.now()
     // 捕获到命中 div 本身（canvas 已 pointer-events:none，不能作为捕获目标）
@@ -3625,8 +3649,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       if (bubble) bubble.style.opacity = '0'
     }
     if (dragging && box) {
-      pos.right = down.startRight - dx
-      pos.bottom = down.startBottom - dy
+      const s = down.scale || 1
+      pos.right = down.startRight - dx / s
+      pos.bottom = down.startBottom - dy / s
       // 允许拖出窗口，但画布中心点不能离开视口（否则无法拖回）
       clampPosToViewport()
       applyPosToBox()
