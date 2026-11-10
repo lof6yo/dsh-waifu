@@ -263,19 +263,16 @@ export const TTS_MODELS: TtsModelOption[] = [
   },
   {
     // 小米 MiMo（ADR-061）：OpenAI chat/completions 形状，台词放 assistant 消息、
-    // 可选的 user 消息承载风格指令；音色名就是中文名（如「冰糖」）。
+    // 可选的 user 消息承载风格指令；音色名直接透传（如「冰糖」）。
+    // 与千问目录一致：只收女声（MiMo 另有苏打/白桦/Milo/Dean 四个男声，不列）。
     id: 'mimo-v2.5-tts',
     label: '小米 MiMo TTS（预置音色，支持风格指令）',
     provider: 'mimo',
     voices: [
       { id: '冰糖', label: '冰糖（中文·女声，默认）' },
       { id: '茉莉', label: '茉莉（中文·女声）' },
-      { id: '苏打', label: '苏打（中文·男声）' },
-      { id: '白桦', label: '白桦（中文·男声）' },
       { id: 'Mia', label: 'Mia（英文·女声）' },
       { id: 'Chloe', label: 'Chloe（英文·女声）' },
-      { id: 'Milo', label: 'Milo（英文·男声）' },
-      { id: 'Dean', label: 'Dean（英文·男声）' },
     ],
   },
 ]

@@ -34,7 +34,8 @@
    随 `voiceOptions()` 发给引擎；只有 MiMo 引擎消费它，OpenRouter 引擎忽略。
    设置页在选中 MiMo 时显示这一行（单行输入，回车/失焦保存），换回千问时隐藏但不丢值。
 5. **目录新增 `mimo-v2.5-tts`**，音色用 MiMo 的预置音色名（中文名直接作为 `voice` 值）：
-   冰糖（默认）/ 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean。
+   与千问目录保持同一口径——**只收女声**：冰糖（默认）/ 茉莉 / Mia / Chloe
+   （MiMo 另有苏打 / 白桦 / Milo / Dean 四个男声，不进目录；跨供应商也不混用音色）。
 6. **传输沿用 ADR-051**：`MiMoTtsEngine` 默认 `fetcher` = `directTtsFetcher`（直连 + 失败回落代理 + 自持连接池），
    key 由宿主用 `ctx.credentials.resolve('XIAOMI_API_KEY')` 按需解析。
 

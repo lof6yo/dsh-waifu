@@ -116,7 +116,7 @@ dsh plugin --profile <profile> remove dsh-waifu
 - 总开关 + **语音模型**（下拉，通义千问两个 + 小米 MiMo 一个）：
   - `qwen/qwen-audio-3.0-tts-plus`（旗舰，支持指令控制）：龙安灵心（25 岁·知心温暖）
   - `qwen/qwen-audio-3.0-tts-flash`（女声最多、便宜，**默认**）：龙安元妃 / 风悦 / **灵希（默认音色，25 岁·可爱甜美）** / 小昕 / 欢 / 龙泡泡 / loongmary / loongeva
-  - `mimo-v2.5-tts`（小米 MiMo，支持风格指令）：**冰糖（默认·中文女声）** / 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean
+  - `mimo-v2.5-tts`（小米 MiMo，支持风格指令）：**冰糖（默认·中文女声）** / 茉莉 / Mia / Chloe（与千问目录一致，只收女声）
 - 千问音色只收女声，列表见[千问 TTS 音色文档](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；音色按模型区分，跨模型用会被供应商拒 400
 - 合成走哪个端点由模型决定（目录项的 `provider`）：千问 → OpenRouter `/api/v1/audio/speech`（Key 用 `OPENROUTER_API_KEY`）；MiMo → `https://api.xiaomimimo.com/v1/chat/completions`（Key 用 `XIAOMI_API_KEY`）
 - **风格指令**（只在选中 MiMo 时出现，最长 200 字）：用一句自然语言描述语气/情绪，例如「温柔、语速稍慢，带一点笑意」，会作为指令消息发给 MiMo（不会被念出来）；留空 = 模型默认语气。换回千问时这行隐藏、原值保留

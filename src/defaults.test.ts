@@ -96,6 +96,11 @@ describe('语音模型目录（ADR-033 修订）', () => {
     }
   })
 
+  it('MiMo 目录只收女声（与千问口径一致）', () => {
+    const mimo = TTS_MODELS.find((item) => item.id === 'mimo-v2.5-tts')!
+    expect(mimo.voices.map((voice) => voice.id)).toEqual(['冰糖', '茉莉', 'Mia', 'Chloe'])
+  })
+
   it('目录模型能查到供应商：qwen 走 openrouter、MiMo 走 mimo（ADR-061）', () => {
     expect(ttsModelProvider('qwen/qwen-audio-3.0-tts-flash')).toBe('openrouter')
     expect(ttsModelProvider('mimo-v2.5-tts')).toBe('mimo')
