@@ -37,8 +37,16 @@ const CATALOG = { motionTexts: { Nod: '轻轻点头' }, expressionEnabled: { blo
 describe('剧本引擎（纯函数，ADR-047 P1）', () => {
   it('system 提示词的内容稳定（golden 哈希）', () => {
     const system = systemPrompt(DEFAULT_PERSONA, '- 主人喜欢猫\n- 主人怕痒', CATALOG)
-    expect(system.length).toBe(1611)
-    expect(fnv(system)).toBe('dfc2e6ef')
+    expect(system.length).toBe(1717)
+    expect(fnv(system)).toBe('c84242d9')
+  })
+
+  it('明确记忆请求包含具体事实与格式例外，不以口头承诺代替保存', () => {
+    const system = systemPrompt(DEFAULT_PERSONA, '', CATALOG)
+    expect(system).toContain('记忆输出是上面「一行台词、最多两个标签」的例外')
+    expect(system).toContain('明确要求记住某件事、刚刚的经历')
+    expect(system).toContain('上下文不足就询问，不编造')
+    expect(system).toContain('不能只在台词里说「记住了」')
   })
 
   it('同一输入两次组装结果完全一致（不读状态、不累积）', () => {
@@ -82,7 +90,7 @@ describe('剧本引擎（纯函数，ADR-047 P1）', () => {
     expect(payload).not.toBeNull()
     expect(payload!.temperature).toBe(0.9)
     expect(payload!.maxTokens).toBe(160)
-    expect(fnv(stable(JSON.stringify(payload)))).toBe('bee6a452')
+    expect(fnv(stable(JSON.stringify(payload)))).toBe('0075d14c')
   })
 
   it('目录里的每个 id 都有一行释义；关掉的表情不出现', () => {
