@@ -98,13 +98,19 @@ export interface TtsVoiceOptions {
   model: string
   /** 音色标识；空字符串表示用模型默认音色。 */
   voice?: string
+  /** 风格指令（自然语言）：目前只有小米 MiMo 引擎用它，其他引擎忽略（ADR-061）。 */
+  style?: string
 }
 
 /** 一次实际发出的合成请求（排查用：设置页/curl 能直接看到发给供应商的 body）。 */
 export interface TtsPayload {
   endpoint: string
-  /** 发出去的 JSON body（audio 不在这里，只记请求）。 */
-  body: { model: string; input: string; response_format?: string; voice?: string }
+  /**
+   * 发出去的 JSON body（音频字节不在这里，只记请求）。
+   * 各供应商形状不同：OpenRouter 是 `{ model, input, response_format, voice }`，
+   * 小米 MiMo 是 chat/completions 形状（`{ model, messages, audio }`，ADR-061）。
+   */
+  body: Record<string, unknown>
   /** 是否命中本地缓存（命中时不会真的发请求）。 */
   cached: boolean
 }
@@ -124,10 +130,13 @@ export interface TtsEngine {
   synthesize(text: string, options: TtsVoiceOptions, signal?: AbortSignal): Promise<TtsAudio>
 }
 
-/** 缓存键：同一段文字 + 同一套语音参数才复用。 */
+/** 缓存键：同一段文字 + 同一套语音参数才复用（风格指令不同也算不同音频）。 */
 export function ttsCacheKey(text: string, options: TtsVoiceOptions): string {
-  const payload = [options.model, options.voice ?? '', text].join('\u0000')
-  return createHash('sha1').update(payload).digest('hex')
+  const parts = [options.model, options.voice ?? '']
+  const style = options.style?.trim()
+  if (style) parts.push(`style:${style}`)
+  parts.push(text)
+  return createHash('sha1').update(parts.join('\u0000')).digest('hex')
 }
 
 /** 缓存目录：`$DSH_HOME/waifu/tts-cache`。 */
@@ -355,4 +364,108 @@ export class OpenRouterTtsEngine implements TtsEngine {
       signal?.removeEventListener('abort', abort)
     }
   }
+}
+
+/** 小米 MiMo 的语音端点是 OpenAI Chat Completions 形状（ADR-061）。 */
+export const MIMO_SPEECH_URL = 'https://api.xiaomimimo.com/v1/chat/completions'
+
+/** MiMo 应答里只关心这几个字段（OpenAI chat 形状 + audio 扩展）。 */
+interface MiMoReply {
+  error?: { message?: string } | string
+  choices?: Array<{
+    message?: {
+      audio?: { data?: string }
+    }
+  }>
+}
+
+/**
+ * 小米 MiMo TTS 引擎（ADR-061）：
+ * - 文本必须放在 `role: 'assistant'` 的消息里；可选的 `role: 'user'` 消息承载
+ *   自然语言风格指令（不会被念出来），对应设置页的「风格指令」；
+ * - 请求 `audio.format: 'mp3'`，应答是 base64 音频（`choices[0].message.audio.data`）；
+ * - 与 OpenRouter 引擎共用本地磁盘缓存，命中/写盘规则一致。
+ */
+export class MiMoTtsEngine implements TtsEngine {
+  constructor(
+    private readonly resolveKey: ApiKeyResolver,
+    private readonly cacheHome: string,
+    private readonly fetcher: TtsFetcher = directTtsFetcher,
+    /** 排查钩子：每次合成前把要发的 body 报出去（缓存的也报，标 cached）。 */
+    private readonly onPayload?: (payload: TtsPayload) => void,
+  ) {}
+
+  async synthesize(
+    text: string,
+    options: TtsVoiceOptions,
+    signal?: AbortSignal,
+    /** 本次调用的报文钩子（覆盖构造时的全局钩子）：调试控制台按发生顺序记。 */
+    onPayload?: (payload: TtsPayload) => void,
+  ): Promise<TtsAudio> {
+    const report = onPayload ?? this.onPayload
+    const trimmed = text.trim()
+    if (!trimmed) throw new Error('empty-text')
+    const style = options.style?.trim() ?? ''
+    const key = ttsCacheKey(trimmed, options)
+    const dir = ttsCacheDir(this.cacheHome)
+    const body = mimoBody(trimmed, options, style)
+    const hit = await readCache(dir, key)
+    if (hit) {
+      report?.({ endpoint: MIMO_SPEECH_URL, body, cached: true })
+      return { mime: 'audio/mpeg', audio: hit, cached: true }
+    }
+
+    const apiKey = await this.resolveKey()
+    if (!apiKey) throw new Error('tts-key-missing')
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS)
+    const abort = () => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      report?.({ endpoint: MIMO_SPEECH_URL, body, cached: false })
+      const response = await this.fetcher(MIMO_SPEECH_URL, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'http-referer': 'https://github.com/lof6yo/dsh-waifu',
+          'x-title': 'dsh-waifu',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        let detail = ''
+        try {
+          const payload = await response.json() as MiMoReply
+          detail = typeof payload.error === 'string' ? payload.error : payload.error?.message ?? ''
+        } catch {
+          detail = ''
+        }
+        throw new Error(`tts-http ${response.status}${detail ? `: ${detail}` : ''}`)
+      }
+      const payload = await response.json() as MiMoReply
+      const encoded = payload.choices?.[0]?.message?.audio?.data
+      if (!encoded) throw new Error('tts-empty-audio')
+      const audio = Buffer.from(encoded, 'base64')
+      if (audio.byteLength === 0) throw new Error('tts-empty-audio')
+      await writeCache(dir, key, audio)
+      return { mime: 'audio/mpeg', audio, cached: false }
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+}
+
+/** MiMo 的请求体（纯函数，测试直接比对）：assistant 放台词，user 可选放风格指令。 */
+export function mimoBody(text: string, options: TtsVoiceOptions, style = ''): Record<string, unknown> {
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  if (style) messages.push({ role: 'user', content: style })
+  messages.push({ role: 'assistant', content: text })
+  const audio: Record<string, unknown> = { format: 'mp3' }
+  const voice = options.voice?.trim()
+  if (voice) audio.voice = voice
+  return { model: options.model, messages, audio, stream: false }
 }

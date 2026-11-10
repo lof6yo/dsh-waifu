@@ -12,8 +12,11 @@ import {
   DEFAULT_TTS_VOICE,
   TRIGGER_EVENTS,
   TTS_MODELS,
+  TTS_STYLE_MAX_CHARS,
   normalizeBarAutoHideSec,
+  normalizeTtsStyle,
   ttsDefaultVoice,
+  ttsModelProvider,
   ttsModelRandomVoice,
 } from './defaults.ts'
 
@@ -81,15 +84,31 @@ describe('语音模型目录（ADR-033 修订）', () => {
     expect(model!.voices.some((voice) => voice.id === DEFAULT_TTS_VOICE)).toBe(true)
   })
 
-  it('目录只保留通义千问 TTS Plus / Flash，且每个模型都有音色', () => {
+  it('目录含通义千问 Plus / Flash 与小米 MiMo，且每个模型都有音色', () => {
     expect(TTS_MODELS.map((item) => item.id)).toEqual([
       'qwen/qwen-audio-3.0-tts-plus',
       'qwen/qwen-audio-3.0-tts-flash',
+      'mimo-v2.5-tts',
     ])
     for (const model of TTS_MODELS) {
       expect(model.voices.length, `${model.id} 至少一个音色`).toBeGreaterThan(0)
       expect(model.randomVoice, `${model.id} 不应标随机音色`).toBeFalsy()
     }
+  })
+
+  it('目录模型能查到供应商：qwen 走 openrouter、MiMo 走 mimo（ADR-061）', () => {
+    expect(ttsModelProvider('qwen/qwen-audio-3.0-tts-flash')).toBe('openrouter')
+    expect(ttsModelProvider('mimo-v2.5-tts')).toBe('mimo')
+    // 目录外的老配置仍按 openrouter 处理（保持原行为）
+    expect(ttsModelProvider('fish-audio/drama-3')).toBe('openrouter')
+  })
+
+  it('风格指令归一化：去空白、截断、非法值回退（ADR-061）', () => {
+    expect(normalizeTtsStyle('  温柔、语速稍慢  ', '')).toBe('温柔、语速稍慢')
+    expect(normalizeTtsStyle(undefined, '')).toBe('')
+    expect(normalizeTtsStyle(42, '')).toBe('')
+    expect(normalizeTtsStyle('啊'.repeat(500), '')).toHaveLength(TTS_STYLE_MAX_CHARS)
+    expect(DEFAULT_SETTINGS.ttsStyle).toBe('')
   })
 
   it('音色 id 在目录内不重复', () => {

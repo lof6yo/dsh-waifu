@@ -214,14 +214,15 @@ export function normalizeEventTriggers(raw: unknown): Record<string, boolean> {
 
 /** 语音合成（TTS，ADR-033）：默认引擎 = OpenRouter 的 `/api/v1/audio/speech`。 */
 export const DEFAULT_TTS_ENABLED = true
-/** 引擎 id（目前只有 openrouter；留给将来直连 ElevenLabs / MiniMax 的实现）。 */
-/** 候选音色：`id` 直接透传给 `/audio/speech` 的 `voice` 字段。 */
+/** TTS 引擎 id：决定请求打到哪个供应商（ADR-061 起不止一个）。 */
+export type TtsProvider = 'openrouter' | 'mimo'
+/** 候选音色：`id` 直接透传给供应商的 `voice` 字段。 */
 export interface TtsVoiceOption {
   id: string
   label: string
 }
 
-/** 设置页可选的语音模型（ADR-033 修订）。 */
+/** 设置页可选的语音模型（ADR-033 修订；ADR-061 起目录可混排多个供应商）。 */
 export interface TtsModelOption {
   id: string
   label: string
@@ -229,6 +230,8 @@ export interface TtsModelOption {
   voices: TtsVoiceOption[]
   /** 是否每次随机音色（例如 Drama 3 这种「表演模型」）。 */
   randomVoice?: boolean
+  /** 供应商：缺省 = openrouter（`/api/v1/audio/speech`）；`mimo` 走小米 chat/completions 形状。 */
+  provider?: TtsProvider
 }
 
 /**
@@ -258,6 +261,23 @@ export const TTS_MODELS: TtsModelOption[] = [
       { id: 'loongeva_v3.6', label: 'loongeva（28 岁·美式英语）' },
     ],
   },
+  {
+    // 小米 MiMo（ADR-061）：OpenAI chat/completions 形状，台词放 assistant 消息、
+    // 可选的 user 消息承载风格指令；音色名就是中文名（如「冰糖」）。
+    id: 'mimo-v2.5-tts',
+    label: '小米 MiMo TTS（预置音色，支持风格指令）',
+    provider: 'mimo',
+    voices: [
+      { id: '冰糖', label: '冰糖（中文·女声，默认）' },
+      { id: '茉莉', label: '茉莉（中文·女声）' },
+      { id: '苏打', label: '苏打（中文·男声）' },
+      { id: '白桦', label: '白桦（中文·男声）' },
+      { id: 'Mia', label: 'Mia（英文·女声）' },
+      { id: 'Chloe', label: 'Chloe（英文·女声）' },
+      { id: 'Milo', label: 'Milo（英文·男声）' },
+      { id: 'Dean', label: 'Dean（英文·男声）' },
+    ],
+  },
 ]
 
 /** 默认 TTS 模型：通义千问 TTS Flash（女声最多、便宜）。 */
@@ -267,6 +287,11 @@ export const DEFAULT_TTS_VOICE = 'longanlingxi'
 /** 按 id 查模型选项。 */
 export function ttsModelOption(id: string): TtsModelOption | undefined {
   return TTS_MODELS.find((item) => item.id === id)
+}
+
+/** 该模型的供应商（目录里没写的都按 openrouter 走）。 */
+export function ttsModelProvider(id: string): TtsProvider {
+  return ttsModelOption(id)?.provider ?? 'openrouter'
 }
 
 /** 该模型是否每次随机音色。 */
@@ -279,6 +304,17 @@ export function ttsDefaultVoice(model: string): string {
   const option = ttsModelOption(model)
   return option && !option.randomVoice ? (option.voices[0]?.id ?? '') : ''
 }
+/** 风格指令（自然语言，例如「温柔、语速稍慢」）：只有 MiMo 引擎使用，留空 = 默认语气。 */
+export const DEFAULT_TTS_STYLE = ''
+/** 风格指令最长字符数（避免把设置行写爆；也够写一段导演指令了）。 */
+export const TTS_STYLE_MAX_CHARS = 200
+
+/** 归一化风格指令：去首尾空白、截断到上限，非法值回退默认。 */
+export function normalizeTtsStyle(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  return value.trim().slice(0, TTS_STYLE_MAX_CHARS)
+}
+
 /** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */
 export const DEFAULT_LIPSYNC_ENABLED = true
 /** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
@@ -400,6 +436,8 @@ export const DEFAULT_SETTINGS = {
   ttsEnabled: DEFAULT_TTS_ENABLED,
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: DEFAULT_TTS_VOICE,
+  /** 风格指令（只会作用在 MiMo 上；换回 OpenRouter 模型时忽略、不丢）。 */
+  ttsStyle: DEFAULT_TTS_STYLE,
   lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,
   lipsyncGain: DEFAULT_LIPSYNC_GAIN,
   focusRange: DEFAULT_FOCUS_RANGE,

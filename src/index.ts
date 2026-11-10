@@ -54,6 +54,7 @@ import {
   DEFAULT_SETTINGS,
   FOCUS_RANGE_LIMITS,
   LIPSYNC_GAIN_LIMITS,
+  ttsModelProvider,
 } from './defaults.ts'
 import {
   makePetRoutes,
@@ -97,7 +98,13 @@ import {
 } from './models-host.ts'
 import { SettingsStore, type PetSettings } from './settings-store.ts'
 import { OPENROUTER_SPEECH_URL } from './tts.ts'
-import { OpenRouterTtsEngine, type TtsAudio, type TtsPayload, type TtsVoiceOptions } from './tts.ts'
+import {
+  MiMoTtsEngine,
+  OpenRouterTtsEngine,
+  type TtsAudio,
+  type TtsPayload,
+  type TtsVoiceOptions,
+} from './tts.ts'
 import { runSpeakPipeline } from './speak.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
@@ -199,6 +206,7 @@ export const Config: Schema<Config> = Schema.object({
   ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
   ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
   ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
+  ttsStyle: Schema.string().default(DEFAULT_SETTINGS.ttsStyle),
   lipsyncEnabled: Schema.boolean().default(DEFAULT_SETTINGS.lipsyncEnabled),
   lipsyncGain: Schema.number().min(LIPSYNC_GAIN_LIMITS.min).max(LIPSYNC_GAIN_LIMITS.max).default(DEFAULT_SETTINGS.lipsyncGain),
   focusRange: Schema.number().min(FOCUS_RANGE_LIMITS.min).max(FOCUS_RANGE_LIMITS.max).default(DEFAULT_SETTINGS.focusRange),
@@ -255,6 +263,7 @@ export function apply(ctx: Context, config: Config): void {
     ttsEnabled: config.ttsEnabled,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
+    ttsStyle: config.ttsStyle,
     lipsyncEnabled: config.lipsyncEnabled,
     lipsyncGain: config.lipsyncGain,
     focusRange: config.focusRange,
@@ -469,34 +478,43 @@ export function apply(ctx: Context, config: Config): void {
   const credentials = (ctx as unknown as {
     credentials?: { resolve(ref: unknown): Promise<{ value: string } | undefined> }
   }).credentials
-  const resolveOpenRouterKey = async (): Promise<string | undefined> => {
+  const credentialRef = async (name: string): Promise<string | undefined> => {
     if (!credentials) return undefined
     try {
-      const resolved = await credentials.resolve('OPENROUTER_API_KEY')
+      const resolved = await credentials.resolve(name)
       return resolved?.value
     } catch {
       return undefined
     }
   }
+  // OpenRouter（默认）与小米 MiMo 各建一个引擎：按当前设置的模型 id 分派（ADR-061）
+  const resolveOpenRouterKey = () => credentialRef('OPENROUTER_API_KEY')
+  const resolveXiaomiKey = () => credentialRef('XIAOMI_API_KEY')
   // 每条请求自己带 sink 钩子：不再用跨请求共享的全局，避免 /tts 与 /speak 并发时串台
-  const ttsEngine = new OpenRouterTtsEngine(
+  const openRouterTtsEngine = new OpenRouterTtsEngine(
     resolveOpenRouterKey,
     waifuHome,
     fetch,
     OPENROUTER_SPEECH_URL,
   )
+  const mimoTtsEngine = new MiMoTtsEngine(resolveXiaomiKey, waifuHome)
+  const ttsEngineFor = (model: string): OpenRouterTtsEngine | MiMoTtsEngine =>
+    ttsModelProvider(model) === 'mimo' ? mimoTtsEngine : openRouterTtsEngine
   const voiceOptions = (): TtsVoiceOptions => {
     const settings = settingsStore.get()
     return {
       model: settings.ttsModel,
       voice: settings.ttsVoice.trim() || undefined,
+      // 风格指令只对 MiMo 生效；其他引擎忽略这个字段（缓存键里也只在非空时参与）
+      style: settings.ttsStyle.trim() || undefined,
     }
   }
 
   const speakApi: SpeakRoutesApi = {
     // 排查用单段合成：设置页「试听」与 curl 都走这里
     synthesize: async (text) => {
-      const audio = await ttsEngine.synthesize(text, voiceOptions(), undefined, (payload) => {
+      const options = voiceOptions()
+      const audio = await ttsEngineFor(options.model).synthesize(text, options, undefined, (payload) => {
         lastTtsPayload = payload
       })
       return { mime: audio.mime, audio: audio.audio }
@@ -522,7 +540,7 @@ export function apply(ctx: Context, config: Config): void {
         if (!speakOn || signal.aborted) return null
         const startedAt = Date.now()
         try {
-          const audio = await ttsEngine.synthesize(text, speakOptions, signal, (payload) => {
+          const audio = await ttsEngineFor(speakOptions.model).synthesize(text, speakOptions, signal, (payload) => {
             lastSpeakPayload = payload
             emit('debug', traceStep('tts.request', payload))
           })

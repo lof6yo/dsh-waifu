@@ -21,7 +21,7 @@
 - **自带 8 个动作 + 11 个表情**：动作 点头 / 摇头 / 歪头 / 左右晃 / 瞥一眼 / 竖起耳朵 / 换重心 / 叹气（外加 `Idle` 呼吸循环），由 `scripts/gen-jian-motions.mjs` 幂等生成；表情 脸红 / 生气 / 星星眼 / 白眼 / 泪花 / 爱心眼 / 眼泪 / 脸黑 / 羞愤 / 高光消失 / 眨眼（眨眼是俏皮单眼 wink，用一次性动作实现，播一遍即结束）。
 - **自定义触摸部位（touchbox）**：部位 = 名称 + 一个或多个归一化矩形（相对角色包围盒，0–100%，以左下角为原点）+ 图层；重叠时上层优先。每个部位可定义多条**交互**：名字（原样告诉模型）+ 触发方式（单击 / 双击 / 悬停 N 秒）。内置「简」的十个部位已按手感命名好（脸 = 捏 / 亲 / 抚摸，胸 = 揉捏 / 舔 / 抚摸……）。
 - **预览编辑**：设置页点「预览 box」，角色身上实时画出全部 box，边调边点就能试触发，不影响已保存内容。
-- **语音（ADR-033）**：模型出字 → 按句读切段 → 每段 TTS 合成 → **该段音频开始播放时**气泡才出这一段字，口型由音频能量驱动，三者同步。两个通义千问音色模型、女声可选，走 OpenRouter，Key 复用 DSH 凭据。
+- **语音（ADR-033 / ADR-061）**：模型出字 → 按句读切段 → 每段 TTS 合成 → **该段音频开始播放时**气泡才出这一段字，口型由音频能量驱动，三者同步。可选两个通义千问音色模型（OpenRouter，`OPENROUTER_API_KEY`）或小米 MiMo `mimo-v2.5-tts`（`XIAOMI_API_KEY`，还支持一句自然语言「风格指令」调语气），Key 都复用 DSH 凭据。
 - **状态镜像**：SSE 实时推送 agent 状态；工具执行、审批通过/拒绝、会话开关、子代理进出都会让角色抬眼看一眼（可按场景关掉）。
 - **交互条**：模型上方一条胶囊，输入框回车就能跟角色说话；左边圆形按钮是语音静音开关。无操作 10 秒后自动收起，鼠标移到角色上再出现（时限可调、可关）；收起时气泡补到交互条原来的位置，不留空档。
 - **不打扰**：默认右下角小尺寸、可拖动、可隐藏；画布透明区**点击穿透**（只有 touchbox 接点击，不挡 DSH 界面）；标签页隐藏时暂停渲染、限帧、低配回落静态头像。
@@ -33,7 +33,7 @@
 - DeepSeek Harness（DSH）**0.2.x**（Desktop / Web 均可）
 - 安装与更新时需要能访问 GitHub 与 npm registry
 - 插件包已内置构建产物 `lib/`，安装端**不需要**本地编译
-- 想用 AI 台词 / 语音：DSH 里要配好一个 LLM provider（默认 `openrouter` + `google/gemma-4-31b-it`）与 `OPENROUTER_API_KEY`（语音用同一份 Key）
+- 想用 AI 台词 / 语音：DSH 里要配好一个 LLM provider（默认 `openrouter` + `google/gemma-4-31b-it`）与 `OPENROUTER_API_KEY`（语音用同一份 Key）；用小米 MiMo 语音还需要在 DSH 里配好 `xiaomi` provider（写入 `XIAOMI_API_KEY` 凭据）
 
 ## 安装
 
@@ -113,14 +113,16 @@ dsh plugin --profile <profile> remove dsh-waifu
 
 ### 语音
 
-- 总开关 + **语音模型**（下拉，两个通义千问 TTS）：
+- 总开关 + **语音模型**（下拉，通义千问两个 + 小米 MiMo 一个）：
   - `qwen/qwen-audio-3.0-tts-plus`（旗舰，支持指令控制）：龙安灵心（25 岁·知心温暖）
   - `qwen/qwen-audio-3.0-tts-flash`（女声最多、便宜，**默认**）：龙安元妃 / 风悦 / **灵希（默认音色，25 岁·可爱甜美）** / 小昕 / 欢 / 龙泡泡 / loongmary / loongeva
-- 音色只收女声，列表见[千问 TTS 音色文档](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；音色按模型区分，跨模型用会被供应商拒 400
-- 合成走 OpenRouter 的 `/api/v1/audio/speech`（OpenAI 兼容），Key 直接用 DSH 凭据里的 `OPENROUTER_API_KEY`
+  - `mimo-v2.5-tts`（小米 MiMo，支持风格指令）：**冰糖（默认·中文女声）** / 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean
+- 千问音色只收女声，列表见[千问 TTS 音色文档](https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts)；音色按模型区分，跨模型用会被供应商拒 400
+- 合成走哪个端点由模型决定（目录项的 `provider`）：千问 → OpenRouter `/api/v1/audio/speech`（Key 用 `OPENROUTER_API_KEY`）；MiMo → `https://api.xiaomimimo.com/v1/chat/completions`（Key 用 `XIAOMI_API_KEY`）
+- **风格指令**（只在选中 MiMo 时出现，最长 200 字）：用一句自然语言描述语气/情绪，例如「温柔、语速稍慢，带一点笑意」，会作为指令消息发给 MiMo（不会被念出来）；留空 = 模型默认语气。换回千问时这行隐藏、原值保留
 - **同步方式**：文字按标点切段，每段合成完、**开始播这一段时**气泡才显示这一段，不会「字全出来声音还没跟上」，也不会「说着上一句、屏幕是下一句」
 - **口型**：`ParamMouthOpenY` 由正在播放的音频能量驱动（张得快、收得慢），强度 0–300%（默认 130%），可单独关掉口型
-- **试听**：设置页按钮，用当前模型 / 音色合成一句，调参不用反复戳宠物
+- **试听**：设置页按钮，用当前模型 / 音色 / 风格指令合成一句，调参不用反复戳宠物
 - 容错：语音关闭或这句没有文字时回落一次性文字回复；个别小段失败只丢那段的音，文字照常上屏
 - 成本：同文同参数命中本地缓存（`$DSH_HOME/waifu/tts-cache`，最多 200 段），重复句子不再计费；一句台词通常 2–4 段
 - 浏览器只允许在用户交互后出声：第一次戳她会顺便解锁音频
@@ -155,7 +157,7 @@ dsh plugin --profile <profile> remove dsh-waifu
 | 触摸连点窗口 | 1200 ms | 连点只留最后一次 |
 | 合并上限 | 6 条 | 超出丢最旧 |
 | 场景开关 | 8 / 16 开 | 见上文 |
-| 语音 | 开 | Flash + 龙安灵希 |
+| 语音 | 开 | Flash + 龙安灵希（也可选 MiMo + 冰糖） |
 | 口型强度 | 130% | 0–300 |
 | 开发者选项 / 调试面板 | 开 | |
 

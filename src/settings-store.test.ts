@@ -46,6 +46,7 @@ const BASE: PetSettings = {
   ttsEnabled: true,
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
   ttsVoice: 'longanlingxin',
+  ttsStyle: '',
   lipsyncEnabled: true,
   lipsyncGain: 100,
   focusRange: 60,
@@ -456,6 +457,13 @@ describe('normalizeSettings · 语音（ADR-033）', () => {
 
   it('音色允许空串（空 = 模型默认音色）', () => {
     expect(normalizeSettings({ ttsVoice: '   ' }, BASE).ttsVoice).toBe('')
+  })
+
+  it('风格指令去空白、截断，非法值回退默认（ADR-061）', () => {
+    expect(normalizeSettings({}, BASE).ttsStyle).toBe('')
+    expect(normalizeSettings({ ttsStyle: '  慵懒、带一点笑意 ' }, BASE).ttsStyle).toBe('慵懒、带一点笑意')
+    expect(normalizeSettings({ ttsStyle: 42 }, BASE).ttsStyle).toBe('')
+    expect(normalizeSettings({ ttsStyle: '啊'.repeat(500) }, BASE).ttsStyle).toHaveLength(200)
   })
 
   it('v5 文件里的 MAI-Voice 回落到默认 Drama 3', () => {

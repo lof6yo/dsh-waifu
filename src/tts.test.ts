@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  MiMoTtsEngine,
+  MIMO_SPEECH_URL,
+  mimoBody,
   OpenRouterTtsEngine,
   splitClauses,
   ttsCacheKey,
@@ -135,5 +138,101 @@ describe('onPayload 排查钩子', () => {
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+})
+
+describe('MiMoTtsEngine（ADR-061）', () => {
+  function withTempHome(run: (home: string) => Promise<void>): () => Promise<void> {
+    return async () => {
+      const home = mkdtempSync(join(tmpdir(), 'waifu-mimo-'))
+      try {
+        await run(home)
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    }
+  }
+
+  const MP3 = Buffer.from('ID3fake-mimo-mp3')
+  const reply = (audio: Buffer): Response => new Response(JSON.stringify({
+    choices: [{ message: { role: 'assistant', audio: { data: audio.toString('base64') } } }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+
+  it('chat/completions 形状：台词进 assistant、风格指令进 user，解析 base64 音频并缓存', withTempHome(async (home) => {
+    const seen: TtsPayload[] = []
+    const requests: Array<Record<string, unknown>> = []
+    const fetcher = (async (url: string, init: { body: string; headers: Record<string, string> }) => {
+      expect(url).toBe(MIMO_SPEECH_URL)
+      expect(init.headers.authorization).toBe('Bearer sk-mimo')
+      requests.push(JSON.parse(init.body) as Record<string, unknown>)
+      return reply(MP3)
+    }) as unknown as typeof fetch
+    const engine = new MiMoTtsEngine(async () => 'sk-mimo', home, fetcher, (p) => seen.push(p))
+
+    const first = await engine.synthesize('你好呀。', { model: 'mimo-v2.5-tts', voice: '冰糖', style: '温柔、语速稍慢' })
+    expect(first.cached).toBe(false)
+    expect(first.mime).toBe('audio/mpeg')
+    expect(first.audio.toString()).toBe(MP3.toString())
+    expect(requests[0]).toEqual({
+      model: 'mimo-v2.5-tts',
+      messages: [
+        { role: 'user', content: '温柔、语速稍慢' },
+        { role: 'assistant', content: '你好呀。' },
+      ],
+      audio: { format: 'mp3', voice: '冰糖' },
+      stream: false,
+    })
+    expect(seen[0].cached).toBe(false)
+    expect(seen[0].endpoint).toBe(MIMO_SPEECH_URL)
+    expect(seen[0].body).toEqual(requests[0])
+
+    const second = await engine.synthesize('你好呀。', { model: 'mimo-v2.5-tts', voice: '冰糖', style: '温柔、语速稍慢' })
+    expect(second.cached).toBe(true)
+    expect(seen[1].cached).toBe(true)
+    expect(requests).toHaveLength(1)
+  }))
+
+  it('没有 key 时直接失败并给出原因', withTempHome(async (home) => {
+    const engine = new MiMoTtsEngine(async () => undefined, home, (async () => {
+      throw new Error('should-not-call')
+    }) as unknown as typeof fetch)
+    await expect(engine.synthesize('你好', { model: 'mimo-v2.5-tts' })).rejects.toThrow('tts-key-missing')
+  }))
+
+  it('非 200 时把供应商原因带出来', withTempHome(async (home) => {
+    const fetcher = (async () => new Response(JSON.stringify({ error: { message: 'invalid voice' } }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch
+    const engine = new MiMoTtsEngine(async () => 'k', home, fetcher)
+    await expect(engine.synthesize('你好', { model: 'mimo-v2.5-tts' })).rejects.toThrow('tts-http 400: invalid voice')
+  }))
+
+  it('应答里没有音频时报错，不写缓存', withTempHome(async (home) => {
+    const fetcher = (async () => new Response(JSON.stringify({ choices: [{ message: {} }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch
+    const engine = new MiMoTtsEngine(async () => 'k', home, fetcher)
+    await expect(engine.synthesize('你好', { model: 'mimo-v2.5-tts' })).rejects.toThrow('tts-empty-audio')
+  }))
+})
+
+describe('mimoBody', () => {
+  it('没有风格指令时不带 user 消息，音色为空时不传 voice', () => {
+    expect(mimoBody('晚安。', { model: 'mimo-v2.5-tts', voice: '  ' })).toEqual({
+      model: 'mimo-v2.5-tts',
+      messages: [{ role: 'assistant', content: '晚安。' }],
+      audio: { format: 'mp3' },
+      stream: false,
+    })
+  })
+})
+
+describe('ttsCacheKey 与风格指令', () => {
+  it('风格指令不同则换键；空白风格指令不影响键', () => {
+    const base = ttsCacheKey('你好', { model: 'mimo-v2.5-tts', voice: '冰糖' })
+    expect(ttsCacheKey('你好', { model: 'mimo-v2.5-tts', voice: '冰糖', style: '  ' })).toBe(base)
+    expect(ttsCacheKey('你好', { model: 'mimo-v2.5-tts', voice: '冰糖', style: '慵懒' })).not.toBe(base)
   })
 })
