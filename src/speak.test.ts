@@ -152,6 +152,65 @@ describe('runSpeakPipeline', () => {
 })
 
 
+describe('runSpeakPipeline 逐句流式（ADR-063 修订）', () => {
+  it('按段顺序流式下发 audio.chunk，收尾只补一个 audio.end', async () => {
+    const { events, emit } = collector()
+    const streamed: string[] = []
+    const result = await runSpeakPipeline({
+      chunks: fromChunks([
+        { type: 'delta', text: '第一句。' },
+        { type: 'delta', text: '第二句。' },
+        { type: 'done', text: '第一句。第二句。' },
+      ]),
+      synthesize: async (text) => audioOf(text),
+      streamSynthesize: (text) => {
+        streamed.push(text)
+        return (async function* () {
+          await Promise.resolve()
+          yield { kind: 'pcm' as const, data: Buffer.alloc(8), sampleRate: 24_000, channels: 1 }
+          await Promise.resolve()
+          yield { kind: 'pcm' as const, data: Buffer.alloc(8), sampleRate: 24_000, channels: 1 }
+        })()
+      },
+      emit,
+    })
+    const chunks = events.filter((item) => item.event === 'audio.chunk')
+    expect(streamed).toEqual(['第一句。', '第二句。'])
+    expect(chunks.map((item) => (item.data as { index: number }).index)).toEqual([0, 0, 1, 1])
+    expect(chunks.every((item) => (item.data as { format: string }).format === 's16le')).toBe(true)
+    // 整段台词不该再走非流式 audio 帧
+    expect(events.some((item) => item.event === 'audio')).toBe(false)
+    const ends = events.filter((item) => item.event === 'audio.end')
+    expect(ends).toHaveLength(1)
+    expect(ends[0]?.data).toEqual({ index: 1, seconds: 0 })
+    expect(result.audio).toBe(2)
+    expect(result.clauses).toBe(2)
+  })
+
+  it('流式合成抛错时这一段没声音，但管线继续后续段', async () => {
+    const { events, emit } = collector()
+    const result = await runSpeakPipeline({
+      chunks: fromChunks([
+        { type: 'delta', text: '第一句。' },
+        { type: 'delta', text: '第二句。' },
+        { type: 'done', text: '第一句。第二句。' },
+      ]),
+      synthesize: async (text) => audioOf(text),
+      streamSynthesize: (text) => (async function* () {
+        await Promise.resolve()
+        if (text.includes('第一句')) throw new Error('tts-http 500')
+        yield { kind: 'pcm' as const, data: Buffer.alloc(8), sampleRate: 24_000, channels: 1 }
+      })(),
+      emit,
+    })
+    const indexes = events
+      .filter((item) => item.event === 'audio.chunk')
+      .map((item) => (item.data as { index: number }).index)
+    expect(indexes).toEqual([1])
+    expect(result.text).toBe('第一句。第二句。')
+  })
+})
+
 describe('runWholeSpeakPipeline（ADR-063 整段模式）', () => {
   it('先发 clause(0) 带 cue，再把 PCM 分片逐片下发，收尾补 audio.end 与 done', async () => {
     const { events, emit } = collector()

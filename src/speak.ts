@@ -45,6 +45,11 @@ export interface SpeakPipelineOptions {
   chunks: AsyncIterable<ReplyChunk>
   /** 合成一段音频；返回 null 表示这段没合成出来（管线继续，只是没声音）。 */
   synthesize: (text: string) => Promise<TtsAudio | null>
+  /**
+   * 逐句流式合成（ADR-063 修订）：给了就按段顺序边收边发 `audio.chunk`，
+   * 每段流完不单独发 `audio.end`，收尾统一发一次（带最后一段的序号）。
+   */
+  streamSynthesize?: (text: string) => AsyncGenerator<TtsStreamFrame>
   /** 事件出口。 */
   emit: SpeakEmit
   /** 中止信号（连接断开时停止后续合成）。 */
@@ -67,10 +72,19 @@ export interface SpeakResult {
  * @returns 最终整句、段数、成功出声的段数与记忆行。
  */
 export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<SpeakResult> {
-  const { chunks, synthesize, emit, signal } = options
+  const { chunks, synthesize, streamSynthesize, emit, signal } = options
   const tasks = new Map<number, Promise<TtsAudio | null>>()
+  /** 逐句流式的启动器（懒启动：等前面的段放完再开，避免多段分片交错） */
+  const streams = new Map<number, () => AsyncGenerator<TtsStreamFrame>>()
   let pumpIndex = 0
   let audioCount = 0
+  /** 流式分片状态（ADR-063 修订）：收尾统一发一次 audio.end */
+  let pcmChunks = 0
+  let pcmBytes = 0
+  let pcmSeq = 0
+  let pcmIndex = -1
+  let pcmRate = 24_000
+  let pcmChannels = 1
   let tagsOut: { expressions: string[]; motions: string[] } | undefined
   let total = ''
   let result = ''
@@ -87,6 +101,43 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
   /** 按序把已就绪的音频发出去（后段先好也要等前段）；本函数自身不会再被重入。 */
   const drain = async (): Promise<void> => {
     while (true) {
+      const starter = streams.get(pumpIndex)
+      if (starter) {
+        const index = pumpIndex
+        streams.delete(index)
+        let bytes = 0
+        try {
+          for await (const frame of starter()) {
+            if (signal?.aborted) break
+            if (frame.kind === 'audio') {
+              audioCount += 1
+              emit('audio', { index, mime: frame.audio.mime, data: frame.audio.audio.toString('base64') })
+              continue
+            }
+            pcmRate = frame.sampleRate
+            pcmChannels = frame.channels
+            bytes += frame.data.byteLength
+            pcmBytes += frame.data.byteLength
+            pcmChunks += 1
+            pcmIndex = index
+            emit('audio.chunk', {
+              index,
+              seq: pcmSeq,
+              sampleRate: frame.sampleRate,
+              channels: frame.channels,
+              format: 's16le',
+              data: frame.data.toString('base64'),
+            })
+            pcmSeq += 1
+          }
+        } catch {
+          // 流式失败：已发出去的片段照常播，不回退重发整段
+        }
+        if (bytes > 0) audioCount += 1
+        // 只有真正流完这一段才前进，跟音频任务同样的顺序保证
+        pumpIndex = index + 1
+        continue
+      }
       const task = tasks.get(pumpIndex)
       if (!task) return
       const index = pumpIndex
@@ -99,6 +150,16 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       // 只有真正处理完这一段才前进，避免「索引前进但任务还在」的错位
       pumpIndex = index + 1
     }
+  }
+
+  /** 收尾：流式分片统一补一次 `audio.end`（客户端据此等最后一片播完）。 */
+  const flushPcmEnd = (): void => {
+    if (pcmChunks === 0) return
+    const seconds = pcmBytes / (pcmRate * pcmChannels * 2)
+    emit('audio.end', {
+      index: pcmIndex < 0 ? 0 : pcmIndex,
+      seconds: Math.round(seconds * 100) / 100,
+    })
   }
 
   /** 排队一次 drain；返回的是这条链的尾部，调用方可按需 await。 */
@@ -114,8 +175,12 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
   const emitClauses = (clauses: readonly TimelineClause[]): void => {
     for (const clause of clauses) {
       emit('clause', clause)
-      const task = synthesize(clause.text).catch(() => null)
-      tasks.set(clause.index, task)
+      if (streamSynthesize) {
+        streams.set(clause.index, () => streamSynthesize(clause.text))
+      } else {
+        const task = synthesize(clause.text).catch(() => null)
+        tasks.set(clause.index, task)
+      }
       void kick()
     }
   }
@@ -159,6 +224,7 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
       emitClauses(timeline.end())
       await kick()
       emit('error', { error: chunk.error })
+      flushPcmEnd()
       emit('done', { text: stripInlineTags(result || total) })
       return {
         text: stripInlineTags(result || total),
@@ -174,12 +240,13 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
   // 收尾：段数可能在 drain 期间继续增加，所以循环到索引 drained 完为止；
   // 每轮都真正 await 一次 drain（不会空转）
   while (pumpIndex < timeline.length) {
-    if (!tasks.has(pumpIndex)) {
+    if (!tasks.has(pumpIndex) && !streams.has(pumpIndex)) {
       pumpIndex += 1
       continue
     }
     await kick()
   }
+  flushPcmEnd()
   emit('done', { text: stripInlineTags(result || total) })
   return {
     text: stripInlineTags(result || total),

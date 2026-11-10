@@ -554,13 +554,13 @@ export function apply(ctx: Context, config: Config): void {
       const styleOn = settings.ttsStyleControl && ttsModelProvider(speakOptions.model) === 'mimo'
       let replyStyle = ''
       /**
-       * 两个开关（ADR-063）：
-       * - 文字流式开 → LLM 边生成边切句；关 → 一次性拿整段再处理；
-       * - 语音流式开（仅 MiMo）→ 整段一次合成、边收边播。
-       * 合成粒度：语音流式开 或 文字流式关 ⇒ 整段；否则逐句（现状）。
+       * 两个开关各管一件事（ADR-063 修订）：
+       * - LLM 流式输出只决定「文字怎么来」：开 → 边生成边切句（逐句合成）；关 → 整段写完再处理；
+       * - 语音流式只决定「音频怎么交付」：开 → 边合成边播（audio.chunk）；关 → 合成完再播。
+       * 所以合成粒度只看 LLM 流式，语音流式在逐句模式下按段流、在整段模式下整段流。
        */
       const ttsStreamOn = speakOn && settings.ttsStreaming && ttsModelProvider(speakOptions.model) === 'mimo'
-      const wholeMode = ttsStreamOn || !settings.llmStreaming
+      const wholeMode = !settings.llmStreaming
       // 语气帧不进客户端：它只影响合成请求（气泡/历史里都不该出现），在这里被吃掉
       async function* styledChunks(): AsyncGenerator<ReplyChunk> {
         for await (const chunk of replyChunks) {
@@ -599,6 +599,43 @@ export function apply(ctx: Context, config: Config): void {
           return null
         }
       }
+
+      const engine: TtsEngine = ttsEngineFor(speakOptions.model)
+      const canStream = speakOn && ttsStreamOn && typeof engine.synthesizeStream === 'function'
+      /**
+       * 流式合成一段文本（整段或单句）：边收边 yield，附 debug 埋点与字节统计。
+       * 语气指令在迭代时才读 `replyStyle`——逐句模式下它由首帧 style 帧写入。
+       */
+      const streamText = (text: string): AsyncGenerator<TtsStreamFrame> => (async function* () {
+        const options: TtsVoiceOptions = replyStyle ? { ...speakOptions, style: replyStyle } : speakOptions
+        const startedAt = Date.now()
+        let bytes = 0
+        try {
+          for await (const frame of engine.synthesizeStream!(text, options, signal, (payload) => {
+            lastSpeakPayload = payload
+            emit('debug', traceStep('tts.request', payload))
+          })) {
+            bytes += frame.kind === 'pcm' ? frame.data.byteLength : frame.audio.audio.byteLength
+            yield frame
+          }
+          emit('debug', traceStep('tts.reply', {
+            ok: true,
+            stream: true,
+            bytes,
+            mime: 'audio/pcm',
+            ms: Date.now() - startedAt,
+          }))
+        } catch (error) {
+          emit('debug', traceStep('tts.reply', {
+            ok: false,
+            stream: true,
+            bytes,
+            error: error instanceof Error ? error.message : String(error),
+            ms: Date.now() - startedAt,
+          }))
+          throw error
+        }
+      })()
 
       // ---- 整段模式（ADR-063）：先把整段回复拿全，再一次性交给 TTS ----
       if (wholeMode) {
@@ -662,39 +699,8 @@ export function apply(ctx: Context, config: Config): void {
           ...(replyTags?.expressions ?? []).map((id): TimelineCue => ({ kind: 'expression', id })),
           ...(replyTags?.motions ?? []).map((id): TimelineCue => ({ kind: 'motion', id })),
         ]
-        const options: TtsVoiceOptions = replyStyle ? { ...speakOptions, style: replyStyle } : speakOptions
-        const engine: TtsEngine = ttsEngineFor(options.model)
-        const canStream = speakOn && ttsStreamOn && typeof engine.synthesizeStream === 'function'
         const streamFactory = canStream
-          ? (): AsyncGenerator<TtsStreamFrame> => (async function* () {
-            const startedAt = Date.now()
-            let bytes = 0
-            try {
-              for await (const frame of engine.synthesizeStream!(text, options, signal, (payload) => {
-                lastSpeakPayload = payload
-                emit('debug', traceStep('tts.request', payload))
-              })) {
-                bytes += frame.kind === 'pcm' ? frame.data.byteLength : frame.audio.audio.byteLength
-                yield frame
-              }
-              emit('debug', traceStep('tts.reply', {
-                ok: true,
-                stream: true,
-                bytes,
-                mime: 'audio/pcm',
-                ms: Date.now() - startedAt,
-              }))
-            } catch (error) {
-              emit('debug', traceStep('tts.reply', {
-                ok: false,
-                stream: true,
-                bytes,
-                error: error instanceof Error ? error.message : String(error),
-                ms: Date.now() - startedAt,
-              }))
-              throw error
-            }
-          })()
+          ? (): AsyncGenerator<TtsStreamFrame> => streamText(text)
           : undefined
         const result = await runWholeSpeakPipeline({
           text,
@@ -715,7 +721,13 @@ export function apply(ctx: Context, config: Config): void {
       }
 
       // ---- 逐句模式（现状，ADR-033 / ADR-037）----
-      const result = await runSpeakPipeline({ chunks: styledChunks(), synthesize, emit, signal })
+      const result = await runSpeakPipeline({
+        chunks: styledChunks(),
+        synthesize,
+        ...(canStream ? { streamSynthesize: (text: string) => streamText(text) } : {}),
+        emit,
+        signal,
+      })
       if (result.text) {
         recordAiTurn(context, result.text, settings, {
           ...result.tags,

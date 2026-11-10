@@ -3888,9 +3888,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           speakChain = speakChain.then(async () => {
             if (seq !== speakSeq) return
             if (pcmIndex !== index) {
+              // 逐句流式（ADR-063 修订）：分片按到达顺序排进同一条时间轴，
+              // 换段时不能清空队列，否则下一段会盖到上一段尾巴上
               pcmIndex = index
-              pcmNextStart = 0
-              pcmSources = []
               enterClause(index)
             }
             schedulePcmChunk(item.data as string, sampleRate)

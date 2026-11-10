@@ -155,7 +155,7 @@ export interface PetSettingsValue {
   ttsStyleControl: boolean
   /** 文字流式（ADR-063）：开 = 边生成边切句；关 = 等整段回复写完。 */
   llmStreaming: boolean
-  /** 语音流式（ADR-063）：整段一次合成、边收边播（只有 MiMo 支持）。 */
+  /** 语音流式（ADR-063）：音频边收边播，不改变合成粒度（只有 MiMo 支持）。 */
   ttsStreaming: boolean
   /** 口型跟随开关。 */
   lipsyncEnabled: boolean
@@ -2961,11 +2961,12 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      // 语音流式只有 MiMo 支持（OpenRouter 的端点没有增量音频语义，ADR-063）
+      // 语音流式只有 MiMo 支持（OpenRouter 的端点没有增量音频语义，ADR-063）：
+      // 它只管音频怎么交付；整段合成（语气更连贯）由上面的「LLM 流式输出」关闭决定
       ttsModelProvider(value.ttsModel) === 'mimo' && createElement('div', { style: formRowInlineStyle },
         createElement(FormLabel, {
           title: '语音流式',
-          hint: '开：整段合成、边收边播更连贯；关：等合成完再播',
+          hint: '开：音频边收边播，首声更快；关：等合成完再播',
         }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
