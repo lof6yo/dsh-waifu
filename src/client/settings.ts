@@ -2368,13 +2368,10 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }, aiChecking ? '测试中…' : '测试'),
         ),
       ),
-      // 文字流式（ADR-063 修订）：只管 LLM 这一侧——开 = 边生成边显示，关 = 等整段写完
+      // LLM 流式输出（ADR-063 修订）：只管文字这一侧——开 = 边生成边显示，关 = 等整段写完
       createElement('div', { style: formRowStyle },
-        createElement(FormLabel, {
-          title: '文字流式',
-          hint: '开：气泡随生成逐字出现；关：整段写完再显示',
-        }),
-        createElement('div', { style: formControlInlineStyle },
+        createElement(FormLabel, { title: 'LLM 流式输出' }),
+        createElement('div', { style: { ...formControlInlineStyle, justifyContent: 'flex-end', width: '100%' } },
           createElement(ThemeSwitch, {
             checked: !!value.llmStreaming,
             disabled: !writable,
