@@ -14,17 +14,27 @@
  * @module dsh-waifu/speak
  */
 
-import { type TtsAudio } from './tts.ts'
+import { type TtsAudio, type TtsStreamFrame } from './tts.ts'
 import { stripInlineTags } from './ai.ts'
 import type { ReplyChunk } from './ai.ts'
-import { ClauseTimeline, type TimelineClause } from './timeline.ts'
+import { ClauseTimeline, type TimelineClause, type TimelineCue } from './timeline.ts'
 
 /** 单次演绎最多合成的字符数（防止模型跑飞把一句话拉成一段独白）。 */
 export const SPEAK_MAX_CHARS = 400
 
 /** 事件下发函数（由路由层转成 SSE 帧）。 */
 export type SpeakEmit = (
-  event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error' | 'debug',
+  event:
+    | 'text'
+    | 'clause'
+    | 'audio'
+    | 'audio.chunk'
+    | 'audio.end'
+    | 'tags'
+    | 'memory'
+    | 'done'
+    | 'error'
+    | 'debug',
   data: unknown,
 ) => void
 
@@ -177,4 +187,86 @@ export async function runSpeakPipeline(options: SpeakPipelineOptions): Promise<S
     memory,
     ...(tagsOut === undefined ? {} : { tags: tagsOut }),
   }
+}
+
+
+/** 整段演绎依赖（ADR-063）：一条台词一次合成，可选流式（MiMo）。 */
+export interface WholeSpeakOptions {
+  /** 已剥掉标签的整段台词。 */
+  text: string
+  /** 这一段开始播时要执行的演出指令。 */
+  cues: readonly TimelineCue[]
+  /** 流式合成：每片增量 PCM 直接下发（MiMo）；不给则回落到整段合成。 */
+  stream?: () => AsyncGenerator<TtsStreamFrame>
+  /** 整段合成（没有流式时用）：返回整段可解码音频，null = 没合成出来。 */
+  synthesize: (text: string) => Promise<TtsAudio | null>
+  emit: SpeakEmit
+  signal?: AbortSignal
+}
+
+/**
+ * 跑一轮「整段」演绎（ADR-063）：台词只有一段，合成粒度是整段而不是逐句。
+ *
+ * 事件顺序：先 `clause(0)`（气泡一次显示整段、cue 一次执行），再逐片 `audio.chunk`
+ * 或一条 `audio`；流式播放完补一个 `audio.end`（带总时长），最后 `done`。
+ * 流式中途出错时不再回退重发（避免同一段播两遍），只把已收到的部分播完。
+ */
+export async function runWholeSpeakPipeline(options: WholeSpeakOptions): Promise<SpeakResult> {
+  const { text, cues, stream, synthesize, emit, signal } = options
+  const trimmed = text.trim()
+  if (!trimmed) {
+    emit('done', { text: '' })
+    return { text: '', clauses: 0, audio: 0 }
+  }
+
+  emit('clause', { index: 0, text: trimmed, cues: [...cues] })
+
+  let audioCount = 0
+  let chunkCount = 0
+  let pcmBytes = 0
+  let sampleRate = 24_000
+  let channels = 1
+
+  if (stream) {
+    try {
+      for await (const frame of stream()) {
+        if (signal?.aborted) break
+        if (frame.kind === 'audio') {
+          audioCount += 1
+          emit('audio', { index: 0, mime: frame.audio.mime, data: frame.audio.audio.toString('base64') })
+          continue
+        }
+        sampleRate = frame.sampleRate
+        channels = frame.channels
+        pcmBytes += frame.data.byteLength
+        emit('audio.chunk', {
+          index: 0,
+          seq: chunkCount,
+          sampleRate: frame.sampleRate,
+          channels: frame.channels,
+          format: 's16le',
+          data: frame.data.toString('base64'),
+        })
+        chunkCount += 1
+      }
+    } catch {
+      // 流式失败：已经发出去的片段照常播，不再补发整段（否则会重复出声）
+    }
+  }
+
+  // 没有任何音频时才回落到整段合成：流式断流但已经播了一部分的不重复
+  if (audioCount === 0 && chunkCount === 0 && !signal?.aborted) {
+    const audio = await synthesize(trimmed).catch(() => null)
+    if (audio) {
+      audioCount += 1
+      emit('audio', { index: 0, mime: audio.mime, data: audio.audio.toString('base64') })
+    }
+  }
+
+  const seconds = pcmBytes > 0 ? pcmBytes / (sampleRate * channels * 2) : 0
+  if (chunkCount > 0) {
+    emit('audio.end', { index: 0, seconds: Math.round(seconds * 100) / 100 })
+  }
+  emit('done', { text: trimmed })
+  return { text: trimmed, clauses: 1, audio: Math.max(audioCount, chunkCount > 0 ? 1 : 0) }
 }

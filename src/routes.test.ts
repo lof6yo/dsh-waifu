@@ -86,6 +86,8 @@ const BASE_SETTINGS: PetSettings = {
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
   ttsVoice: 'longanlingxin',
   ttsStyleControl: true,
+  llmStreaming: true,
+  ttsStreaming: false,
   lipsyncEnabled: true,
   lipsyncGain: 100,
   focusRange: 60,

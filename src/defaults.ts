@@ -308,6 +308,18 @@ export function ttsDefaultVoice(model: string): string {
  */
 export const DEFAULT_TTS_STYLE_CONTROL = true
 
+/**
+ * 文字流式（ADR-063）：开 = LLM 边生成边切句上屏；关 = 等整段回复写完再处理。
+ * 与「语音流式」正交：qwen 用「开 + 关」保持逐句合成，MiMo 用「关 + 开」换整段连贯语气。
+ */
+export const DEFAULT_LLM_STREAMING = true
+
+/**
+ * 语音流式（ADR-063）：开 = 整段台词一次交给 TTS 并边收边播（目前只有 MiMo 支持）。
+ * 关 = 逐句合成（文字流式开时）或整段非流式（文字流式关时）。
+ */
+export const DEFAULT_TTS_STREAMING = false
+
 /** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */
 export const DEFAULT_LIPSYNC_ENABLED = true
 /** 口型强度（百分比；100 = 标准，0 = 不张嘴）。 */
@@ -431,6 +443,10 @@ export const DEFAULT_SETTINGS = {
   ttsVoice: DEFAULT_TTS_VOICE,
   /** 风格控制（只对 MiMo 生效，ADR-062）：开启后由 LLM 决定每轮的语气指令。 */
   ttsStyleControl: DEFAULT_TTS_STYLE_CONTROL,
+  /** 文字流式（ADR-063）。 */
+  llmStreaming: DEFAULT_LLM_STREAMING,
+  /** 语音流式（ADR-063；只有 MiMo 支持）。 */
+  ttsStreaming: DEFAULT_TTS_STREAMING,
   lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,
   lipsyncGain: DEFAULT_LIPSYNC_GAIN,
   focusRange: DEFAULT_FOCUS_RANGE,

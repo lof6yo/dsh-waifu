@@ -6,6 +6,12 @@ import {
   MiMoTtsEngine,
   MIMO_SPEECH_URL,
   mimoBody,
+  mimoStreamBody,
+  parseMiMoStream,
+  pcmToWav,
+  TTS_STREAM_SAMPLE_RATE,
+  type TtsStreamFetcher,
+  type TtsStreamResponseLike,
   OpenRouterTtsEngine,
   splitClauses,
   ttsCacheKey,
@@ -234,5 +240,128 @@ describe('ttsCacheKey 与风格指令', () => {
     const base = ttsCacheKey('你好', { model: 'mimo-v2.5-tts', voice: '冰糖' })
     expect(ttsCacheKey('你好', { model: 'mimo-v2.5-tts', voice: '冰糖', style: '  ' })).toBe(base)
     expect(ttsCacheKey('你好', { model: 'mimo-v2.5-tts', voice: '冰糖', style: '慵懒' })).not.toBe(base)
+  })
+})
+
+
+describe('MiMo 流式合成（ADR-063）', () => {
+  function withTempHome(run: (home: string) => Promise<void>): () => Promise<void> {
+    return async () => {
+      const home = mkdtempSync(join(tmpdir(), 'waifu-mimo-stream-'))
+      try {
+        await run(home)
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    }
+  }
+
+  /** 拼一段 SSE 文本：每片音频一个 chunk，按给定的切分点切块喂进去（模拟真实分块到达）。 */
+  const sseText = (pieces: number[][]): string => pieces
+    .map((pcm) => `data: ${JSON.stringify({ choices: [{ delta: { audio: { data: Buffer.from(pcm).toString('base64') } } }] })}\n\n`)
+    .join('')
+
+  const streamingResponse = (text: string, cuts: number[] = []): TtsStreamResponseLike => {
+    const parts: string[] = []
+    let cursor = 0
+    for (const cut of cuts) { parts.push(text.slice(cursor, cut)); cursor = cut }
+    parts.push(text.slice(cursor))
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/event-stream' },
+      body: (async function* () {
+        for (const part of parts) yield Buffer.from(part, 'utf8')
+      })(),
+      text: async () => '',
+    }
+  }
+
+  it('SSE 分片跨块到达也能逐片解析出 PCM', async () => {
+    const text = sseText([[1, 2], [3, 4, 5], [6]])
+    const chunks: Buffer[] = []
+    // 故意在每个 chunk 中间切一刀：解析器必须自己把半行拼回去
+    for await (const pcm of parseMiMoStream((async function* () {
+      yield Buffer.from(text.slice(0, 7), 'utf8')
+      yield Buffer.from(text.slice(7, 33), 'utf8')
+      yield Buffer.from(text.slice(33), 'utf8')
+    })())) chunks.push(pcm)
+    expect(chunks.map((item) => [...item])).toEqual([[1, 2], [3, 4, 5], [6]])
+  })
+
+  it('整段流式：边收边给 PCM 分片，收完把 PCM 包成 WAV 落缓存，第二次命中缓存整段下发', withTempHome(async (home) => {
+    const frames = [[5, 6, 7, 8], [9, 10, 11, 12]]
+    const sse = sseText(frames)
+    let calls = 0
+    const streamFetcher: TtsStreamFetcher = async () => {
+      calls += 1
+      return streamingResponse(sse)
+    }
+    const seen: TtsPayload[] = []
+    const engine = new MiMoTtsEngine(async () => 'k', home, undefined, (payload) => seen.push(payload), streamFetcher)
+
+    const got: Buffer[] = []
+    for await (const frame of engine.synthesizeStream('你好呀。', { model: 'mimo-v2.5-tts', voice: '冰糖' })) {
+      expect(frame.kind).toBe('pcm')
+      if (frame.kind === 'pcm') {
+        expect(frame.sampleRate).toBe(TTS_STREAM_SAMPLE_RATE)
+        expect(frame.channels).toBe(1)
+        got.push(frame.data)
+      }
+    }
+    expect(got.map((item) => [...item])).toEqual(frames)
+    expect(seen[0].body).toMatchObject({ stream: true, audio: { format: 'pcm16', voice: '冰糖' } })
+
+    const second: string[] = []
+    for await (const frame of engine.synthesizeStream('你好呀。', { model: 'mimo-v2.5-tts', voice: '冰糖' })) {
+      if (frame.kind === 'audio') {
+        second.push(frame.audio.mime)
+        // 缓存里是 WAV：文件头是 RIFF，数据长度 = 两片 PCM
+        expect(frame.audio.audio.subarray(0, 4).toString()).toBe('RIFF')
+        expect(frame.audio.audio.byteLength).toBe(44 + 8)
+      }
+    }
+    expect(second).toEqual(['audio/wav'])
+    expect(calls).toBe(1) // 第二次走缓存，没有再发请求
+  }))
+
+  it('流式接口非 200 时带出状态码', withTempHome(async (home) => {
+    const streamFetcher: TtsStreamFetcher = async () => ({
+      ok: false,
+      status: 429,
+      headers: { get: () => null },
+      body: null,
+      text: async () => 'rate limited',
+    })
+    const engine = new MiMoTtsEngine(async () => 'k', home, undefined, undefined, streamFetcher)
+    const iterate = async () => {
+      for await (const _ of engine.synthesizeStream('你好', { model: 'mimo-v2.5-tts' })) void _
+    }
+    await expect(iterate()).rejects.toThrow('tts-http 429: rate limited')
+  }))
+
+  it('mimoStreamBody：流式请求必须是 pcm16 + stream:true', () => {
+    expect(mimoStreamBody('晚安。', { model: 'mimo-v2.5-tts', voice: '冰糖' }, '慵懒')).toEqual({
+      model: 'mimo-v2.5-tts',
+      messages: [
+        { role: 'user', content: '慵懒' },
+        { role: 'assistant', content: '晚安。' },
+      ],
+      audio: { format: 'pcm16', voice: '冰糖' },
+      stream: true,
+    })
+  })
+
+  it('pcmToWav 写出合法的 44 字节头', () => {
+    const pcm = Buffer.from([1, 0, 2, 0])
+    const wav = pcmToWav(pcm)
+    expect(wav.byteLength).toBe(48)
+    expect(wav.subarray(0, 4).toString()).toBe('RIFF')
+    expect(wav.readUInt32LE(4)).toBe(36 + pcm.byteLength)
+    expect(wav.subarray(8, 12).toString()).toBe('WAVE')
+    expect(wav.readUInt16LE(22)).toBe(1)
+    expect(wav.readUInt32LE(24)).toBe(TTS_STREAM_SAMPLE_RATE)
+    expect(wav.readUInt16LE(34)).toBe(16)
+    expect(wav.readUInt32LE(40)).toBe(pcm.byteLength)
   })
 })

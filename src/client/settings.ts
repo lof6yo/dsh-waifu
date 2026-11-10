@@ -153,6 +153,10 @@ export interface PetSettingsValue {
   ttsVoice: string
   /** 风格控制开关（只对 MiMo 生效，ADR-062）。 */
   ttsStyleControl: boolean
+  /** 文字流式（ADR-063）：开 = 边生成边切句；关 = 等整段回复写完。 */
+  llmStreaming: boolean
+  /** 语音流式（ADR-063）：整段一次合成、边收边播（只有 MiMo 支持）。 */
+  ttsStreaming: boolean
   /** 口型跟随开关。 */
   lipsyncEnabled: boolean
   /** 口型强度（0–300）。 */
@@ -2940,6 +2944,38 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
             disabled: !writable,
             onChange: (next) => {
               enqueueWrite(() => [{ op: 'set', path: ['ttsStyleControl'], value: next }])
+            },
+          }),
+        ),
+      ),
+      // 文字流式 / 语音流式（ADR-063）：两个取舍相互独立，qwen 默认「开 + 关」= 逐句合成
+      createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, {
+          title: '文字流式',
+          hint: '开启后角色边想边说、气泡逐句出现，语音也按句合成（首声快）；关闭则等整段回复写完再处理（ADR-063）',
+        }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement(ThemeSwitch, {
+            checked: !!value.llmStreaming,
+            disabled: !writable,
+            onChange: (next) => {
+              enqueueWrite(() => [{ op: 'set', path: ['llmStreaming'], value: next }])
+            },
+          }),
+        ),
+      ),
+      // 语音流式只有 MiMo 支持（OpenRouter 的端点没有增量音频语义，ADR-063）
+      ttsModelProvider(value.ttsModel) === 'mimo' && createElement('div', { style: formRowInlineStyle },
+        createElement(FormLabel, {
+          title: '语音流式',
+          hint: '整段台词一次发给 MiMo、边收边播，句与句之间不再各自起调（更连贯）；关闭则整段等合成完再播（ADR-063）',
+        }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement(ThemeSwitch, {
+            checked: !!value.ttsStreaming,
+            disabled: !writable,
+            onChange: (next) => {
+              enqueueWrite(() => [{ op: 'set', path: ['ttsStreaming'], value: next }])
             },
           }),
         ),

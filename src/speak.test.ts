@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runSpeakPipeline, type SpeakEmit } from '../src/speak.ts'
+import { runSpeakPipeline, runWholeSpeakPipeline, type SpeakEmit } from '../src/speak.ts'
 import type { ReplyChunk } from '../src/ai.ts'
 
 /** 把若干分块包成异步迭代器（模拟 LLM 流）。 */
@@ -148,5 +148,88 @@ describe('runSpeakPipeline', () => {
     const names = events.map((item) => item.event)
     expect(names).toContain('error')
     expect(names.at(-1)).toBe('done')
+  })
+})
+
+
+describe('runWholeSpeakPipeline（ADR-063 整段模式）', () => {
+  it('先发 clause(0) 带 cue，再把 PCM 分片逐片下发，收尾补 audio.end 与 done', async () => {
+    const { events, emit } = collector()
+    const result = await runWholeSpeakPipeline({
+      text: '今天也在等你回来。',
+      cues: [{ kind: 'expression', id: 'blush' }, { kind: 'motion', id: 'Tilt' }],
+      stream: async function* () {
+        yield { kind: 'pcm', data: Buffer.alloc(4), sampleRate: 24000, channels: 1 }
+        yield { kind: 'pcm', data: Buffer.alloc(4), sampleRate: 24000, channels: 1 }
+      },
+      synthesize: async () => { throw new Error('不该走到整段合成') },
+      emit,
+    })
+    expect(events[0]).toEqual({
+      event: 'clause',
+      data: {
+        index: 0,
+        text: '今天也在等你回来。',
+        cues: [{ kind: 'expression', id: 'blush' }, { kind: 'motion', id: 'Tilt' }],
+      },
+    })
+    const chunks = events.filter((item) => item.event === 'audio.chunk')
+    expect(chunks).toHaveLength(2)
+    expect(chunks[0]!.data).toMatchObject({ index: 0, seq: 0, sampleRate: 24000, channels: 1, format: 's16le' })
+    const end = events.find((item) => item.event === 'audio.end')
+    // 8 字节 PCM / (24000 × 1 × 2) ≈ 0 秒（四舍五入后 0）
+    expect(end).toEqual({ event: 'audio.end', data: { index: 0, seconds: 0 } })
+    expect(events[events.length - 1]).toEqual({ event: 'done', data: { text: '今天也在等你回来。' } })
+    expect(result).toEqual({ text: '今天也在等你回来。', clauses: 1, audio: 1 })
+  })
+
+  it('没有流式（千问 / 未开语音流式）时回落到整段合成，只发一条 audio', async () => {
+    const { events, emit } = collector()
+    const result = await runWholeSpeakPipeline({
+      text: '晚安。',
+      cues: [],
+      synthesize: async (text) => audioOf(text),
+      emit,
+    })
+    const audios = events.filter((item) => item.event === 'audio')
+    expect(audios).toHaveLength(1)
+    expect(events.some((item) => item.event === 'audio.end')).toBe(false)
+    expect(result.audio).toBe(1)
+  })
+
+  it('流式中途报错时不再补发整段，避免同一句播两遍', async () => {
+    const { events, emit } = collector()
+    let synthesized = 0
+    const result = await runWholeSpeakPipeline({
+      text: '嗯。',
+      cues: [],
+      stream: async function* () {
+        yield { kind: 'pcm', data: Buffer.alloc(8), sampleRate: 24000, channels: 1 }
+        throw new Error('sse-broken')
+      },
+      synthesize: async () => { synthesized += 1; return audioOf('x') },
+      emit,
+    })
+    expect(synthesized).toBe(0)
+    expect(events.filter((item) => item.event === 'audio.chunk')).toHaveLength(1)
+    expect(events.some((item) => item.event === 'done')).toBe(true)
+    expect(result.audio).toBe(1)
+  })
+
+  it('流式首帧就是缓存命中的整段音频时，发一条 audio 而不是分片', async () => {
+    const { events, emit } = collector()
+    await runWholeSpeakPipeline({
+      text: '早。',
+      cues: [],
+      stream: async function* () {
+        yield { kind: 'audio', audio: { mime: 'audio/wav', audio: Buffer.from('RIFFxxxx'), cached: true } }
+      },
+      synthesize: async () => null,
+      emit,
+    })
+    const audios = events.filter((item) => item.event === 'audio')
+    expect(audios).toHaveLength(1)
+    expect(audios[0]!.data).toMatchObject({ index: 0, mime: 'audio/wav' })
+    expect(events.some((item) => item.event === 'audio.end')).toBe(false)
   })
 })

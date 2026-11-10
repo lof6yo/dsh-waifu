@@ -1298,6 +1298,12 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let activeSource: AudioBufferSourceNode | null = null
   /** 对应段的 resolve：掐掉时按 null（没播完）结束，别让链一直挂着。 */
   let activeResolve: ((seconds: number | null) => void) | null = null
+  /** 流式 PCM 播放（ADR-063）：按时间轴排队，下一片接上一片，句间没有重启的空隙。 */
+  let pcmIndex = -1
+  /** 下一片应该从 AudioContext 的哪个时刻开始（秒）。 */
+  let pcmNextStart = 0
+  /** 已排进时间轴、还没播完的分片（打断时要全部停掉）。 */
+  let pcmSources: AudioBufferSourceNode[] = []
 
   /** 懒创建 AudioContext + 分析器；被浏览器挂起时顺手恢复。 */
   function ensureAudio(): AudioContext | null {
@@ -1314,6 +1320,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       lipsyncAnalyser.fftSize = 1024
       lipsyncAnalyser.smoothingTimeConstant = 0.55
       lipsyncData = new Uint8Array(new ArrayBuffer(lipsyncAnalyser.fftSize))
+      // 分析器常连输出（ADR-063）：整段流式是一片一片接进来的，不能再每段接一次/断一次
+      lipsyncAnalyser.connect(audioCtx.destination)
     } catch {
       audioCtx = null
     }
@@ -1339,6 +1347,16 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         source.stop()
       } catch { /* 已经播完 */ }
     }
+    // 流式分片可能排了好几个在未来时刻，一起掐掉（ADR-063）
+    for (const pcm of pcmSources) {
+      try {
+        pcm.onended = null
+        pcm.stop()
+      } catch { /* 还没调度或已播完 */ }
+    }
+    pcmSources = []
+    pcmNextStart = 0
+    pcmIndex = -1
     resolve?.(null)
     speakClauses = []
     speakRevealed = -1
@@ -1364,15 +1382,14 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     return new Promise<number | null>((resolve) => {
       const finish = (seconds: number | null) => {
         activeResolve = null
-        try { analyser.disconnect() } catch { /* 已断开 */ }
         resolve(seconds)
       }
       ctx.decodeAudioData(buffer, (decoded) => {
         try {
           const source = ctx.createBufferSource()
           source.buffer = decoded
+          // 分析器已在 ensureAudio 里常连 destination（ADR-063），这里只接自己
           source.connect(analyser)
-          analyser.connect(ctx.destination)
           activeSource = source
           activeResolve = finish
           source.onended = () => {
@@ -1384,6 +1401,45 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           finish(null)
         }
       }, () => resolve(null))
+    })
+  }
+
+  /**
+   * 排一片流式 PCM（ADR-063）：`16 bit 小端单声道` → AudioBuffer → 按时间轴无缝接上。
+   * 不 await，晚到的分片只是排得更晚；`audio.end` 之后才等总时长。
+   */
+  function schedulePcmChunk(base64: string, sampleRate: number): void {
+    const ctx = ensureAudio()
+    const analyser = lipsyncAnalyser
+    if (!ctx || !analyser) return
+    const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0))
+    const frames = Math.floor(bytes.byteLength / 2)
+    if (frames <= 0) return
+    const buffer = ctx.createBuffer(1, frames, sampleRate)
+    const channel = buffer.getChannelData(0)
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    for (let i = 0; i < frames; i += 1) channel[i] = view.getInt16(i * 2, true) / 32768
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.connect(analyser)
+    // 首片留一点缓冲，之后严格接在上一片末尾（浏览器会按 start 时刻精确排队）
+    const startAt = Math.max(ctx.currentTime + 0.05, pcmNextStart)
+    source.start(startAt)
+    pcmNextStart = startAt + buffer.duration
+    pcmSources.push(source)
+    source.onended = () => {
+      const at = pcmSources.indexOf(source)
+      if (at >= 0) pcmSources.splice(at, 1)
+    }
+  }
+
+  /** 等已排进时间轴的流式分片全部播完（打断时由 speakSeq 兜底提前返回）。 */
+  function waitPcmDone(): Promise<void> {
+    const ctx = audioCtx
+    if (!ctx || pcmSources.length === 0) return Promise.resolve()
+    const remainingMs = Math.max(0, (pcmNextStart - ctx.currentTime) * 1000) + 150
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, remainingMs)
     })
   }
 
@@ -3768,6 +3824,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     pendingTags = null
     clearStickyExpression()
     speakChain = Promise.resolve()
+    pcmIndex = -1
+    pcmNextStart = 0
+    pcmSources = []
     let finalText: string | null = null
     let sawClause = false
     try {
@@ -3787,6 +3846,36 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
           // 否则同一次演出会被执行两遍（动作刚起就被自己打断）。
           const tag = takePendingTags()
           if (tag !== null && cues.length === 0) applyTags(tag.expressions, tag.motions)
+          return
+        }
+        if (event === 'audio.chunk') {
+          // 整段流式（ADR-063）：一片一片排进时间轴，不阻塞事件循环
+          const item = data as { index?: unknown; sampleRate?: unknown; data?: unknown }
+          if (typeof item.data !== 'string') return
+          const index = typeof item.index === 'number' ? item.index : 0
+          const sampleRate = typeof item.sampleRate === 'number' ? item.sampleRate : 24000
+          speakChain = speakChain.then(async () => {
+            if (seq !== speakSeq) return
+            if (pcmIndex !== index) {
+              pcmIndex = index
+              pcmNextStart = 0
+              pcmSources = []
+              enterClause(index)
+            }
+            schedulePcmChunk(item.data as string, sampleRate)
+          })
+          return
+        }
+        if (event === 'audio.end') {
+          // 等最后一片播完再往下走（收尾的 sticky 表情撤销要踩在演出结束之后）
+          const payload = data as { index?: unknown; mime?: unknown; seconds?: unknown }
+          const index = typeof payload.index === 'number' ? payload.index : 0
+          const seconds = typeof payload.seconds === 'number' ? payload.seconds : null
+          speakChain = speakChain.then(async () => {
+            if (seq !== speakSeq) return
+            await waitPcmDone()
+            conPushJson('play.audio', { index, mime: 'audio/pcm', seconds })
+          })
           return
         }
         if (event === 'audio') {

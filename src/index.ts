@@ -55,6 +55,8 @@ import {
   FOCUS_RANGE_LIMITS,
   LIPSYNC_GAIN_LIMITS,
   ttsModelProvider,
+  DEFAULT_LLM_STREAMING,
+  DEFAULT_TTS_STREAMING,
 } from './defaults.ts'
 import {
   makePetRoutes,
@@ -103,10 +105,13 @@ import {
   MiMoTtsEngine,
   OpenRouterTtsEngine,
   type TtsAudio,
+  type TtsEngine,
   type TtsPayload,
+  type TtsStreamFrame,
   type TtsVoiceOptions,
 } from './tts.ts'
-import { runSpeakPipeline } from './speak.ts'
+import { runSpeakPipeline, runWholeSpeakPipeline } from './speak.ts'
+import type { TimelineCue } from './timeline.ts'
 import { TouchPartsStore } from './touch-parts.ts'
 
 export { PetService } from './service.ts'
@@ -208,6 +213,10 @@ export const Config: Schema<Config> = Schema.object({
   ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
   ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
   ttsStyleControl: Schema.boolean().default(DEFAULT_SETTINGS.ttsStyleControl),
+  /** 文字流式（ADR-063）：关闭后等整段回复写完再处理（整段合成）。 */
+  llmStreaming: Schema.boolean().default(DEFAULT_LLM_STREAMING),
+  /** 语音流式（ADR-063）：整段一次合成、边收边播（目前只有 MiMo 支持）。 */
+  ttsStreaming: Schema.boolean().default(DEFAULT_TTS_STREAMING),
   lipsyncEnabled: Schema.boolean().default(DEFAULT_SETTINGS.lipsyncEnabled),
   lipsyncGain: Schema.number().min(LIPSYNC_GAIN_LIMITS.min).max(LIPSYNC_GAIN_LIMITS.max).default(DEFAULT_SETTINGS.lipsyncGain),
   focusRange: Schema.number().min(FOCUS_RANGE_LIMITS.min).max(FOCUS_RANGE_LIMITS.max).default(DEFAULT_SETTINGS.focusRange),
@@ -265,6 +274,8 @@ export function apply(ctx: Context, config: Config): void {
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
     ttsStyleControl: config.ttsStyleControl,
+    llmStreaming: config.llmStreaming,
+    ttsStreaming: config.ttsStreaming,
     lipsyncEnabled: config.lipsyncEnabled,
     lipsyncGain: config.lipsyncGain,
     focusRange: config.focusRange,
@@ -530,6 +541,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       const { settings, context } = turn
       const speakOn = settings.ttsEnabled && settings.ttsModel.trim().length > 0
+      const speakOptions = voiceOptions()
       // 链路记录（ADR-043）：请求/回复在真正发生的时刻发成 SSE `debug` 帧，
       // 客户端按到达顺序落进控制台，于是顺序永远等于真实顺序。
       const replyChunks = streamReply(ctx.llm, aiRequest(settings, context, (payload) => {
@@ -538,10 +550,17 @@ export function apply(ctx: Context, config: Config): void {
       }, signal, (reply: AiReplyTrace) => {
         emit('debug', traceStep('llm.reply', reply))
       }))
-      const speakOptions = voiceOptions()
       /** LLM 这轮写的语气指令（ADR-062）：只对 MiMo 生效，且必须开关打开。 */
       const styleOn = settings.ttsStyleControl && ttsModelProvider(speakOptions.model) === 'mimo'
       let replyStyle = ''
+      /**
+       * 两个开关（ADR-063）：
+       * - 文字流式开 → LLM 边生成边切句；关 → 一次性拿整段再处理；
+       * - 语音流式开（仅 MiMo）→ 整段一次合成、边收边播。
+       * 合成粒度：语音流式开 或 文字流式关 ⇒ 整段；否则逐句（现状）。
+       */
+      const ttsStreamOn = speakOn && settings.ttsStreaming && ttsModelProvider(speakOptions.model) === 'mimo'
+      const wholeMode = ttsStreamOn || !settings.llmStreaming
       // 语气帧不进客户端：它只影响合成请求（气泡/历史里都不该出现），在这里被吃掉
       async function* styledChunks(): AsyncGenerator<ReplyChunk> {
         for await (const chunk of replyChunks) {
@@ -580,6 +599,118 @@ export function apply(ctx: Context, config: Config): void {
           return null
         }
       }
+
+      // ---- 整段模式（ADR-063）：先把整段回复拿全，再一次性交给 TTS ----
+      if (wholeMode) {
+        let rawText = ''
+        let replyTags: { expressions: string[]; motions: string[] } | undefined
+        let replyMemory: string | undefined
+        if (settings.llmStreaming) {
+          // 文字流式：消费同一路 chunk，只是不在中途合成
+          for await (const chunk of styledChunks()) {
+            if (chunk.type === 'delta') {
+              rawText += chunk.text
+              continue
+            }
+            if (chunk.type === 'tags') {
+              replyTags = { expressions: chunk.expressions, motions: chunk.motions }
+              emit('tags', {
+                expressions: chunk.expressions,
+                motions: chunk.motions,
+                ...(chunk.dropped === undefined ? {} : { dropped: chunk.dropped }),
+              })
+              continue
+            }
+            if (chunk.type === 'memory') {
+              replyMemory = chunk.note
+              emit('memory', { note: chunk.note })
+              continue
+            }
+            if (chunk.type === 'done') {
+              rawText = chunk.text
+              continue
+            }
+            if (chunk.type === 'error') emit('error', { error: chunk.error })
+          }
+        } else {
+          // 文字非流式：一次性拿整段（带标签/记忆/语气）
+          const attempt = await generateReply(ctx.llm, aiRequest(settings, context, (payload) => {
+            lastAiPayload = payload
+            emit('debug', traceStep('llm.request', payload))
+          }, signal, (reply: AiReplyTrace) => {
+            emit('debug', traceStep('llm.reply', reply))
+          }))
+          if (attempt.error !== undefined || !attempt.text) {
+            emit('error', { error: attempt.error ?? 'empty-reply' })
+            emit('done', { text: '' })
+            return
+          }
+          if (styleOn && attempt.style !== undefined) replyStyle = attempt.style
+          rawText = attempt.text
+          replyTags = { expressions: attempt.expressions ?? [], motions: attempt.motions ?? [] }
+          replyMemory = attempt.memory
+          emit('tags', replyTags)
+          if (replyMemory !== undefined) emit('memory', { note: replyMemory })
+        }
+
+        const text = rawText.trim()
+        const cues: TimelineCue[] = [
+          ...(replyTags?.expressions ?? []).map((id): TimelineCue => ({ kind: 'expression', id })),
+          ...(replyTags?.motions ?? []).map((id): TimelineCue => ({ kind: 'motion', id })),
+        ]
+        const options: TtsVoiceOptions = replyStyle ? { ...speakOptions, style: replyStyle } : speakOptions
+        const engine: TtsEngine = ttsEngineFor(options.model)
+        const canStream = speakOn && ttsStreamOn && typeof engine.synthesizeStream === 'function'
+        const streamFactory = canStream
+          ? (): AsyncGenerator<TtsStreamFrame> => (async function* () {
+            const startedAt = Date.now()
+            let bytes = 0
+            try {
+              for await (const frame of engine.synthesizeStream!(text, options, signal, (payload) => {
+                lastSpeakPayload = payload
+                emit('debug', traceStep('tts.request', payload))
+              })) {
+                bytes += frame.kind === 'pcm' ? frame.data.byteLength : frame.audio.audio.byteLength
+                yield frame
+              }
+              emit('debug', traceStep('tts.reply', {
+                ok: true,
+                stream: true,
+                bytes,
+                mime: 'audio/pcm',
+                ms: Date.now() - startedAt,
+              }))
+            } catch (error) {
+              emit('debug', traceStep('tts.reply', {
+                ok: false,
+                stream: true,
+                bytes,
+                error: error instanceof Error ? error.message : String(error),
+                ms: Date.now() - startedAt,
+              }))
+              throw error
+            }
+          })()
+          : undefined
+        const result = await runWholeSpeakPipeline({
+          text,
+          cues,
+          ...(streamFactory === undefined ? {} : { stream: streamFactory }),
+          synthesize,
+          emit,
+          signal,
+        })
+        if (result.text) {
+          recordAiTurn(context, result.text, settings, {
+            ...(replyTags ?? {}),
+            ...(replyStyle ? { style: replyStyle } : {}),
+          })
+        }
+        if (replyMemory !== undefined) rememberNote(replyMemory, input.tz)
+        return
+      }
+
+      // ---- 逐句模式（现状，ADR-033 / ADR-037）----
       const result = await runSpeakPipeline({ chunks: styledChunks(), synthesize, emit, signal })
       if (result.text) {
         recordAiTurn(context, result.text, settings, {

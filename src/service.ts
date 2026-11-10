@@ -115,6 +115,10 @@ export interface PetStateView {
     ttsVoice: string
     /** 风格控制开关（只对 MiMo 生效，ADR-062）。 */
     ttsStyleControl: boolean
+    /** 文字流式（ADR-063）。 */
+    llmStreaming: boolean
+    /** 语音流式（ADR-063；只有 MiMo 支持）。 */
+    ttsStreaming: boolean
     lipsyncEnabled: boolean
     lipsyncGain: number
     focusRange: number
@@ -357,6 +361,8 @@ export class PetService {
         ttsModel: settings.ttsModel,
         ttsVoice: settings.ttsVoice,
         ttsStyleControl: settings.ttsStyleControl,
+        llmStreaming: settings.llmStreaming,
+        ttsStreaming: settings.ttsStreaming,
         lipsyncEnabled: settings.lipsyncEnabled,
         lipsyncGain: settings.lipsyncGain,
         focusRange: settings.focusRange,

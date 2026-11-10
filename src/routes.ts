@@ -301,7 +301,17 @@ export interface SpeakRoutesApi {
   stream(
     input: TriggerInput,
     emit: (
-      event: 'text' | 'clause' | 'audio' | 'tags' | 'memory' | 'done' | 'error' | 'debug',
+      event:
+        | 'text'
+        | 'clause'
+        | 'audio'
+        | 'audio.chunk'
+        | 'audio.end'
+        | 'tags'
+        | 'memory'
+        | 'done'
+        | 'error'
+        | 'debug',
       data: unknown,
     ) => void,
     signal: AbortSignal,

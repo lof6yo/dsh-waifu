@@ -125,9 +125,31 @@ export interface TtsAudio {
   cached: boolean
 }
 
+/** 流式合成的一帧：增量 PCM 分片，或缓存命中时的一整段可解码音频（ADR-063）。 */
+export type TtsStreamFrame =
+  | { kind: 'pcm'; data: Buffer; sampleRate: number; channels: number }
+  | { kind: 'audio'; audio: TtsAudio }
+
+/** 流式合成的采样参数（MiMo 固定 24 kHz 单声道 16 bit 小端）。 */
+export const TTS_STREAM_SAMPLE_RATE = 24_000
+export const TTS_STREAM_CHANNELS = 1
+
+/** 流式合成的整体超时（ms）：整段台词可能十几秒，比单句宽一些。 */
+export const TTS_STREAM_TIMEOUT_MS = 60_000
+
 /** TTS 引擎抽象：换供应商只实现这一个接口。 */
 export interface TtsEngine {
   synthesize(text: string, options: TtsVoiceOptions, signal?: AbortSignal): Promise<TtsAudio>
+  /**
+   * 流式合成（可选，ADR-063）：整段文本一次请求，边收边给音频帧。
+   * 目前只有 MiMo 实现；没有实现的引擎由上层回落「整段非流式」。
+   */
+  synthesizeStream?(
+    text: string,
+    options: TtsVoiceOptions,
+    signal?: AbortSignal,
+    onPayload?: (payload: TtsPayload) => void,
+  ): AsyncGenerator<TtsStreamFrame>
 }
 
 /** 缓存键：同一段文字 + 同一套语音参数才复用（风格指令不同也算不同音频）。 */
@@ -144,10 +166,10 @@ export function ttsCacheDir(homeDir: string): string {
   return join(homeDir, 'tts-cache')
 }
 
-/** 读缓存（缺失返回 undefined）。 */
-async function readCache(dir: string, key: string): Promise<Buffer | undefined> {
+/** 读缓存（缺失返回 undefined）。`ext` 区分整段 mp3 与流式合成的 wav（ADR-063）。 */
+async function readCache(dir: string, key: string, ext = 'mp3'): Promise<Buffer | undefined> {
   try {
-    return await readFile(join(dir, `${key}.mp3`))
+    return await readFile(join(dir, `${key}.${ext}`))
   } catch {
     return undefined
   }
@@ -158,14 +180,14 @@ const PRUNE_EVERY_WRITES = 20
 let writesSincePrune = 0
 
 /** 写缓存并按数量上限清理最旧文件（失败不影响播放）。 */
-async function writeCache(dir: string, key: string, audio: Buffer): Promise<void> {
+async function writeCache(dir: string, key: string, audio: Buffer, ext = 'mp3'): Promise<void> {
   try {
     await mkdir(dir, { recursive: true })
-    await writeFile(join(dir, `${key}.mp3`), audio)
+    await writeFile(join(dir, `${key}.${ext}`), audio)
     writesSincePrune += 1
     if (writesSincePrune < PRUNE_EVERY_WRITES) return
     writesSincePrune = 0
-    const names = (await readdir(dir)).filter((name) => name.endsWith('.mp3'))
+    const names = (await readdir(dir)).filter((name) => /\.(mp3|wav)$/.test(name))
     if (names.length <= TTS_CACHE_MAX_FILES) return
     const stamped = await Promise.all(names.map(async (name) => {
       const info = await stat(join(dir, name)).catch(() => null)
@@ -281,6 +303,153 @@ const directPost: TtsFetcher = async (endpoint, init) => {
   })
 }
 
+/** 流式应答（SSE）：正文按块给出，不必等整段音频缓冲完（ADR-063）。 */
+export interface TtsStreamResponseLike {
+  ok: boolean
+  status: number
+  headers: { get(name: string): string | null }
+  body: AsyncIterable<Uint8Array> | null
+  text(): Promise<string>
+}
+
+/** 流式请求的发送器类型：默认直连，测试可注入假实现。 */
+export type TtsStreamFetcher = (endpoint: string, init: {
+  method: string
+  headers: Record<string, string>
+  body: string
+  signal: AbortSignal
+}) => Promise<TtsStreamResponseLike>
+
+const proxiedStreamFetcher: TtsStreamFetcher = async (endpoint, init) => {
+  const response = await fetch(endpoint, { ...init })
+  return {
+    ok: response.ok,
+    status: response.status,
+    headers: response.headers,
+    body: response.body as unknown as AsyncIterable<Uint8Array> | null,
+    text: () => response.text(),
+  }
+}
+
+const directStreamPost: TtsStreamFetcher = async (endpoint, init) => {
+  const url = new URL(endpoint)
+  const payload = Buffer.from(init.body, 'utf8')
+  return await new Promise<TtsStreamResponseLike>((resolve, reject) => {
+    const request = httpsRequest(
+      {
+        method: init.method,
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: `${url.pathname}${url.search}`,
+        agent: ttsAgent,
+        headers: { ...init.headers, 'content-length': String(payload.byteLength) },
+      },
+      (response) => {
+        const status = response.statusCode ?? 0
+        resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          headers: {
+            get: (name: string) => {
+              const value = response.headers[name.toLowerCase()]
+              return Array.isArray(value) ? value.join(', ') : value ?? null
+            },
+          },
+          // IncomingMessage 本身就是 AsyncIterable<Buffer>：边收边给，不缓冲整段
+          body: response as unknown as AsyncIterable<Uint8Array>,
+          text: () => new Promise<string>((done, fail) => {
+            const chunks: Buffer[] = []
+            response.on('data', (chunk: Buffer) => chunks.push(chunk))
+            response.on('end', () => done(Buffer.concat(chunks).toString('utf8')))
+            response.on('error', fail)
+          }),
+        })
+      },
+    )
+    request.on('error', reject)
+    const abort = () => request.destroy(new Error('tts-aborted'))
+    if (init.signal.aborted) abort()
+    else init.signal.addEventListener('abort', abort, { once: true })
+    request.end(payload)
+  })
+}
+
+/** 流式发送器：与 {@link directTtsFetcher} 同策略——先直连，失败退代理。 */
+export const directTtsStreamFetcher: TtsStreamFetcher = async (endpoint, init) => {
+  if (process.env.WAIFU_TTS_DIRECT === '0') return await proxiedStreamFetcher(endpoint, init)
+  try {
+    return await directStreamPost(endpoint, init)
+  } catch {
+    return await proxiedStreamFetcher(endpoint, init)
+  }
+}
+
+/** 一行 SSE → PCM 分片（不是音频行返回 undefined）。 */
+function pcmFromSseLine(line: string): Buffer | undefined {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('data:')) return undefined
+  const payload = trimmed.slice(5).trim()
+  if (!payload || payload === '[DONE]') return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return undefined
+  }
+  const encoded = (parsed as { choices?: Array<{ delta?: { audio?: { data?: unknown } } }> })
+    .choices?.[0]?.delta?.audio?.data
+  if (typeof encoded !== 'string' || encoded.length === 0) return undefined
+  const pcm = Buffer.from(encoded, 'base64')
+  return pcm.byteLength > 0 ? pcm : undefined
+}
+
+/**
+ * 解析 MiMo 流式应答（SSE）：音频在 `choices[0].delta.audio.data`，base64 的 PCM 分片。
+ * @param body - 应答正文（按块到达）。
+ */
+export async function* parseMiMoStream(body: AsyncIterable<Uint8Array>): AsyncGenerator<Buffer> {
+  const decoder = new TextDecoder()
+  let pending = ''
+  for await (const chunk of body) {
+    pending += decoder.decode(chunk, { stream: true })
+    const lines = pending.split(/\r?\n/)
+    pending = lines.pop() ?? ''
+    for (const line of lines) {
+      const pcm = pcmFromSseLine(line)
+      if (pcm !== undefined) yield pcm
+    }
+  }
+  pending += decoder.decode()
+  for (const line of pending.split(/\r?\n/)) {
+    const pcm = pcmFromSseLine(line)
+    if (pcm !== undefined) yield pcm
+  }
+}
+
+/** 把 PCM16 小端分片包成 WAV（缓存用：下次命中整段下发，客户端可一次解码）。 */
+export function pcmToWav(
+  pcm: Buffer,
+  sampleRate = TTS_STREAM_SAMPLE_RATE,
+  channels = TTS_STREAM_CHANNELS,
+): Buffer {
+  const header = Buffer.alloc(44)
+  const byteRate = sampleRate * channels * 2
+  header.write('RIFF', 0, 'ascii')
+  header.writeUInt32LE(36 + pcm.byteLength, 4)
+  header.write('WAVE', 8, 'ascii')
+  header.write('fmt ', 12, 'ascii')
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20) // PCM
+  header.writeUInt16LE(channels, 22)
+  header.writeUInt32LE(sampleRate, 24)
+  header.writeUInt32LE(byteRate, 28)
+  header.writeUInt16LE(channels * 2, 32)
+  header.writeUInt16LE(16, 34)
+  header.write('data', 36, 'ascii')
+  header.writeUInt32LE(pcm.byteLength, 40)
+  return Buffer.concat([header, pcm])
+}
+
 /** 解析凭据：调用方每次操作都要重新取（凭据更新后无需重启）。 */
 export type ApiKeyResolver = () => Promise<string | undefined>
 
@@ -393,6 +562,8 @@ export class MiMoTtsEngine implements TtsEngine {
     private readonly fetcher: TtsFetcher = directTtsFetcher,
     /** 排查钩子：每次合成前把要发的 body 报出去（缓存的也报，标 cached）。 */
     private readonly onPayload?: (payload: TtsPayload) => void,
+    /** 流式发送器（ADR-063）：与 {@link fetcher} 分开注入，测试各自可假。 */
+    private readonly streamFetcher: TtsStreamFetcher = directTtsStreamFetcher,
   ) {}
 
   async synthesize(
@@ -457,6 +628,73 @@ export class MiMoTtsEngine implements TtsEngine {
       signal?.removeEventListener('abort', abort)
     }
   }
+
+  /**
+   * 整段流式合成（ADR-063）：一次请求把整段台词发过去，SSE 里每片 PCM 收到就 yield，
+   * 客户端因此能边收边播；收完把 PCM 包成 WAV 落缓存，下次同一段直接整段下发。
+   */
+  async *synthesizeStream(
+    text: string,
+    options: TtsVoiceOptions,
+    signal?: AbortSignal,
+    onPayload?: (payload: TtsPayload) => void,
+  ): AsyncGenerator<TtsStreamFrame> {
+    const report = onPayload ?? this.onPayload
+    const trimmed = text.trim()
+    if (!trimmed) throw new Error('empty-text')
+    const style = options.style?.trim() ?? ''
+    const key = ttsCacheKey(trimmed, options)
+    const dir = ttsCacheDir(this.cacheHome)
+    const body = mimoStreamBody(trimmed, options, style)
+    const hit = await readCache(dir, key, 'wav')
+    if (hit) {
+      report?.({ endpoint: MIMO_SPEECH_URL, body, cached: true })
+      yield { kind: 'audio', audio: { mime: 'audio/wav', audio: hit, cached: true } }
+      return
+    }
+
+    const apiKey = await this.resolveKey()
+    if (!apiKey) throw new Error('tts-key-missing')
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TTS_STREAM_TIMEOUT_MS)
+    const abort = () => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      report?.({ endpoint: MIMO_SPEECH_URL, body, cached: false })
+      const response = await this.streamFetcher(MIMO_SPEECH_URL, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'http-referer': 'https://github.com/lof6yo/dsh-waifu',
+          'x-title': 'dsh-waifu',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        let detail = ''
+        try {
+          detail = (await response.text()).slice(0, 200).trim()
+        } catch {
+          detail = ''
+        }
+        throw new Error(`tts-http ${response.status}${detail ? `: ${detail}` : ''}`)
+      }
+      if (!response.body) throw new Error('tts-empty-audio')
+      const pieces: Buffer[] = []
+      for await (const pcm of parseMiMoStream(response.body)) {
+        pieces.push(pcm)
+        yield { kind: 'pcm', data: pcm, sampleRate: TTS_STREAM_SAMPLE_RATE, channels: TTS_STREAM_CHANNELS }
+      }
+      if (pieces.length === 0) throw new Error('tts-empty-audio')
+      await writeCache(dir, key, pcmToWav(Buffer.concat(pieces)), 'wav')
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
 }
 
 /** MiMo 的请求体（纯函数，测试直接比对）：assistant 放台词，user 可选放风格指令。 */
@@ -468,4 +706,11 @@ export function mimoBody(text: string, options: TtsVoiceOptions, style = ''): Re
   const voice = options.voice?.trim()
   if (voice) audio.voice = voice
   return { model: options.model, messages, audio, stream: false }
+}
+
+/** MiMo 的流式请求体：与 {@link mimoBody} 同形，但 `stream: true` 且音频格式必须是 `pcm16`。 */
+export function mimoStreamBody(text: string, options: TtsVoiceOptions, style = ''): Record<string, unknown> {
+  const body = mimoBody(text, options, style)
+  const audio = { ...(body.audio as Record<string, unknown>), format: 'pcm16' }
+  return { ...body, audio, stream: true }
 }

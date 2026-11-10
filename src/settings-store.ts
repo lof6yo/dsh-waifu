@@ -134,6 +134,10 @@ export interface PetSettings {
   ttsVoice: string
   /** 风格控制开关（只对 MiMo 生效，ADR-062）。 */
   ttsStyleControl: boolean
+  /** 文字流式（ADR-063）。 */
+  llmStreaming: boolean
+  /** 语音流式（ADR-063；只有 MiMo 支持）。 */
+  ttsStreaming: boolean
   /** 口型跟随开关。 */
   lipsyncEnabled: boolean
   /** 口型强度（0–300，100 = 标准）。 */
@@ -158,7 +162,8 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 //        aiEnabled / aiProvider / aiModel / aiHistoryCount / aiMemoryCount / triggerMode /
 //        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / tapGapMs / mergeMax / eventTriggers /
 //        barPosition / barOffset / barAutoHideSec /
-//        ttsEnabled / ttsModel / ttsVoice / ttsStyleControl / lipsyncEnabled / lipsyncGain`
+//        ttsEnabled / ttsModel / ttsVoice / ttsStyleControl / llmStreaming / ttsStreaming /
+//        lipsyncEnabled / lipsyncGain`
 
 /**
  * 设置文件结构版本：
@@ -311,6 +316,8 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     // 音色允许空串（空 = 模型默认音色），所以不走 pickString
     ttsVoice: voiceFix.voice,
     ttsStyleControl: bool('ttsStyleControl'),
+    llmStreaming: bool('llmStreaming'),
+    ttsStreaming: bool('ttsStreaming'),
     lipsyncEnabled: bool('lipsyncEnabled'),
     lipsyncGain: normalizeLipsyncGain(record.lipsyncGain, base.lipsyncGain),
     focusRange: normalizeFocusRange(record.focusRange, base.focusRange),
