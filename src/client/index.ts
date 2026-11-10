@@ -688,6 +688,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let eventTriggers: Record<string, boolean> = {}
   /** 上一轮演绎是否还在进行中（调度器的 busy 门）。 */
   let speakingTurnActive = false
+  /** 当前演绎轮次；旧轮 finally 不能释放新轮状态。 */
+  let speakingTurnEpoch = 0
   /** 说话时的身体语言（点头/挑眉）开关，与口型跟随一起生效。 */
   let bodyLanguageEnabled = true
   /** 待机小动作开关（设置页「待机小动作」）。 */
@@ -1622,6 +1624,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (hidden) return Promise.resolve(null)
     bubbleEpoch += 1
     clearBubbleMaxTimer()
+    const turnEpoch = ++speakingTurnEpoch
     // 控制台第一行永远是「这轮是什么触发的」（ADR-043）
     conPushJson('trigger', input)
     if (triggerMode === 'interrupt') stopSpeaking()
@@ -1630,6 +1633,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     setBubbleHold(true)
     // 轮次真正结束（语音播完或一次性回复返回）才解锁；queue 模式随即补发攒下的合并项
     return requestSpeak(input).finally(() => {
+      // interrupt 模式下旧轮可能晚于新轮结束，不能提前释放新轮的气泡保护。
+      if (turnEpoch !== speakingTurnEpoch) return
       speakingTurnActive = false
       setBubbleHold(false)
       flushSchedule()
