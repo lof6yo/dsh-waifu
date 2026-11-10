@@ -821,6 +821,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (bubbleMaxTimer !== undefined) return
     bubbleMaxTimer = window.setTimeout(() => {
       bubbleMaxTimer = undefined
+      // 演绎仍在进行时不能收气泡；释放 hold 后重新开始兜底计时。
+      if (bubbleHeld) return
       bubbleVisible = false
       // 出态事件可能没送到：气泡不能永远挂着，顺手掐掉正在说的语音，避免继续烧 token
       stopSpeaking()
