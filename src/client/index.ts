@@ -2585,7 +2585,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       try { canvasRectCache = canvas.getBoundingClientRect() } catch { return null }
     }
     const rect = canvasRectCache
-    const ratio = pointToBoundsRatio(clientX - rect.left, clientY - rect.top, bounds)
+    // client coordinates are visual pixels; model bounds are layer CSS pixels.
+    // Normalize for the page UI scale before hit-testing on mobile shells.
+    const s = uiScale()
+    const ratio = pointToBoundsRatio((clientX - rect.left) / s, (clientY - rect.top) / s, bounds)
     if (!ratio) return null
     return hitTestTouchParts(editState?.parts ?? touchParts, ratio.nx, ratio.ny)
   }
@@ -4054,8 +4057,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     lastTapAt = now
     try {
       const rect = canvas.getBoundingClientRect()
-      const localX = e.clientX - rect.left
-      const localY = e.clientY - rect.top
+      const s = uiScale()
+      const localX = (e.clientX - rect.left) / s
+      const localY = (e.clientY - rect.top) / s
       // 命中判定只用用户自定义 box（spec §4）：先取包围盒换算归一化坐标；
       // 无包围盒或点击落在包围盒外 → 不互动。
       const bounds = model.getBounds?.()
