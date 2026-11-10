@@ -2210,7 +2210,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
     try {
       petLayer = document.createElement('div')
-      petLayer.style.cssText = 'position:relative;display:inline-block;pointer-events:none'
+      // Mobile browsers intersect touch-action with html/body; declare the pet surface
+      // explicitly so pointer sequences are not handed to page pan/zoom and canceled.
+      petLayer.style.cssText = 'position:relative;display:inline-block;pointer-events:none;touch-action:none;-webkit-user-select:none;user-select:none'
       canvas = document.createElement('canvas')
       const size = pos.size
       // 首次布置用估算尺寸（模型尺寸未知），模型加载后按实际比例 + 留白重算
@@ -2225,7 +2227,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       touchboxOverlay.style.cssText = `position:absolute;left:0;top:0;width:${canvas.width}px;height:${canvas.height}px;pointer-events:none;z-index:2;display:${touchboxOverlayVisible() ? 'block' : 'none'}`
       // 命中层：透明 div 按触摸部位 box 定位，承接点击/拖动（不遮挡下层 UI 的其余区域）
       hitLayer = document.createElement('div')
-      hitLayer.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3'
+      hitLayer.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3;touch-action:none'
       petLayer.appendChild(canvas)
       petLayer.appendChild(touchboxOverlay)
       petLayer.appendChild(hitLayer)
@@ -2557,7 +2559,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     el.addEventListener('pointerdown', handlePointerDown)
     el.addEventListener('pointermove', handlePointerMove)
     el.addEventListener('pointerup', handlePointerUp)
-    el.addEventListener('pointercancel', () => { down = null; dragging = false })
+    el.addEventListener('pointercancel', (event) => {
+      // A mobile browser may cancel after briefly claiming a gesture. Treat a
+      // non-dragged contact as a tap so light touches still trigger interaction.
+      if (down && !dragging) handleTap(event)
+      down = null
+      dragging = false
+    })
     // 悬停（ADR-038 修订）：鼠标停在该部位 box 内 ≥ holdMs 自动触发「停留」交互；
     // 按下（可能要拖动）或移出都清计时；同一趟悬停只触发一次，移出再回来重新计。
     // 注意：box 之间会互相覆盖（如「头发」完全盖住「脸」），DOM 里后插入的 div 才是指针真正
