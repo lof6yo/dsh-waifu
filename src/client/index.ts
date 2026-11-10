@@ -631,6 +631,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let bubbleHideTimer: number | undefined
   /** 一轮演绎期间气泡不自动消失（ADR-052）：文字比声音早到，2.5s 计时会在播到一半时把气泡收走。 */
   let bubbleHeld = false
+  /** 气泡可见周期；防止旧 timer 在新一轮台词上误收气泡。 */
+  let bubbleEpoch = 0
   /** 气泡最长可见计时器：从「隐藏 → 可见」那一刻起算，替换文案不重置（ADR-027）。 */
   let bubbleMaxTimer: number | undefined
   let bubbleMaxMs = BUBBLE_MAX_DEFAULT * 1000
@@ -819,10 +821,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function armBubbleMaxTimer(): void {
     if (bubbleMaxMs <= 0) { clearBubbleMaxTimer(); return }
     if (bubbleMaxTimer !== undefined) return
+    const epoch = bubbleEpoch
     bubbleMaxTimer = window.setTimeout(() => {
       bubbleMaxTimer = undefined
       // 演绎仍在进行时不能收气泡；释放 hold 后重新开始兜底计时。
       if (bubbleHeld) return
+      // A stale timer must never hide a bubble from a newer turn.
+      if (epoch !== bubbleEpoch) return
       bubbleVisible = false
       // 出态事件可能没送到：气泡不能永远挂着，顺手掐掉正在说的语音，避免继续烧 token
       stopSpeaking()
@@ -1615,6 +1620,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   /** 开一轮：interrupt 模式作废旧轮；queue 模式下轮次结束时补发合并队列。 */
   function startTurn(input: TriggerBody): Promise<string | null> {
     if (hidden) return Promise.resolve(null)
+    bubbleEpoch += 1
+    clearBubbleMaxTimer()
     // 控制台第一行永远是「这轮是什么触发的」（ADR-043）
     conPushJson('trigger', input)
     if (triggerMode === 'interrupt') stopSpeaking()
