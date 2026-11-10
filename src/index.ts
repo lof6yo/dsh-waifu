@@ -602,6 +602,9 @@ export function apply(ctx: Context, config: Config): void {
 
       // ---- 整段模式（ADR-063）：先把整段回复拿全，再一次性交给 TTS ----
       if (wholeMode) {
+        // 两个开关各管一件事（ADR-063 修订）：整段合成是「语音」侧的取舍，
+        // 不代表气泡要把台词憋到最后——文字流式开着就照常把增量转给客户端。
+        emit('mode', { whole: true, liveText: settings.llmStreaming })
         let rawText = ''
         let replyTags: { expressions: string[]; motions: string[] } | undefined
         let replyMemory: string | undefined
@@ -610,6 +613,7 @@ export function apply(ctx: Context, config: Config): void {
           for await (const chunk of styledChunks()) {
             if (chunk.type === 'delta') {
               rawText += chunk.text
+              emit('text', { delta: chunk.text })
               continue
             }
             if (chunk.type === 'tags') {

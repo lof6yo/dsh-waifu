@@ -25,6 +25,7 @@ export const SPEAK_MAX_CHARS = 400
 /** 事件下发函数（由路由层转成 SSE 帧）。 */
 export type SpeakEmit = (
   event:
+    | 'mode'
     | 'text'
     | 'clause'
     | 'audio'

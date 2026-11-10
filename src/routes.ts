@@ -302,6 +302,7 @@ export interface SpeakRoutesApi {
     input: TriggerInput,
     emit: (
       event:
+        | 'mode'
         | 'text'
         | 'clause'
         | 'audio'

@@ -2368,6 +2368,22 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }, aiChecking ? '测试中…' : '测试'),
         ),
       ),
+      // 文字流式（ADR-063 修订）：只管 LLM 这一侧——开 = 边生成边显示，关 = 等整段写完
+      createElement('div', { style: formRowStyle },
+        createElement(FormLabel, {
+          title: '文字流式',
+          hint: '开启后角色边想边说，气泡随生成逐字长出；关闭则等整段回复写完再一次性显示（只影响文字，音频是否流式由语音页的「语音流式」决定，ADR-063）',
+        }),
+        createElement('div', { style: formControlInlineStyle },
+          createElement(ThemeSwitch, {
+            checked: !!value.llmStreaming,
+            disabled: !writable,
+            onChange: (next) => {
+              enqueueWrite(() => [{ op: 'set', path: ['llmStreaming'], value: next }])
+            },
+          }),
+        ),
+      ),
         !!aiCheckStatus && createElement('div', { style: formRowStyle },
           createElement(FormLabel, { title: '自检' }),
           createElement('div', {
@@ -2948,27 +2964,11 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           }),
         ),
       ),
-      // 文字流式 / 语音流式（ADR-063）：两个取舍相互独立，qwen 默认「开 + 关」= 逐句合成
-      createElement('div', { style: formRowInlineStyle },
-        createElement(FormLabel, {
-          title: '文字流式',
-          hint: '开启后角色边想边说、气泡逐句出现，语音也按句合成（首声快）；关闭则等整段回复写完再处理（ADR-063）',
-        }),
-        createElement('div', { style: formControlInlineStyle },
-          createElement(ThemeSwitch, {
-            checked: !!value.llmStreaming,
-            disabled: !writable,
-            onChange: (next) => {
-              enqueueWrite(() => [{ op: 'set', path: ['llmStreaming'], value: next }])
-            },
-          }),
-        ),
-      ),
       // 语音流式只有 MiMo 支持（OpenRouter 的端点没有增量音频语义，ADR-063）
       ttsModelProvider(value.ttsModel) === 'mimo' && createElement('div', { style: formRowInlineStyle },
         createElement(FormLabel, {
           title: '语音流式',
-          hint: '整段台词一次发给 MiMo、边收边播，句与句之间不再各自起调（更连贯）；关闭则整段等合成完再播（ADR-063）',
+          hint: '开启后整段台词一次发给 MiMo、边收边播，句与句之间不再各自起调（更连贯）；关闭则等整段合成完再播。只影响音频，不影响文字（ADR-063）',
         }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {

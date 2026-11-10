@@ -1304,6 +1304,13 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let pcmNextStart = 0
   /** 已排进时间轴、还没播完的分片（打断时要全部停掉）。 */
   let pcmSources: AudioBufferSourceNode[] = []
+  /**
+   * 整段模式下的「文字仍流式」（ADR-063 修订）：语音流式要让 TTS 拿到整段台词，
+   * 但文字流式开关管的是 LLM 输出——此模式下气泡仍按 LLM 增量逐字长出。
+   */
+  let speakWholeLive = false
+  /** 整段模式下已收到的台词（只在 speakWholeLive 时累积）。 */
+  let speakWholeText = ''
 
   /** 懒创建 AudioContext + 分析器；被浏览器挂起时顺手恢复。 */
   function ensureAudio(): AudioContext | null {
@@ -3827,12 +3834,36 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     pcmIndex = -1
     pcmNextStart = 0
     pcmSources = []
+    speakWholeLive = false
+    speakWholeText = ''
     let finalText: string | null = null
     let sawClause = false
     try {
       await api.speak(withTz, (event, data) => {
         conPushFrame(event, data)
         if (seq !== speakSeq) return
+        // 整段模式（语音流式开或文字流式关，ADR-063）：Host 先报模式，
+        // 语音流式开但文字流式也开时，台词仍按增量流过来——气泡要一边长一边等音频。
+        if (event === 'mode') {
+          const item = data as { whole?: unknown; liveText?: unknown }
+          speakWholeLive = item.whole === true && item.liveText === true
+          speakWholeText = ''
+          return
+        }
+        if (event === 'text') {
+          if (!speakWholeLive) return
+          const item = data as { delta?: unknown }
+          if (typeof item.delta !== 'string') return
+          speakWholeText += item.delta
+          // 整段模式下 Host 边收边转，句中的 [动作]/<表情> 还没被时间线剥掉；
+          // 这里临时抹掉，免得气泡闪出标签原文（收尾的 done 会给干净全文）
+          const shown = speakWholeText
+            .replace(/<\s*[^<>\n]{1,32}\s*>/g, '')
+            .replace(/[\[［【]\s*[^\]］】\n]{1,40}\s*[\]］】]/g, '')
+            .replace(/[\[［【<]\s*[^\]］】<>\n]{0,16}$/, '')
+          if (shown) showBubbleNow(shown)
+          return
+        }
         if (event === 'clause') {
           const item = data as { index?: unknown; text?: unknown }
           if (typeof item.index !== 'number' || typeof item.text !== 'string') return
