@@ -2372,7 +2372,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       createElement('div', { style: formRowStyle },
         createElement(FormLabel, {
           title: '文字流式',
-          hint: '开启后角色边想边说，气泡随生成逐字长出；关闭则等整段回复写完再一次性显示（只影响文字，音频是否流式由语音页的「语音流式」决定，ADR-063）',
+          hint: '开：气泡随生成逐字出现；关：整段写完再显示',
         }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
@@ -2952,7 +2952,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       ttsModelProvider(value.ttsModel) === 'mimo' && createElement('div', { style: formRowInlineStyle },
         createElement(FormLabel, {
           title: '风格控制',
-          hint: '开启后由角色按当前情境自己挑语气（情绪 / 语调 / 音色 / 方言 / 角色腔调），每轮最多一个；关闭则用默认语气（ADR-062）',
+          hint: '角色每轮自己挑语气，只影响配音、不进气泡',
         }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
@@ -2968,7 +2968,7 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
       ttsModelProvider(value.ttsModel) === 'mimo' && createElement('div', { style: formRowInlineStyle },
         createElement(FormLabel, {
           title: '语音流式',
-          hint: '开启后整段台词一次发给 MiMo、边收边播，句与句之间不再各自起调（更连贯）；关闭则等整段合成完再播。只影响音频，不影响文字（ADR-063）',
+          hint: '开：整段合成、边收边播更连贯；关：等合成完再播',
         }),
         createElement('div', { style: formControlInlineStyle },
           createElement(ThemeSwitch, {
