@@ -4319,12 +4319,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       } catch {
         // EventSource 不可用：保留首帧快照（静态宠物），不再更新
       }
-      // 标签页隐藏/窗口失焦 → 暂停渲染循环；恢复时继续（spec §7）
+      // 标签页隐藏时暂停渲染循环，但不中断正在进行的语音/合成；恢复时继续（spec §7）。
       const onVisibility = () => {
         hidden = document.visibilityState === 'hidden'
-        // 隐藏即全停：停渲染、掐掉在播/在合成的语音（省算力），回来再重新计时
-        if (hidden) stopSpeaking()
-        else scheduleIdleTimer()
+        if (hidden) {
+          // 浏览器会自行管理后台 AudioContext；保留已排队音频和 SSE，避免切 tab 把台词掐断。
+        } else {
+          if (audioCtx?.state === 'suspended') void audioCtx.resume()
+          scheduleIdleTimer()
+        }
         syncTicker()
       }
       // 窗口失焦不再停渲染（ADR-042）：用户点到别处时角色继续动，只有标签页隐藏/最小化才暂停
