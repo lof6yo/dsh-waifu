@@ -59,7 +59,6 @@ import {
   normalizeHistoryCount,
   normalizeLipsyncGain,
   normalizeMemoryCount,
-  TTS_STYLE_MAX_CHARS,
   ttsDefaultVoice,
   ttsModelOption,
   ttsModelProvider,
@@ -152,8 +151,8 @@ export interface PetSettingsValue {
   ttsModel: string
   /** 音色标识（空 = 模型默认）。 */
   ttsVoice: string
-  /** 风格指令（自然语言，只对 MiMo 生效，ADR-061）。 */
-  ttsStyle: string
+  /** 风格控制开关（只对 MiMo 生效，ADR-062）。 */
+  ttsStyleControl: boolean
   /** 口型跟随开关。 */
   lipsyncEnabled: boolean
   /** 口型强度（0–300）。 */
@@ -2929,26 +2928,18 @@ export function PetSettingsSection(_props: PetSettingsProps): ReactNode {
           ),
         ),
       ),
-      // 风格指令只对小米 MiMo 生效（ADR-061）：换成其他供应商的模型时不显示，免得看起来像没生效
+      // 风格控制只对小米 MiMo 生效（ADR-062）：换成其他供应商的模型时不显示，免得看起来像没生效
       ttsModelProvider(value.ttsModel) === 'mimo' && createElement('div', { style: formRowInlineStyle },
         createElement(FormLabel, {
-          title: '风格指令',
-          hint: '用一句话描述语气/情绪，例如「温柔、语速稍慢，带一点笑意」；留空 = 模型默认语气（ADR-061）',
+          title: '风格控制',
+          hint: '开启后由角色按当前情境自己挑语气（情绪 / 语调 / 音色 / 方言 / 角色腔调），每轮最多一个；关闭则用默认语气（ADR-062）',
         }),
         createElement('div', { style: formControlInlineStyle },
-          createElement('input', {
-            type: 'text',
-            defaultValue: value.ttsStyle,
-            maxLength: TTS_STYLE_MAX_CHARS,
-            style: { ...inputStyle, flex: '1 1 260px', width: 260 },
+          createElement(ThemeSwitch, {
+            checked: !!value.ttsStyleControl,
             disabled: !writable,
-            placeholder: '例如：温柔、语速稍慢，带一点笑意',
-            onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-            },
-            onBlur: (e: FocusEvent<HTMLInputElement>) => {
-              const next = e.target.value.trim().slice(0, TTS_STYLE_MAX_CHARS)
-              if (next !== value.ttsStyle) enqueueWrite(() => [{ op: 'set', path: ['ttsStyle'], value: next }])
+            onChange: (next) => {
+              enqueueWrite(() => [{ op: 'set', path: ['ttsStyleControl'], value: next }])
             },
           }),
         ),

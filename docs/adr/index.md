@@ -65,3 +65,4 @@
 | 059 | [拖动与归位按角色可见轮廓中心](./059-visual-bounds-clamp.md) | 已废弃 |
 | 060 | [拖动范围按画布几何中心，计入页面 UI 缩放](./060-canvas-center-clamp.md) | 已采纳 |
 | 061 | [接入小米 MiMo TTS（多供应商引擎 + 风格指令）](./061-mimo-tts-engine.md) | 已采纳 |
+| 062 | [MiMo 语音的风格控制交给 LLM 每轮决定](./062-llm-style-control.md) | 已采纳 |

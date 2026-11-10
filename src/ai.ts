@@ -201,6 +201,8 @@ export interface ReplyAttempt {
   motions?: string[]
   /** AI 的 [记] 行（无则 undefined）。 */
   memory?: string
+  /** AI 写的配音语气指令（ADR-062；无则不写，只对 MiMo 有意义）。 */
+  style?: string
   error?: string
 }
 
@@ -256,12 +258,24 @@ const TAG_HEAD = /^\s*[*_`~]*\s*(?:<\s*([^<>\n]{1,32})\s*>|[[［【]\s*([^\]］�
 /** 尾部没闭合的标签（`[No` / `<blu`）：切句与上屏都要先扣住它。 */
 const TAG_PARTIAL = /(?:<\s*[^<>\n]{0,16}|[[［【][^\]］】\n]{0,16})$/
 
-/** 开头标签的解析结果：表情/动作 id（在目录内才算数）。 */
+/** 开头标签的解析结果：表情/动作 id（在目录内才算数）+ 可选的语气指令。 */
 export interface LeadingTags {
   expressions: string[]
   motions: string[]
+  /**
+   * 配音语气指令（`[风格:…]`，ADR-062）：只有 MiMo 风格控制开启时模型才会写，
+   * 不进气泡/历史正文，只随合成请求发给 MiMo。
+   */
+  style?: string
   rest: string
 }
+
+/** 语气标签：`[风格:…]` / `[语气:…]` / `[style:…]`；方括号里允许冒号、逗号、顿号。 */
+const STYLE_TAG = /^[\s*_`~]*[[［【]\s*(?:风格|语气|style|tone)\s*[:：]\s*([^\]］】\n]{1,120})\s*[\]］】]\s*/i
+/** 语气标签的起始形态（流式里还没闭合时要继续攒，不能当正文发出去）。 */
+const STYLE_OPEN = /^[\s*_`~]*[[［【]\s*(?:风格|语气|style|tone)\s*[:：]?/i
+/** 一段文本里是否已经出现闭合方括号（用来判断语气标签收没收完）。 */
+const CLOSED_BRACKET = /[[［【][^\]］】\n]*[\]］】]/
 
 /**
  * 把一个标签词归一到目录 id（认中文名/释义关键词，统一回英文 id）。
@@ -312,16 +326,25 @@ export function parseLeadingTags(text: string): LeadingTags {
   let rest = text
   const expressions: string[] = []
   const motions: string[] = []
-  for (let i = 0; i < 3; i += 1) {
+  let style: string | undefined
+  // 语气标签可能排在表情/动作前或后，所以每轮都先试语气、不中再试普通标签
+  for (let i = 0; i < 4; i += 1) {
+    const styleMatch = STYLE_TAG.exec(rest)
+    if (styleMatch) {
+      const text = styleMatch[1].trim()
+      if (text) style = text
+      rest = rest.slice(styleMatch[0].length)
+      continue
+    }
     const match = TAG_HEAD.exec(rest)
     if (!match) break
-    const style: TagStyle = match[1] !== undefined ? 'angle' : 'square'
-    const hit = resolveTag(match[1] ?? match[2], style)
+    const tagStyle: TagStyle = match[1] !== undefined ? 'angle' : 'square'
+    const hit = resolveTag(match[1] ?? match[2], tagStyle)
     if (hit?.kind === 'expression') expressions.push(hit.id)
     else if (hit?.kind === 'motion') motions.push(hit.id)
     rest = rest.slice(match[0].length)
   }
-  return { expressions, motions, rest: rest.trimStart() }
+  return { expressions, motions, ...(style === undefined ? {} : { style }), rest: rest.trimStart() }
 }
 
 /** 去掉句中那些「能认出来是表情/动作」的方括号标签（模型偶尔把标签写在句子中间）。 */
@@ -385,15 +408,17 @@ export function extractMemoryNote(raw: string): { note: string; text: string } {
 function consumeLeadingTags(buffer: string): {
   expressions: string[]
   motions: string[]
+  style?: string
   rest: string
   needMore: boolean
 } {
   const tags = parseLeadingTags(buffer)
   if (tags.rest === '') return { ...tags, needMore: false }
-  if (TAG_PARTIAL.test(tags.rest)) {
-    return { expressions: tags.expressions, motions: tags.motions, rest: tags.rest, needMore: true }
-  }
-  return { expressions: tags.expressions, motions: tags.motions, rest: tags.rest, needMore: false }
+  if (TAG_PARTIAL.test(tags.rest)) return { ...tags, needMore: true }
+  // 语气标签可以写到 120 字，TAG_PARTIAL 的 16 字窗口不够用：只要开头像语气标签
+  // 且还没出现闭合方括号，就继续攒着（否则半截标签会被念出来）。
+  if (STYLE_OPEN.test(tags.rest) && !CLOSED_BRACKET.test(tags.rest)) return { ...tags, needMore: true }
+  return { ...tags, needMore: false }
 }
 
 /** 过滤模型给出的标签：关掉的动作/表情即使被写出来也不生效。 */
@@ -476,6 +501,7 @@ export async function generateReply(
           text: line,
           expressions: merged.expressions,
           motions: merged.motions,
+          ...(tags.style === undefined ? {} : { style: tags.style }),
           ...(note ? { memory: note } : {}),
         }
       }
@@ -506,6 +532,7 @@ export async function generateReply(
 /** 流式回复的一块：标签（表情/动作）、文本增量、记忆、或收尾。 */
 export type ReplyChunk =
   | { type: 'tags'; expressions: string[]; motions: string[]; dropped?: string[] }
+  | { type: 'style'; style: string }
   | { type: 'delta'; text: string }
   | { type: 'memory'; note: string }
   | { type: 'done'; text: string }
@@ -551,6 +578,7 @@ export async function* streamReply(
   options.signal?.addEventListener('abort', forward, { once: true })
   let raw = ''
   let sentTags = false
+  let sentStyle = false
   let sentMemory = false
   /** 已经报过完整回复（成功路径报一次，catch 里不重复报）。 */
   let replyReported = false
@@ -585,6 +613,11 @@ export async function* streamReply(
           const tag = consumeLeadingTags(pending)
           collected.expressions.push(...tag.expressions)
           collected.motions.push(...tag.motions)
+          // 语气指令先单独发一帧（ADR-062）：客户端不用它，Host 拿它去合成
+          if (tag.style !== undefined && !sentStyle) {
+            sentStyle = true
+            yield { type: 'style', style: tag.style }
+          }
           if (tag.needMore) {
             // 尾部是没闭合的标签前缀（`[blush` / `][` / `[Sh`）：留住它等下一块，
             // 不能当正文发出去，否则后面的 `[ShakeHead]` 就再也认不出来、动作丢失。
@@ -645,6 +678,10 @@ export async function* streamReply(
       yield { type: 'memory', note }
     }
     const tags = filterTags(parseLeadingTags(withoutMemory), options.catalog ?? {})
+    if (!sentStyle && tags.style !== undefined) {
+      sentStyle = true
+      yield { type: 'style', style: tags.style }
+    }
     if (!sentTags && (tags.expressions.length > 0 || tags.motions.length > 0)) {
       yield { type: 'tags', expressions: tags.expressions, motions: tags.motions }
     }

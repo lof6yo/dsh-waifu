@@ -79,6 +79,7 @@ import {
   type AiHistoryEntry,
   type AiPayload,
   type AiReplyTrace,
+  type ReplyChunk,
   type ReplyContext,
 } from './ai.ts'
 import { taggedReplyLine } from './director.ts'
@@ -206,7 +207,7 @@ export const Config: Schema<Config> = Schema.object({
   ttsEnabled: Schema.boolean().default(DEFAULT_SETTINGS.ttsEnabled),
   ttsModel: Schema.string().default(DEFAULT_SETTINGS.ttsModel),
   ttsVoice: Schema.string().default(DEFAULT_SETTINGS.ttsVoice),
-  ttsStyle: Schema.string().default(DEFAULT_SETTINGS.ttsStyle),
+  ttsStyleControl: Schema.boolean().default(DEFAULT_SETTINGS.ttsStyleControl),
   lipsyncEnabled: Schema.boolean().default(DEFAULT_SETTINGS.lipsyncEnabled),
   lipsyncGain: Schema.number().min(LIPSYNC_GAIN_LIMITS.min).max(LIPSYNC_GAIN_LIMITS.max).default(DEFAULT_SETTINGS.lipsyncGain),
   focusRange: Schema.number().min(FOCUS_RANGE_LIMITS.min).max(FOCUS_RANGE_LIMITS.max).default(DEFAULT_SETTINGS.focusRange),
@@ -263,7 +264,7 @@ export function apply(ctx: Context, config: Config): void {
     ttsEnabled: config.ttsEnabled,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
-    ttsStyle: config.ttsStyle,
+    ttsStyleControl: config.ttsStyleControl,
     lipsyncEnabled: config.lipsyncEnabled,
     lipsyncGain: config.lipsyncGain,
     focusRange: config.focusRange,
@@ -343,6 +344,8 @@ export function apply(ctx: Context, config: Config): void {
         expressionTexts: settings.expressionTexts,
         motionEnabled: settings.motionEnabled,
         expressionEnabled: settings.expressionEnabled,
+        // 风格控制只对 MiMo 生效（ADR-062）：千问不写这段 prompt，行为完全不变
+        styleControl: settings.ttsStyleControl && ttsModelProvider(settings.ttsModel) === 'mimo',
       },
       history: aiHistory,
       historyCount: settings.aiHistoryCount,
@@ -364,7 +367,7 @@ export function apply(ctx: Context, config: Config): void {
     context: ReplyContext,
     text: string,
     settings: PetSettings,
-    tags?: { expressions?: string[]; motions?: string[] },
+    tags?: { expressions?: string[]; motions?: string[]; style?: string },
   ): void => {
     const at = Date.now()
     aiHistory = appendHistory(aiHistory, {
@@ -403,6 +406,7 @@ export function apply(ctx: Context, config: Config): void {
         recordAiTurn(turn.context, attempt.text, turn.settings, {
           expressions: attempt.expressions,
           motions: attempt.motions,
+          ...(attempt.style === undefined ? {} : { style: attempt.style }),
         })
         if (attempt.memory) rememberNote(attempt.memory, input.tz)
         return {
@@ -505,8 +509,7 @@ export function apply(ctx: Context, config: Config): void {
     return {
       model: settings.ttsModel,
       voice: settings.ttsVoice.trim() || undefined,
-      // 风格指令只对 MiMo 生效；其他引擎忽略这个字段（缓存键里也只在非空时参与）
-      style: settings.ttsStyle.trim() || undefined,
+      // 风格指令由 LLM 每轮给出（ADR-062），这里不写死；见 speak 管线里的 replyStyle
     }
   }
 
@@ -529,18 +532,32 @@ export function apply(ctx: Context, config: Config): void {
       const speakOn = settings.ttsEnabled && settings.ttsModel.trim().length > 0
       // 链路记录（ADR-043）：请求/回复在真正发生的时刻发成 SSE `debug` 帧，
       // 客户端按到达顺序落进控制台，于是顺序永远等于真实顺序。
-      const chunks = streamReply(ctx.llm, aiRequest(settings, context, (payload) => {
+      const replyChunks = streamReply(ctx.llm, aiRequest(settings, context, (payload) => {
         lastAiPayload = payload
         emit('debug', traceStep('llm.request', payload))
       }, signal, (reply: AiReplyTrace) => {
         emit('debug', traceStep('llm.reply', reply))
       }))
       const speakOptions = voiceOptions()
+      /** LLM 这轮写的语气指令（ADR-062）：只对 MiMo 生效，且必须开关打开。 */
+      const styleOn = settings.ttsStyleControl && ttsModelProvider(speakOptions.model) === 'mimo'
+      let replyStyle = ''
+      // 语气帧不进客户端：它只影响合成请求（气泡/历史里都不该出现），在这里被吃掉
+      async function* styledChunks(): AsyncGenerator<ReplyChunk> {
+        for await (const chunk of replyChunks) {
+          if (chunk.type === 'style') {
+            if (styleOn) replyStyle = chunk.style
+            continue
+          }
+          yield chunk
+        }
+      }
       const synthesize = async (text: string): Promise<TtsAudio | null> => {
         if (!speakOn || signal.aborted) return null
         const startedAt = Date.now()
+        const options: TtsVoiceOptions = replyStyle ? { ...speakOptions, style: replyStyle } : speakOptions
         try {
-          const audio = await ttsEngineFor(speakOptions.model).synthesize(text, speakOptions, signal, (payload) => {
+          const audio = await ttsEngineFor(options.model).synthesize(text, options, signal, (payload) => {
             lastSpeakPayload = payload
             emit('debug', traceStep('tts.request', payload))
           })
@@ -563,8 +580,13 @@ export function apply(ctx: Context, config: Config): void {
           return null
         }
       }
-      const result = await runSpeakPipeline({ chunks, synthesize, emit, signal })
-      if (result.text) recordAiTurn(context, result.text, settings, result.tags)
+      const result = await runSpeakPipeline({ chunks: styledChunks(), synthesize, emit, signal })
+      if (result.text) {
+        recordAiTurn(context, result.text, settings, {
+          ...result.tags,
+          ...(replyStyle ? { style: replyStyle } : {}),
+        })
+      }
       // 记忆行（ADR-037）：管线收尾时若 AI 留了 [记]，落盘 memory.md
       if (result.memory) rememberNote(result.memory, input.tz)
     },

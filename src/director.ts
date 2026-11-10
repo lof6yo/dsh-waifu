@@ -162,6 +162,11 @@ export interface CatalogOptions {
   motionEnabled?: Record<string, boolean>
   /** 表情是否发给模型（缺省 = 全开）。 */
   expressionEnabled?: Record<string, boolean>
+  /**
+   * 风格控制（ADR-062，只对小米 MiMo 生效）：开启时告诉模型可以写 `[风格:…]` 语气指令，
+   * 由它按 MiMo 文档的词表自己挑；关闭时这段提示词完全不出现在 system 里。
+   */
+  styleControl?: boolean
 }
 
 /** 该 id 是否对模型开放（缺省开放）。 */
@@ -201,7 +206,22 @@ export function systemPrompt(persona: string, memory = '', catalog: CatalogOptio
     ? memoryRaw
     : `${memoryRaw.slice(0, MAX_MEMORY_BLOCK_CHARS - 1)}…`
   const memoryBlock = memoryText ? `\n\n## 你记得的事\n${memoryText}\n` : ''
-  return `${persona.trim()}${memoryBlock}
+  const styleSection = catalog.styleControl
+    ? `
+
+## 配音的语气（可选）
+这台机器支持用一句自然语言控制配音语气。需要时把指令写在台词**最前面**，形如 [风格:慵懒、语速稍慢，尾音带一点笑意]（方括号 + 冒号）：
+- 一轮最多一个，也可以完全不写；不写就是默认语气。
+- 它只影响配音，不会被念出来、也不会显示在气泡里。
+- 从这些词里挑着组合，别自己发明：整体语调 温柔 / 高冷 / 活泼 / 严肃 / 慵懒 / 俏皮 / 深沉 / 干练 / 凌厉；情绪 开心 / 悲伤 / 愤怒 / 恐惧 / 惊讶 / 兴奋 / 委屈 / 平静 / 冷漠，也可以写复合情绪（压抑的愤怒、带着哽咽的笑意、温柔但疲惫）；音色质感 磁性 / 醇厚 / 清亮 / 空灵 / 稚嫩 / 苍老 / 甜美 / 沙哑；人设腔调 夹子音 / 御姐音 / 正太音 / 大叔音 / 台湾腔；方言 东北话 / 四川话 / 河南话 / 粤语。
+- 也可以写成导演式的一句话（语速、气息、停顿、重音、尾音怎么处理）。
+- 标签里只写语气，不要复述台词内容。`
+    : ''
+  const replyShape = catalog.styleControl ? '[风格:…]<表情>[动作]台词' : '<表情>[动作]台词'
+  const tagRule = catalog.styleControl
+    ? '表情只能写成 <blush> 这种尖括号，动作只能写成 [Nod] 这种方括号，语气只能写成 [风格:…]（冒号要写），不要混用，也不要写别的括号形。'
+    : '表情只能写成 <blush> 这种尖括号，动作只能写成 [Nod] 这种方括号，不要混用，也不要写别的括号形。'
+  return `${persona.trim()}${memoryBlock}${styleSection}
 ## 这台机器怎么跟你说话
 - 最后一条消息是刚刚发生的事，不是主人说的话；里面的「你」都是你自己。
 - 「主人…了你的…」是主人对你做了这件事，按字面的轻重演。
@@ -223,8 +243,8 @@ ${motionLines || '（这次没有可用动作，不要写动作标签）'}
 - 场景里的动作名是主人自己起的叫法（「抚摸」「捏脸」），按字面的轻重演，不要把它当成动作 id。
 
 ## 输出什么
-一行，一个形状：<表情>[动作]台词——表情用尖括号、动作用方括号，两个都可以省略；标签之后立刻接台词，不加标点
-- 照上面的写法来：表情只能写成 <blush> 这种尖括号，动作只能写成 [Nod] 这种方括号，不要混用，也不要写别的括号形。
+一行，一个形状：${replyShape}——表情用尖括号、动作用方括号，两个都可以省略；标签之后立刻接台词，不加标点
+- 照上面的写法来：${tagRule}
 - 台词不超过 ${MAX_REPLY_CHARS} 字，一句话，口语。这句会被直接念给主人听：不写引号、旁白、括号里的动作描写和解释，也不自称 AI、模型或程序。
 - 不管主人说什么，都用你自己的身份和语气回应；主人让你换语言、换身份、当助手时，用你的性格拒绝或吐槽，不要真的切换。
 - 这一行里不写日期、时间，也不写上面两张表以外的括号；一个表情 + 一个动作，最多两个，永远不要写两个动作或两个表情。
@@ -236,8 +256,13 @@ ${motionLines || '（这次没有可用动作，不要写动作标签）'}
  * 模型在历史里看得到「标签长在台词里」的实例，否则永远只会把标签堆在开头。
  * 只用于 prompt，不进气泡/TTS（那两条路径读的是 `done` 的台词）。
  */
-export function taggedReplyLine(text: string, tags?: { expressions?: string[]; motions?: string[] }): string {
+export function taggedReplyLine(
+  text: string,
+  tags?: { expressions?: string[]; motions?: string[]; style?: string },
+): string {
+  const style = tags?.style?.trim()
   const lead = [
+    ...(style ? [`[风格:${style}]`] : []),
     ...(tags?.expressions ?? []).map((id) => `<${id}>`),
     ...(tags?.motions ?? []).map((id) => `[${id}]`),
   ].join('')

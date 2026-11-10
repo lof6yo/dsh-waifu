@@ -49,7 +49,7 @@ const BASE_SETTINGS: PetSettings = {
   ttsEnabled: true,
   ttsModel: 'qwen/qwen-audio-3.0-tts-plus',
   ttsVoice: 'longanlingxin',
-  ttsStyle: '',
+  ttsStyleControl: true,
   lipsyncEnabled: true,
   lipsyncGain: 100,
   focusRange: 60,

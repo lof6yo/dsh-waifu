@@ -113,8 +113,8 @@ export interface PetStateView {
     ttsEnabled: boolean
     ttsModel: string
     ttsVoice: string
-    /** 风格指令（只对 MiMo 生效，ADR-061）。 */
-    ttsStyle: string
+    /** 风格控制开关（只对 MiMo 生效，ADR-062）。 */
+    ttsStyleControl: boolean
     lipsyncEnabled: boolean
     lipsyncGain: number
     focusRange: number
@@ -356,7 +356,7 @@ export class PetService {
         ttsEnabled: settings.ttsEnabled,
         ttsModel: settings.ttsModel,
         ttsVoice: settings.ttsVoice,
-        ttsStyle: settings.ttsStyle,
+        ttsStyleControl: settings.ttsStyleControl,
         lipsyncEnabled: settings.lipsyncEnabled,
         lipsyncGain: settings.lipsyncGain,
         focusRange: settings.focusRange,

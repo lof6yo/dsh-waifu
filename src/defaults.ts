@@ -301,16 +301,12 @@ export function ttsDefaultVoice(model: string): string {
   const option = ttsModelOption(model)
   return option && !option.randomVoice ? (option.voices[0]?.id ?? '') : ''
 }
-/** 风格指令（自然语言，例如「温柔、语速稍慢」）：只有 MiMo 引擎使用，留空 = 默认语气。 */
-export const DEFAULT_TTS_STYLE = ''
-/** 风格指令最长字符数（避免把设置行写爆；也够写一段导演指令了）。 */
-export const TTS_STYLE_MAX_CHARS = 200
-
-/** 归一化风格指令：去首尾空白、截断到上限，非法值回退默认。 */
-export function normalizeTtsStyle(value: unknown, fallback: string): string {
-  if (typeof value !== 'string') return fallback
-  return value.trim().slice(0, TTS_STYLE_MAX_CHARS)
-}
+/**
+ * 风格控制开关（ADR-062，只对小米 MiMo 生效）：
+ * 开启后由 LLM 在每轮回复里自己写 `[风格:…]` 指令（从 MiMo 文档的语气/情绪/音色/方言词表里挑），
+ * 关闭则完全不发风格指令（默认语气）。千问没有这个能力，开关只在选中 MiMo 时显示/生效。
+ */
+export const DEFAULT_TTS_STYLE_CONTROL = true
 
 /** 口型跟随（按正在播放的音频能量驱动 `ParamMouthOpenY`）。 */
 export const DEFAULT_LIPSYNC_ENABLED = true
@@ -433,8 +429,8 @@ export const DEFAULT_SETTINGS = {
   ttsEnabled: DEFAULT_TTS_ENABLED,
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: DEFAULT_TTS_VOICE,
-  /** 风格指令（只会作用在 MiMo 上；换回 OpenRouter 模型时忽略、不丢）。 */
-  ttsStyle: DEFAULT_TTS_STYLE,
+  /** 风格控制（只对 MiMo 生效，ADR-062）：开启后由 LLM 决定每轮的语气指令。 */
+  ttsStyleControl: DEFAULT_TTS_STYLE_CONTROL,
   lipsyncEnabled: DEFAULT_LIPSYNC_ENABLED,
   lipsyncGain: DEFAULT_LIPSYNC_GAIN,
   focusRange: DEFAULT_FOCUS_RANGE,

@@ -218,6 +218,39 @@ describe('标签与记忆行（ADR-037 输出格式）', () => {
     expect(extractMemoryNote('没有记忆行').text).toBe('没有记忆行')
   })
 
+  it('风格控制（ADR-062）：[风格:…] 被剥掉、指令交给 Host，正文干净', () => {
+    const tags = parseLeadingTags('[风格:慵懒、语速稍慢][blush] 唔…')
+    expect(tags.style).toBe('慵懒、语速稍慢')
+    expect(tags.expressions).toEqual(['blush'])
+    expect(tags.rest).toBe('唔…')
+    // 不带冒号的普通方括号不算语气标签（仍按老规则当控制标签剥掉）
+    expect(parseLeadingTags('[风格] 唔…').style).toBeUndefined()
+  })
+
+  it('风格控制（ADR-062）：流式里语气指令单独发一帧（标签被拆开也能拼回来）', async () => {
+    const styles: string[] = []
+    const deltas: string[] = []
+    const dones: string[] = []
+    for await (const chunk of streamReply(fakeLlm(['[风格:慵', '懒、语速稍慢] ', '唔…别闹']), {
+      provider: 'p', model: 'm', persona: 'x', context: { kind: 'tap', part: '脸' },
+    })) {
+      if (chunk.type === 'style') styles.push(chunk.style)
+      else if (chunk.type === 'delta') deltas.push(chunk.text)
+      else if (chunk.type === 'done') dones.push(chunk.text)
+    }
+    expect(styles).toEqual(['慵懒、语速稍慢'])
+    expect(dones).toEqual(['唔…别闹'])
+    expect(deltas.join('')).toBe('唔…别闹')
+  })
+
+  it('风格控制（ADR-062）：非流式路径也带出 style', async () => {
+    const result = await generateReply(fakeLlm(['[风格:高冷] 哼']), {
+      provider: 'p', model: 'm', persona: '人设', context: { kind: 'tap', part: '脸' },
+    })
+    expect(result.style).toBe('高冷')
+    expect(result.text).toBe('哼')
+  })
+
   it('generateReply 把标签拆出来、记忆剥出来', async () => {
     const llm = fakeLlm(['[blush][Tilt] 呜…别摸啦\n[记] 主人手劲好大'])
     const result = await generateReply(llm, {

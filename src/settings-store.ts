@@ -37,7 +37,6 @@ import {
   normalizeFocusRange,
   normalizeLipsyncGain,
   normalizeTriggerMode,
-  normalizeTtsStyle,
   ttsModelOption,
   ttsModelRandomVoice,
   type BarPosition,
@@ -133,8 +132,8 @@ export interface PetSettings {
   ttsModel: string
   /** 音色标识（空 = 模型默认）。 */
   ttsVoice: string
-  /** 风格指令（自然语言，只对 MiMo 生效，ADR-061）。 */
-  ttsStyle: string
+  /** 风格控制开关（只对 MiMo 生效，ADR-062）。 */
+  ttsStyleControl: boolean
   /** 口型跟随开关。 */
   lipsyncEnabled: boolean
   /** 口型强度（0–300，100 = 标准）。 */
@@ -159,7 +158,7 @@ const SETTINGS_HEADER = `// 桌宠设置文件（插件私有，JSONC 支持注�
 //        aiEnabled / aiProvider / aiModel / aiHistoryCount / aiMemoryCount / triggerMode /
 //        aiMinIntervalSec / idleTimeoutSec / activityWindowSec / tapGapMs / mergeMax / eventTriggers /
 //        barPosition / barOffset / barAutoHideSec /
-//        ttsEnabled / ttsModel / ttsVoice / ttsStyle / lipsyncEnabled / lipsyncGain`
+//        ttsEnabled / ttsModel / ttsVoice / ttsStyleControl / lipsyncEnabled / lipsyncGain`
 
 /**
  * 设置文件结构版本：
@@ -311,7 +310,7 @@ export function normalizeSettings(raw: unknown, base: PetSettings): PetSettings 
     ttsModel: voiceFix.model,
     // 音色允许空串（空 = 模型默认音色），所以不走 pickString
     ttsVoice: voiceFix.voice,
-    ttsStyle: normalizeTtsStyle(record.ttsStyle, base.ttsStyle),
+    ttsStyleControl: bool('ttsStyleControl'),
     lipsyncEnabled: bool('lipsyncEnabled'),
     lipsyncGain: normalizeLipsyncGain(record.lipsyncGain, base.lipsyncGain),
     focusRange: normalizeFocusRange(record.focusRange, base.focusRange),

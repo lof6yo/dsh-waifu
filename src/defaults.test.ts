@@ -12,9 +12,7 @@ import {
   DEFAULT_TTS_VOICE,
   TRIGGER_EVENTS,
   TTS_MODELS,
-  TTS_STYLE_MAX_CHARS,
   normalizeBarAutoHideSec,
-  normalizeTtsStyle,
   ttsDefaultVoice,
   ttsModelProvider,
   ttsModelRandomVoice,
@@ -108,12 +106,8 @@ describe('语音模型目录（ADR-033 修订）', () => {
     expect(ttsModelProvider('fish-audio/drama-3')).toBe('openrouter')
   })
 
-  it('风格指令归一化：去空白、截断、非法值回退（ADR-061）', () => {
-    expect(normalizeTtsStyle('  温柔、语速稍慢  ', '')).toBe('温柔、语速稍慢')
-    expect(normalizeTtsStyle(undefined, '')).toBe('')
-    expect(normalizeTtsStyle(42, '')).toBe('')
-    expect(normalizeTtsStyle('啊'.repeat(500), '')).toHaveLength(TTS_STYLE_MAX_CHARS)
-    expect(DEFAULT_SETTINGS.ttsStyle).toBe('')
+  it('风格控制默认开启（ADR-062）', () => {
+    expect(DEFAULT_SETTINGS.ttsStyleControl).toBe(true)
   })
 
   it('音色 id 在目录内不重复', () => {

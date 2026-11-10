@@ -200,6 +200,23 @@ describe('ADR-049：提示词重排', () => {
     expect(system).not.toContain('[shy]')
   })
 
+  it('风格控制（ADR-062）：开启时提示词多一段语气说明，关闭时完全不含', () => {
+    const on = systemPrompt(DEFAULT_PERSONA, '', { ...CATALOG, styleControl: true })
+    expect(on).toContain('## 配音的语气')
+    expect(on).toContain('一行，一个形状：[风格:…]<表情>[动作]台词')
+    expect(on).toContain('语气只能写成 [风格:…]')
+    // 关闭（千问 / 用户关掉开关）：提示词与旧版一字不差，避免动到千问逻辑
+    const off = systemPrompt(DEFAULT_PERSONA, '', CATALOG)
+    expect(off).not.toContain('配音的语气')
+    expect(off).not.toContain('[风格:')
+  })
+
+  it('风格控制（ADR-062）：历史里保留 [风格:…]，模型能记住上一轮的语气', () => {
+    expect(taggedReplyLine('唔…别捏啦', { style: '慵懒、语速稍慢', expressions: ['blush'] })).toBe(
+      '[风格:慵懒、语速稍慢]<blush>唔…别捏啦',
+    )
+  })
+
   it('历史记「带标签的原文」：模型看得到标签长在台词前面', () => {
     expect(taggedReplyLine('唔…别捏啦', { expressions: ['blush'], motions: ['ShakeHead'] }))
       .toBe('<blush>[ShakeHead]唔…别捏啦')
